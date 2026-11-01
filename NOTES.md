@@ -1,5 +1,22 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.2.0
+- Modes became **presets** (named, editable, savable configurations of a preset type). The 9 script modes ship as
+  built-in presets; all can be edited, renamed, reordered, duplicated, deleted, reset to factory, exported and imported.
+- New **Custom pipeline** type: composable video / audio / subtitle actions, trim, chapters, container, name suffix,
+  extra input/output ffmpeg options, single file or folder batch.
+- Preset values exclude per-run fields (input files, typed output names). Those are kept as drafts, so switching presets
+  or restarting keeps the chosen file, and the file is carried to the next preset you open.
+- 0.1.x remembered values (`modes` in the settings file) are migrated once into the built-in presets.
+- Built-in types gained a **name suffix** field; Re-encode gained a **container** choice (auto = script behaviour).
+- First run, or no working ffmpeg/ffprobe: a dialog asks for the FFmpeg folder (pre-filled `C:\ffmpeg\bin`,
+  Browse, validation; the parent of `bin` also works), with Download newest FFmpeg / Skip for now. Help › Locate FFmpeg folder… reopens it.
+- Custom pipeline details: video is mapped as `0:V?` (real video, not cover art); data streams are not mapped; attachments
+  are kept only in Matroska; trim start is applied to the extra audio/subtitle inputs too (they're assumed aligned with the
+  main file); a corrupt presets file is moved aside to `*.bad-<time>`, never overwritten.
+
+## 0.1.0
+
 Behaviour follows the script unless listed here. Each change fixes a bug or an inconsistency found while porting.
 
 ## Encoding

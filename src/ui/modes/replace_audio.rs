@@ -21,6 +21,8 @@ struct State {
     out_dir: String,
     out_name: String,
     last_auto: String,
+    #[serde(default = "sfx")]
+    suffix: String,
     audio: AudioEncode,
 }
 
@@ -31,9 +33,13 @@ pub struct ReplaceAudioMode {
     wprobe: ProbeSlot,
 }
 
+fn sfx() -> String {
+    "_newaudio".into()
+}
+
 fn set_video(st: &mut State, p: &std::path::Path) {
     st.video = s(p);
-    auto_name(&mut st.out_name, &mut st.last_auto, format!("{}_newaudio.mp4", stem(p)));
+    auto_name(&mut st.out_name, &mut st.last_auto, format!("{}{}.mp4", stem(p), st.suffix));
 }
 
 /// Script's WAV validation: needs an audio stream; non-PCM only warns.
@@ -47,10 +53,13 @@ impl Mode for ReplaceAudioMode {
         "replace_audio"
     }
     fn title(&self) -> &'static str {
-        "5. Replace primary audio with WAV"
+        "Replace primary audio"
     }
     fn description(&self) -> &'static str {
         "Copy the video, replace all audio with the WAV encoded to AAC (gain/compressor optional)."
+    }
+    fn run_fields(&self) -> &'static [&'static str] {
+        &["video", "wav", "out_name", "last_auto"]
     }
     fn ui(&mut self, ui: &mut egui::Ui, cx: &Ctx) {
         let st = &mut self.st;
@@ -68,7 +77,10 @@ impl Mode for ReplaceAudioMode {
             ui.label("");
             self.wprobe.status_ui(ui, describe_audio);
             ui.end_row();
-            output_rows(ui, &mut st.out_dir, &mut st.out_name, &cx.settings.output_folder);
+            if output_rows_sfx(ui, &mut st.out_dir, &mut st.out_name, &mut st.suffix, &cx.settings.output_folder) && !st.video.trim().is_empty() {
+                let p = PathBuf::from(st.video.trim());
+                set_video(st, &p);
+            }
             audio_encode_ui(ui, "m5a", &mut st.audio);
         });
         if let Some(Ok(Some(w))) = self.wprobe.info().map(wav_check) {
@@ -108,7 +120,7 @@ impl Mode for ReplaceAudioMode {
         serde_json::to_value(&self.st).unwrap_or_default()
     }
     fn load(&mut self, v: &serde_json::Value, s: &Settings) {
-        self.st = restore(v, State { out_dir: s.output_folder.clone(), audio: default_audio(s), ..Default::default() });
+        self.st = restore(v, State { out_dir: s.output_folder.clone(), audio: default_audio(s), suffix: sfx(), ..Default::default() });
         self.vprobe = ProbeSlot::default();
         self.wprobe = ProbeSlot::default();
     }

@@ -47,6 +47,25 @@ pub fn bin_dir_ok(dir: &Path) -> bool {
     dir.join(exe("ffmpeg")).is_file() && dir.join(exe("ffprobe")).is_file()
 }
 
+/// Validate a user-chosen folder: accepts the bin folder itself or its parent
+/// (`…\ffmpeg` containing `bin\`). Returns the folder that holds the exes.
+pub fn check_bin_dir(dir: &Path) -> Result<PathBuf, String> {
+    if dir.as_os_str().is_empty() {
+        return Err("Enter or browse to a folder.".into());
+    }
+    if !dir.is_dir() {
+        return Err(format!("Folder not found: {}", dir.display()));
+    }
+    if bin_dir_ok(dir) {
+        return Ok(dir.to_path_buf());
+    }
+    if bin_dir_ok(&dir.join("bin")) {
+        return Ok(dir.join("bin"));
+    }
+    let missing: Vec<String> = ["ffmpeg", "ffprobe"].iter().map(|n| exe(n)).filter(|n| !dir.join(n).is_file()).collect();
+    Err(format!("Missing in this folder: {}", missing.join(", ")))
+}
+
 /// Directory of the running exe.
 pub fn exe_dir() -> PathBuf {
     std::env::current_exe()
@@ -129,5 +148,20 @@ mod tests {
         let c = candidates(Path::new("D:/x"));
         assert_eq!(c[0].1, FfSource::Configured);
         assert_eq!(c.last().unwrap().1, FfSource::Managed);
+    }
+
+    #[test]
+    fn check_bin_dir_variants() {
+        let d = std::env::temp_dir().join(format!("cbd_{}", crate::util::unique_id()));
+        std::fs::create_dir_all(d.join("bin")).unwrap();
+        assert!(check_bin_dir(Path::new("")).is_err());
+        assert!(check_bin_dir(&d.join("nope")).unwrap_err().contains("not found"));
+        std::fs::write(d.join("bin").join(exe("ffmpeg")), b"x").unwrap();
+        let e = check_bin_dir(&d.join("bin")).unwrap_err();
+        assert!(e.contains(&exe("ffprobe")) && !e.contains(&format!("{}, ", exe("ffmpeg"))), "{e}");
+        std::fs::write(d.join("bin").join(exe("ffprobe")), b"x").unwrap();
+        assert_eq!(check_bin_dir(&d.join("bin")).unwrap(), d.join("bin"));
+        assert_eq!(check_bin_dir(&d).unwrap(), d.join("bin"), "parent folder accepted");
+        std::fs::remove_dir_all(&d).unwrap();
     }
 }

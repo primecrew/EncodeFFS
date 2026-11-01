@@ -19,6 +19,8 @@ struct State {
     out_dir: String,
     out_name: String,
     last_auto: String,
+    #[serde(default = "sfx")]
+    suffix: String,
     bitrate_k: u32,
 }
 
@@ -28,9 +30,13 @@ pub struct MixMode {
     probe: ProbeSlot,
 }
 
+fn sfx() -> String {
+    "_mixed".into()
+}
+
 fn set_input(st: &mut State, p: &std::path::Path) {
     st.input = s(p);
-    auto_name(&mut st.out_name, &mut st.last_auto, format!("{}_mixed.mkv", stem(p)));
+    auto_name(&mut st.out_name, &mut st.last_auto, format!("{}{}.mkv", stem(p), st.suffix));
 }
 
 impl Mode for MixMode {
@@ -38,7 +44,7 @@ impl Mode for MixMode {
         "mix"
     }
     fn title(&self) -> &'static str {
-        "6. Mix audio tracks to one (MKV)"
+        "Mix audio tracks to one (MKV)"
     }
     fn description(&self) -> &'static str {
         "amix all audio tracks (normalize=1) into one AAC track; video copied, chapters kept."
@@ -54,7 +60,10 @@ impl Mode for MixMode {
             ui.label("");
             self.probe.status_ui(ui, describe_video);
             ui.end_row();
-            output_rows(ui, &mut st.out_dir, &mut st.out_name, &cx.settings.output_folder);
+            if output_rows_sfx(ui, &mut st.out_dir, &mut st.out_name, &mut st.suffix, &cx.settings.output_folder) && !st.input.trim().is_empty() {
+                let p = PathBuf::from(st.input.trim());
+                set_input(st, &p);
+            }
             bitrate_ui(ui, "Mixed AAC bitrate", &mut st.bitrate_k);
         });
         if let Some(i) = self.probe.info() {
@@ -88,7 +97,7 @@ impl Mode for MixMode {
         serde_json::to_value(&self.st).unwrap_or_default()
     }
     fn load(&mut self, v: &serde_json::Value, s: &Settings) {
-        self.st = restore(v, State { out_dir: s.output_folder.clone(), bitrate_k: s.audio_bitrate_k, ..Default::default() });
+        self.st = restore(v, State { out_dir: s.output_folder.clone(), bitrate_k: s.audio_bitrate_k, suffix: sfx(), ..Default::default() });
         self.probe = ProbeSlot::default();
     }
 }

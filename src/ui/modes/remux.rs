@@ -74,10 +74,13 @@ impl Mode for RemuxMode {
         "remux"
     }
     fn title(&self) -> &'static str {
-        "9. Remux MKV -> MP4"
+        "Remux MKV -> MP4"
     }
     fn description(&self) -> &'static str {
         "Container copy (-map 0 -c copy). Never overwrites; existing MP4s are skipped."
+    }
+    fn run_fields(&self) -> &'static [&'static str] {
+        &["src_dir"]
     }
     fn needs_encoders(&self) -> bool {
         false
@@ -192,6 +195,9 @@ impl Mode for RemuxMode {
     }
     fn load(&mut self, v: &serde_json::Value, s: &Settings) {
         self.st = restore(v, State { src_dir: s.input_folder.clone(), ..Default::default() });
+        if self.st.src_dir.trim().is_empty() {
+            self.st.src_dir = s.input_folder.clone();
+        }
         self.files.clear();
         self.listed_dir = None;
     }

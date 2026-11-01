@@ -21,6 +21,8 @@ struct State {
     out_dir: String,
     out_name: String,
     last_auto: String,
+    #[serde(default = "sfx")]
+    suffix: String,
     title: String,
     bitrate_k: u32,
     faststart: bool,
@@ -33,6 +35,7 @@ impl State {
             out_dir: s.output_folder.clone(),
             out_name: String::new(),
             last_auto: String::new(),
+            suffix: sfx(),
             title: s.commentary_name.clone(),
             bitrate_k: s.audio_bitrate_k,
             faststart: false,
@@ -52,9 +55,13 @@ pub struct CommentaryMode {
     aprobe: ProbeSlot,
 }
 
+fn sfx() -> String {
+    "_with_commentary".into()
+}
+
 fn set_video(st: &mut State, p: &std::path::Path) {
     st.video = s(p);
-    auto_name(&mut st.out_name, &mut st.last_auto, format!("{}_with_commentary.mp4", stem(p)));
+    auto_name(&mut st.out_name, &mut st.last_auto, format!("{}{}.mp4", stem(p), st.suffix));
 }
 
 impl Mode for CommentaryMode {
@@ -62,10 +69,13 @@ impl Mode for CommentaryMode {
         "commentary"
     }
     fn title(&self) -> &'static str {
-        "3. Add commentary track"
+        "Add commentary track"
     }
     fn description(&self) -> &'static str {
         "Copy video + original audio and add an AAC commentary track with a title."
+    }
+    fn run_fields(&self) -> &'static [&'static str] {
+        &["video", "commentary", "out_name", "last_auto"]
     }
     fn ui(&mut self, ui: &mut egui::Ui, cx: &Ctx) {
         let st = &mut self.st;
@@ -83,7 +93,10 @@ impl Mode for CommentaryMode {
             ui.label("");
             self.aprobe.status_ui(ui, describe_audio);
             ui.end_row();
-            output_rows(ui, &mut st.out_dir, &mut st.out_name, &cx.settings.output_folder);
+            if output_rows_sfx(ui, &mut st.out_dir, &mut st.out_name, &mut st.suffix, &cx.settings.output_folder) && !st.video.trim().is_empty() {
+                let p = PathBuf::from(st.video.trim());
+                set_video(st, &p);
+            }
             ui.label("Track name");
             ui.text_edit_singleline(&mut st.title);
             ui.end_row();

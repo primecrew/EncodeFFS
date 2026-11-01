@@ -2,6 +2,7 @@
 
 pub mod common;
 pub mod modes;
+pub mod presets;
 pub mod updater;
 
 use std::path::{Path, PathBuf};
@@ -11,12 +12,14 @@ use eframe::egui::{self, Color32, RichText};
 use ffenc::ffmpeg::locate::{self, FfPaths};
 use ffenc::ffmpeg::runner::{full_args, JobStatus, Queue};
 use ffenc::ffmpeg::version::{self, compare, FfmpegCheck, Verdict};
+use ffenc::presets::{self as pstore, Preset};
 use ffenc::settings::{self, Settings};
 use ffenc::updater::{install, AvailableBuild};
 use ffenc::util::{display_command, fmt_hms, now_unix};
 
 use common::{hint, Bg};
-use modes::{all_modes, Ctx, Mode, Plan};
+use modes::{kinds, new_mode, Ctx, Plan};
+use presets::{Action, Dialog, PresetUi};
 use updater::{UpdaterEvent, UpdaterUi};
 
 struct Preview {
@@ -26,10 +29,16 @@ struct Preview {
     overwrite: Vec<PathBuf>,
 }
 
+/// First-run / "FFmpeg not found" dialog state.
+struct LocateDlg {
+    path: String,
+    first_run: bool,
+}
+
 pub struct App {
     settings: Settings,
-    modes: Vec<Box<dyn Mode>>,
-    current: usize,
+    pre: PresetUi,
+    presets_path: PathBuf,
     queue: Queue,
     ff: Option<FfPaths>,
     ff_check: Option<Result<FfmpegCheck, String>>,
@@ -41,6 +50,7 @@ pub struct App {
     updater: UpdaterUi,
     show_about: bool,
     first_run_dismissed: bool,
+    locate: Option<LocateDlg>,
     startup_check: Option<Bg<Result<AvailableBuild, String>>>,
     update_banner: Option<String>,
     rollback_confirm: bool,
@@ -73,20 +83,36 @@ fn install_fonts(ctx: &egui::Context) {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         install_fonts(&cc.egui_ctx);
-        let settings = Settings::load();
+        let first_run = !settings::settings_path().exists();
+        let mut settings = Settings::load();
         let ctx = cc.egui_ctx.clone();
         let queue = Queue::new(Some(settings::logs_dir().join("FFmpegEncoder.log")), move || ctx.request_repaint());
         queue.log(format!("{} {} started. Settings: {}", ffenc::APP_NAME, ffenc::APP_VERSION, settings::settings_path().display()));
-        let mut modes = all_modes();
-        for m in modes.iter_mut() {
-            let v = settings.modes.get(m.key()).cloned().unwrap_or(serde_json::Value::Null);
-            m.load(&v, &settings);
+        let presets_path = pstore::presets_path();
+        let had_file = presets_path.exists();
+        let (mut list, warning) = pstore::load_from(&presets_path);
+        if let Some(w) = warning {
+            queue.log(w);
         }
-        let current = modes.iter().position(|m| m.key() == settings.last_mode).unwrap_or(0);
+        let known: Vec<&str> = kinds().into_iter().map(|k| k.0).collect();
+        list.retain(|p| {
+            let ok = known.contains(&p.kind.as_str());
+            if !ok {
+                queue.log(format!("Preset “{}” has an unknown type “{}” and was ignored.", p.name, p.kind));
+            }
+            ok
+        });
+        if list.is_empty() {
+            list = pstore::factory_all();
+        }
+        if !had_file {
+            migrate_legacy(&mut list, &mut settings);
+        }
+        let current = list.iter().position(|p| p.id == settings.last_preset).unwrap_or(0);
         let mut app = App {
             settings,
-            modes,
-            current,
+            pre: PresetUi { list, current, editors: Default::default(), dialog: None },
+            presets_path,
             queue,
             ff: None,
             ff_check: None,
@@ -98,11 +124,18 @@ impl App {
             updater: UpdaterUi::default(),
             show_about: false,
             first_run_dismissed: false,
+            locate: None,
             startup_check: None,
             update_banner: None,
             rollback_confirm: false,
         };
         app.refresh_ffmpeg(&cc.egui_ctx);
+        if !had_file {
+            app.save_presets();
+        }
+        if first_run || app.ff.is_none() {
+            app.open_locate(first_run);
+        }
         // Non-intrusive daily update check.
         if app.settings.auto_check_updates && now_unix().saturating_sub(app.settings.last_update_check) > 86_400 && app.ff.is_some() {
             let (s, c) = (app.settings.update_source, app.settings.update_channel);
@@ -130,12 +163,59 @@ impl App {
     }
 
     fn save_settings(&mut self) {
-        for m in &self.modes {
-            self.settings.modes.insert(m.key().to_string(), m.save());
-        }
-        self.settings.last_mode = self.modes[self.current].key().to_string();
+        self.settings.drafts = self.pre.drafts();
+        self.settings.last_preset = self.pre.cur().id.clone();
         if let Err(e) = self.settings.save() {
             self.queue.log(format!("Could not save settings: {e}"));
+        }
+    }
+
+    fn save_presets(&mut self) {
+        if let Err(e) = pstore::save_to(&self.presets_path, &self.pre.list) {
+            self.error = Some(e);
+        }
+    }
+
+    fn open_locate(&mut self, first_run: bool) {
+        let cur = self.settings.ffmpeg_bin_path.trim();
+        let path = if cur.is_empty() { Settings::default().ffmpeg_bin_path } else { cur.to_string() };
+        self.locate = Some(LocateDlg { path, first_run });
+    }
+
+    fn import_presets(&mut self, ctx: &egui::Context) {
+        let Some(f) = rfd::FileDialog::new().add_filter("Presets (JSON)", &["json"]).pick_file() else { return };
+        let res = std::fs::read_to_string(&f).map_err(|e| e.to_string()).and_then(|t| pstore::parse(&t));
+        match res {
+            Err(e) => self.error = Some(format!("Could not import {}: {e}", f.display())),
+            Ok(list) => {
+                let known: Vec<&str> = kinds().into_iter().map(|k| k.0).collect();
+                let (new, skipped) = pstore::prepare_import(&self.pre.list, list, &known);
+                let n = new.len();
+                let first = self.pre.list.len();
+                self.pre.list.extend(new);
+                if n > 0 {
+                    let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
+                    let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+                    self.pre.select(first, &cx);
+                }
+                self.save_presets();
+                let mut msg = format!("Imported {n} preset(s) from {}.", f.display());
+                if !skipped.is_empty() {
+                    msg.push_str(&format!("\nSkipped: {}", skipped.join(", ")));
+                }
+                self.queue.log(msg.clone());
+                self.info = Some(("Import presets".into(), msg));
+            }
+        }
+    }
+
+    fn export_presets(&mut self, all: bool) {
+        let list: Vec<Preset> = if all { (0..self.pre.list.len()).map(|i| self.pre.export_copy(i, &self.settings)).collect() } else { vec![self.pre.export_copy(self.pre.current, &self.settings)] };
+        let name = if all { "FFmpegEncoder presets.json".to_string() } else { format!("{}.preset.json", ffenc::util::safe_name(&list[0].name)) };
+        let Some(f) = rfd::FileDialog::new().add_filter("Presets (JSON)", &["json"]).set_file_name(name).save_file() else { return };
+        match std::fs::write(&f, pstore::to_json(&list)) {
+            Ok(()) => self.queue.log(format!("Exported {} preset(s) to {}", list.len(), f.display())),
+            Err(e) => self.error = Some(format!("Could not write {}: {e}", f.display())),
         }
     }
 
@@ -144,8 +224,9 @@ impl App {
             self.error = Some("FFmpeg was not found. Set the folder in File › Settings or use Help › Check for FFmpeg updates to download it.".into());
             return;
         };
-        let mode = &self.modes[self.current];
-        if mode.needs_encoders() {
+        let idx = self.pre.current;
+        let needs = self.pre.editor(idx, &self.settings).mode.needs_encoders();
+        if needs {
             match &self.ff_check {
                 Some(Ok(c)) if !c.has_libx264 || !c.has_aac => {
                     let missing: Vec<&str> = [(!c.has_libx264).then_some("libx264"), (!c.has_aac).then_some("aac")].into_iter().flatten().collect();
@@ -160,7 +241,7 @@ impl App {
             }
         }
         let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx };
-        match self.modes[self.current].build(&cx) {
+        match self.pre.editor(idx, &self.settings).mode.build(&cx) {
             Ok(plan) => {
                 let mut text = String::new();
                 let mut overwrite = vec![];
@@ -206,7 +287,72 @@ impl App {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
+            ui.menu_button("Presets", |ui| {
+                let modified = self.pre.modified(&self.pre.cur().id.clone());
+                if ui.button("New preset…").clicked() {
+                    self.pre.dialog = Some(Dialog::New { name: String::new(), from: presets::NewFrom::Copy(self.pre.cur().id.clone()) });
+                    ui.close_menu();
+                }
+                if ui.add_enabled(modified, egui::Button::new("Save preset   (Ctrl+S)")).clicked() {
+                    self.pre.save_current(&self.settings);
+                    self.save_presets();
+                    ui.close_menu();
+                }
+                if ui.button("Save as new preset…").clicked() {
+                    self.pre.dialog = Some(Dialog::SaveAs { name: format!("{} copy", self.pre.cur().name) });
+                    ui.close_menu();
+                }
+                if ui.add_enabled(modified, egui::Button::new("Revert unsaved changes")).clicked() {
+                    self.pre.revert_current(&self.settings);
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("Duplicate").clicked() {
+                    self.pre.dialog = Some(Dialog::New { name: String::new(), from: presets::NewFrom::Copy(self.pre.cur().id.clone()) });
+                    ui.close_menu();
+                }
+                if ui.button("Rename…").clicked() {
+                    self.pre.dialog = Some(Dialog::Rename { id: self.pre.cur().id.clone(), name: self.pre.cur().name.clone() });
+                    ui.close_menu();
+                }
+                if ui.add_enabled(self.pre.cur().builtin.is_some(), egui::Button::new("Reset to factory defaults…")).clicked() {
+                    self.pre.dialog = Some(Dialog::Reset { id: self.pre.cur().id.clone() });
+                    ui.close_menu();
+                }
+                if ui.button("Delete…").clicked() {
+                    self.pre.dialog = Some(Dialog::Delete { id: self.pre.cur().id.clone() });
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("Import presets…").clicked() {
+                    ui.close_menu();
+                    self.import_presets(ctx);
+                }
+                if ui.button("Export this preset…").clicked() {
+                    ui.close_menu();
+                    self.export_presets(false);
+                }
+                if ui.button("Export all presets…").clicked() {
+                    ui.close_menu();
+                    self.export_presets(true);
+                }
+                let missing = pstore::missing_builtins(&self.pre.list);
+                if ui.add_enabled(!missing.is_empty(), egui::Button::new(format!("Restore missing built-in presets ({})", missing.len()))).clicked() {
+                    self.pre.list.extend(missing);
+                    self.save_presets();
+                    ui.close_menu();
+                }
+                if ui.button("Open presets file").clicked() {
+                    self.save_presets();
+                    open_path(&self.presets_path);
+                    ui.close_menu();
+                }
+            });
             ui.menu_button("Help", |ui| {
+                if ui.button("Locate FFmpeg folder…").clicked() {
+                    self.open_locate(false);
+                    ui.close_menu();
+                }
                 if ui.button("Check for FFmpeg updates…").clicked() {
                     self.updater.open_and_check(ctx, &self.settings);
                     ui.close_menu();
@@ -401,7 +547,7 @@ impl App {
         let mut run = false;
         let mut cancel = false;
         if let Some(p) = &mut self.preview {
-            egui::Window::new("Preview – FFmpeg command").collapsible(false).resizable(true).default_size([820.0, 420.0]).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+            egui::Window::new(format!("Preview – {}", self.pre.list[self.pre.current].name)).collapsible(false).resizable(true).default_size([820.0, 420.0]).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
                 ui.label(format!("{} job(s) will be queued:", p.plan.jobs.len()));
                 for o in &p.overwrite {
                     ui.colored_label(Color32::from_rgb(230, 180, 60), format!("⚠ Output exists and will be overwritten: {}", o.display()));
@@ -432,43 +578,75 @@ impl App {
             self.preview = None;
         }
 
-        // first run
-        if self.ff.is_none() && !self.first_run_dismissed && !self.updater.open {
-            let mut browse = false;
+        // first run / FFmpeg not found
+        let invalid = self.ff.is_none() || matches!(self.ff_check, Some(Err(_)));
+        if self.locate.is_none() && invalid && !self.first_run_dismissed && !self.updater.open {
+            self.open_locate(false);
+        }
+        if self.updater.open {
+            // the updater replaces this dialog while it is open
+        } else if let Some(mut dl) = self.locate.take() {
+            let mut keep = true;
+            let mut use_dir = None;
             let mut download = false;
-            let mut later = false;
-            egui::Window::new("FFmpeg not found").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
-                ui.label("FFmpeg Encoder needs ffmpeg.exe and ffprobe.exe. Looked in:");
-                for (d, _) in locate::candidates(Path::new(self.settings.ffmpeg_bin_path.trim())) {
-                    ui.label(RichText::new(format!("  • {}", d.display())).small());
+            egui::Window::new(if dl.first_run { "Welcome – where is FFmpeg?" } else { "Locate FFmpeg" }).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+                ui.set_max_width(620.0);
+                ui.label("Select the folder that contains ffmpeg.exe and ffprobe.exe.");
+                if let (Some(f), true) = (&self.ff, !invalid) {
+                    hint(ui, format!("Currently using {} ({}).", f.bin_dir.display(), f.source.label()));
+                } else if let Some(Err(e)) = &self.ff_check {
+                    ui.colored_label(Color32::LIGHT_RED, format!("The current FFmpeg doesn't run: {e}"));
                 }
-                ui.label(RichText::new("  • PATH").small());
-                ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    download = ui.button(RichText::new("⬇ Download newest FFmpeg").strong()).clicked();
-                    browse = ui.button("Browse to existing folder…").clicked();
-                    later = ui.button("Later").clicked();
-                });
-                hint(ui, "Downloads go to the app-managed folder; nothing is installed system-wide.");
-            });
-            if download {
-                self.updater.open_and_check(ctx, &self.settings);
-            }
-            if later {
-                self.first_run_dismissed = true;
-            }
-            if browse {
-                if let Some(d) = rfd::FileDialog::new().pick_folder() {
-                    let d = if locate::bin_dir_ok(&d) { Some(d) } else if locate::bin_dir_ok(&d.join("bin")) { Some(d.join("bin")) } else { None };
-                    match d {
-                        Some(d) => {
-                            self.settings.ffmpeg_bin_path = d.to_string_lossy().into_owned();
-                            self.save_settings();
-                            self.refresh_ffmpeg(ctx);
+                    ui.add(egui::TextEdit::singleline(&mut dl.path).desired_width(440.0));
+                    if ui.button("Browse…").clicked() {
+                        let mut d = rfd::FileDialog::new();
+                        let cur = PathBuf::from(dl.path.trim());
+                        if cur.is_dir() {
+                            d = d.set_directory(&cur);
                         }
-                        None => self.error = Some("That folder doesn't contain ffmpeg.exe and ffprobe.exe.".into()),
+                        if let Some(p) = d.pick_folder() {
+                            dl.path = p.to_string_lossy().into_owned();
+                        }
+                    }
+                });
+                let check = locate::check_bin_dir(Path::new(dl.path.trim()));
+                match &check {
+                    Ok(d) => {
+                        ui.colored_label(Color32::from_rgb(120, 200, 120), format!("✔ Found {} and {} in {}", locate::exe("ffmpeg"), locate::exe("ffprobe"), d.display()));
+                    }
+                    Err(e) => {
+                        ui.colored_label(Color32::LIGHT_RED, format!("✖ {e}"));
                     }
                 }
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(check.is_ok(), egui::Button::new(RichText::new("Use this folder").strong())).clicked() {
+                        use_dir = check.clone().ok();
+                    }
+                    ui.separator();
+                    download = ui.button("⬇ Download newest FFmpeg").clicked();
+                    if ui.button("Skip for now").clicked() {
+                        keep = false;
+                        self.first_run_dismissed = true;
+                    }
+                });
+                hint(ui, "Downloads go to the app-managed folder (nothing is installed system-wide). Change this later in File › Settings or Help › Locate FFmpeg folder.");
+            });
+            if let Some(d) = use_dir {
+                self.settings.ffmpeg_bin_path = d.to_string_lossy().into_owned();
+                self.save_settings();
+                self.refresh_ffmpeg(ctx);
+                self.first_run_dismissed = true;
+                keep = false;
+            }
+            if download {
+                self.updater.open_and_check(ctx, &self.settings);
+                self.first_run_dismissed = true;
+                keep = false;
+            }
+            if keep {
+                self.locate = Some(dl);
             }
         }
 
@@ -544,6 +722,19 @@ impl App {
             self.show_about = open;
         }
 
+        // presets
+        let act = self.pre.dialogs(ctx);
+        if !matches!(act, Action::None) {
+            let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
+            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+            let r = self.pre.apply(act, &cx);
+            if let Err(e) = r {
+                self.error = Some(e);
+            }
+            self.save_presets();
+            self.save_settings();
+        }
+
         self.settings_dialog(ctx);
     }
 
@@ -562,7 +753,7 @@ impl App {
                     common::path_row(ui, "Output folder", &mut ed.output_folder, common::Pick::Folder, &d);
                 });
                 hint(ui, "FFmpeg lookup order: this folder -> ffmpeg\\ next to the app -> app-managed copy -> PATH.");
-                common::section(ui, "Encoding defaults (used when a mode has no remembered values)");
+                common::section(ui, "Encoding defaults (used by built-in presets that are not customised, and by new blank presets)");
                 egui::Grid::new("set_e").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                     let mut v = ffenc::cmd::common::VideoEncode { crf: ed.crf, preset: ed.preset.clone(), tune: None };
                     common::video_encode_ui(ui, "set", &mut v, false);
@@ -627,11 +818,8 @@ impl App {
                     keep = false;
                 }
                 if ui.button("Reset to script defaults").clicked() {
-                    let modes = std::mem::take(&mut ed.modes);
-                    ed = Settings { modes, ..Settings::default() };
-                }
-                if ui.button("Reset all remembered mode values").on_hover_text("Forms go back to the defaults above").clicked() {
-                    ed.modes.clear();
+                    let drafts = std::mem::take(&mut ed.drafts);
+                    ed = Settings { drafts, last_preset: ed.last_preset.clone(), ..Settings::default() };
                 }
             });
         });
@@ -639,14 +827,9 @@ impl App {
             self.error = Some(e);
         }
         if save {
-            let reset_modes = ed.modes.is_empty();
             let ff_changed = ed.ffmpeg_bin_path != self.settings.ffmpeg_bin_path;
             self.settings = ed;
-            if reset_modes {
-                for m in self.modes.iter_mut() {
-                    m.load(&serde_json::Value::Null, &self.settings);
-                }
-            }
+            self.pre.rebase(&self.settings);
             self.save_settings();
             if ff_changed || self.ff.is_none() {
                 self.refresh_ffmpeg(ctx);
@@ -699,7 +882,8 @@ impl eframe::App for App {
         if !dropped.is_empty() {
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
             let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
-            self.modes[self.current].on_drop(&dropped, &cx);
+            let idx = self.pre.current;
+            self.pre.editor(idx, &self.settings).mode.on_drop(&dropped, &cx);
         }
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
@@ -707,15 +891,21 @@ impl eframe::App for App {
             self.banners(ctx, ui);
         });
 
-        egui::SidePanel::left("modes").resizable(false).exact_width(230.0).show(ctx, |ui| {
+        // Ctrl+S saves the current preset
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) && self.pre.modified(&self.pre.cur().id.clone()) {
+            self.pre.save_current(&self.settings);
+            self.save_presets();
+        }
+
+        egui::SidePanel::left("presets").resizable(true).default_width(240.0).width_range(180.0..=420.0).show(ctx, |ui| {
             ui.add_space(4.0);
-            for i in 0..self.modes.len() {
-                let m = &self.modes[i];
-                let r = ui.add_sized([220.0, 26.0], egui::SelectableLabel::new(i == self.current, m.title())).on_hover_text(m.description());
-                if r.clicked() && i != self.current {
-                    self.current = i;
-                    self.save_settings();
+            let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
+            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+            if let Some(what) = self.pre.sidebar(ui, &cx) {
+                if what == "moved" {
+                    self.save_presets();
                 }
+                self.save_settings();
             }
         });
 
@@ -724,22 +914,46 @@ impl eframe::App for App {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            let (title, desc) = (self.modes[self.current].title(), self.modes[self.current].description());
+            let idx = self.pre.current;
+            let (name, desc, kind) = {
+                let p = self.pre.cur();
+                (p.name.clone(), p.description.clone(), p.kind.clone())
+            };
+            let modified = self.pre.modified(&self.pre.cur().id.clone());
+            let kind_label = kinds().into_iter().find(|k| k.0 == kind).map(|k| k.1).unwrap_or("?");
+            let mut save = false;
+            let mut save_as = false;
+            let mut revert = false;
             ui.horizontal(|ui| {
-                ui.heading(title);
+                ui.heading(&name);
+                ui.label(RichText::new(format!("[{kind_label}]")).small().weak());
+                if modified {
+                    ui.label(RichText::new("(unsaved changes)").small().color(Color32::from_rgb(230, 180, 60)));
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Reset form").on_hover_text("Back to the defaults from Settings").clicked() {
-                        let s = self.settings.clone();
-                        self.modes[self.current].load(&serde_json::Value::Null, &s);
-                    }
+                    save_as = ui.small_button("Save as new…").on_hover_text("Save the form as a new preset").clicked();
+                    revert = ui.add_enabled(modified, egui::Button::new("Revert").small()).on_hover_text("Back to the saved values (keeps the chosen files)").clicked();
+                    save = ui.add_enabled(modified, egui::Button::new(RichText::new("Save preset").strong()).small()).on_hover_text("Store the current values in this preset (Ctrl+S)").clicked();
                 });
             });
-            hint(ui, desc);
+            if !desc.is_empty() {
+                hint(ui, &desc);
+            }
             ui.separator();
+            if save {
+                self.pre.save_current(&self.settings);
+                self.save_presets();
+            }
+            if revert {
+                self.pre.revert_current(&self.settings);
+            }
+            if save_as {
+                self.pre.dialog = Some(Dialog::SaveAs { name: format!("{name} copy") });
+            }
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
                 let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
-                self.modes[self.current].ui(ui, &cx);
+                self.pre.editor(idx, &self.settings).mode.ui(ui, &cx);
                 ui.add_space(10.0);
                 if ui.add_sized([180.0, 32.0], egui::Button::new(RichText::new("Preview & run…").strong())).clicked() {
                     self.start_preview(ctx);
@@ -753,7 +967,7 @@ impl eframe::App for App {
             let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("drop")));
             let rect = ctx.screen_rect();
             painter.rect_filled(rect, 0.0, Color32::from_black_alpha(160));
-            painter.text(rect.center(), egui::Align2::CENTER_CENTER, format!("Drop files for “{}”", self.modes[self.current].title()), egui::FontId::proportional(24.0), Color32::WHITE);
+            painter.text(rect.center(), egui::Align2::CENTER_CENTER, format!("Drop files for “{}”", self.pre.cur().name), egui::FontId::proportional(24.0), Color32::WHITE);
         }
 
         self.dialogs(ctx);
@@ -774,5 +988,56 @@ impl eframe::App for App {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+    }
+}
+
+/// 0.1.x stored the last-used values per mode in settings.modes. Turn those into
+/// the built-in presets' saved values (and keep the files as drafts) once.
+fn migrate_legacy(list: &mut [Preset], s: &mut Settings) {
+    if s.modes.is_empty() {
+        return;
+    }
+    for p in list.iter_mut() {
+        let Some(old) = s.modes.get(&p.kind) else { continue };
+        if p.builtin.is_none() || !p.values.is_null() {
+            continue;
+        }
+        if let Some(mut m) = new_mode(&p.kind) {
+            m.load(old, s);
+            p.values = pstore::strip_run_fields(m.save(), m.run_fields());
+            s.drafts.insert(p.id.clone(), m.save());
+        }
+    }
+    if let Some(p) = list.iter().find(|p| p.kind == s.last_mode) {
+        s.last_preset = p.id.clone();
+    }
+    s.modes.clear();
+    s.last_mode.clear();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn legacy_mode_values_become_presets() {
+        let mut s = Settings::default();
+        s.modes.insert("reencode".into(), json!({"input": "/v/a.mkv", "trim_start": 4.0, "out_dir": "/o"}));
+        s.modes.insert("unknown".into(), json!({"x": 1}));
+        s.last_mode = "reencode".into();
+        let mut list = pstore::factory_all();
+        migrate_legacy(&mut list, &mut s);
+        let p = &list[0];
+        assert_eq!(p.values["trim_start"], json!(4.0));
+        assert_eq!(p.values["out_dir"], json!("/o"));
+        assert!(p.values.get("input").is_none());
+        assert_eq!(s.drafts["builtin-reencode"]["input"], json!("/v/a.mkv"));
+        assert_eq!(s.last_preset, "builtin-reencode");
+        assert!(s.modes.is_empty() && s.last_mode.is_empty());
+        assert!(list[1].values.is_null());
+        // the migrated form is not "modified"
+        let e = presets::make_editor(p, &s, s.drafts.get(&p.id)).unwrap();
+        assert!(!e.modified());
     }
 }

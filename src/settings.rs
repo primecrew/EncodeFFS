@@ -37,8 +37,14 @@ pub struct Settings {
     pub last_update_check: u64,
     /// Keep ffmpeg_error*.log even when the job succeeds.
     pub keep_logs_on_success: bool,
-    /// Last-used values per mode (opaque JSON owned by each mode).
+    /// Unsaved form state per preset id (edited values and/or the files of the current run).
+    pub drafts: BTreeMap<String, serde_json::Value>,
+    /// Id of the preset that was open last.
+    pub last_preset: String,
+    /// Legacy (0.1.x): last-used values per mode; migrated into presets on first start of 0.2.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, serde_json::Value>,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub last_mode: String,
 }
 
@@ -63,6 +69,8 @@ impl Default for Settings {
             auto_check_updates: true,
             last_update_check: 0,
             keep_logs_on_success: false,
+            drafts: BTreeMap::new(),
+            last_preset: String::new(),
             modes: BTreeMap::new(),
             last_mode: String::new(),
         }

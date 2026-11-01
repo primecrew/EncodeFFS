@@ -22,6 +22,8 @@ struct State {
     out_dir: String,
     out_name: String,
     last_auto: String,
+    #[serde(default = "sfx")]
+    suffix: String,
     container: String,
     keep_existing: bool,
     copy_only: bool,
@@ -31,6 +33,10 @@ struct State {
     mp4_handling: Mp4SubHandling,
     faststart: bool,
 }
+fn sfx() -> String {
+    "_with_subs".into()
+}
+
 impl State {
     fn from_settings(s: &Settings) -> Self {
         State {
@@ -39,6 +45,7 @@ impl State {
             out_dir: s.output_folder.clone(),
             out_name: String::new(),
             last_auto: String::new(),
+            suffix: sfx(),
             container: "mkv".into(),
             keep_existing: true,
             copy_only: true,
@@ -54,7 +61,7 @@ impl State {
             return;
         }
         let p = PathBuf::from(self.dest.trim());
-        auto_name(&mut self.out_name, &mut self.last_auto, format!("{}_with_subs.{}", stem(&p), self.container));
+        auto_name(&mut self.out_name, &mut self.last_auto, format!("{}{}.{}", stem(&p), self.suffix, self.container));
     }
 }
 impl Default for State {
@@ -76,10 +83,13 @@ impl Mode for SubsMode {
         "subs"
     }
     fn title(&self) -> &'static str {
-        "8. Copy subtitle tracks"
+        "Copy subtitle tracks"
     }
     fn description(&self) -> &'static str {
         "Pick subtitle tracks from a source video and mux them into a destination video."
+    }
+    fn run_fields(&self) -> &'static [&'static str] {
+        &["source", "dest", "out_name", "last_auto"]
     }
     fn ui(&mut self, ui: &mut egui::Ui, cx: &Ctx) {
         let st = &mut self.st;
@@ -149,7 +159,9 @@ impl Mode for SubsMode {
                 }
             });
             ui.end_row();
-            output_rows(ui, &mut st.out_dir, &mut st.out_name, &cx.settings.output_folder);
+            if output_rows_sfx(ui, &mut st.out_dir, &mut st.out_name, &mut st.suffix, &cx.settings.output_folder) {
+                st.regen_name();
+            }
             ui.label("Video/audio");
             ui.checkbox(&mut st.copy_only, "Copy without re-encoding (recommended)");
             ui.end_row();

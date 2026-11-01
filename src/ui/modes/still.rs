@@ -20,6 +20,8 @@ struct State {
     out_dir: String,
     out_name: String,
     last_auto: String,
+    #[serde(default = "sfx")]
+    suffix: String,
     use_audio_duration: bool,
     custom_duration: f64,
     bitrate_k: u32,
@@ -35,6 +37,7 @@ impl State {
             out_dir: s.output_folder.clone(),
             out_name: String::new(),
             last_auto: String::new(),
+            suffix: sfx(),
             use_audio_duration: true,
             custom_duration: 60.0,
             bitrate_k: s.audio_bitrate_k,
@@ -55,9 +58,13 @@ pub struct StillMode {
     probe: ProbeSlot,
 }
 
+fn sfx() -> String {
+    "_still".into()
+}
+
 fn set_image(st: &mut State, p: &std::path::Path) {
     st.image = s(p);
-    auto_name(&mut st.out_name, &mut st.last_auto, format!("{}_still.mp4", stem(p)));
+    auto_name(&mut st.out_name, &mut st.last_auto, format!("{}{}.mp4", stem(p), st.suffix));
 }
 
 impl Mode for StillMode {
@@ -65,10 +72,13 @@ impl Mode for StillMode {
         "still"
     }
     fn title(&self) -> &'static str {
-        "2. MP4 from still image"
+        "MP4 from still image"
     }
     fn description(&self) -> &'static str {
         "Loop a PNG/JPG over an audio file (libx264 stillimage + AAC)."
+    }
+    fn run_fields(&self) -> &'static [&'static str] {
+        &["image", "audio", "out_name", "last_auto"]
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, cx: &Ctx) {
@@ -92,7 +102,10 @@ impl Mode for StillMode {
                 }
             });
             ui.end_row();
-            output_rows(ui, &mut st.out_dir, &mut st.out_name, &cx.settings.output_folder);
+            if output_rows_sfx(ui, &mut st.out_dir, &mut st.out_name, &mut st.suffix, &cx.settings.output_folder) && !st.image.trim().is_empty() {
+                let p = PathBuf::from(st.image.trim());
+                set_image(st, &p);
+            }
             bitrate_ui(ui, "AAC bitrate", &mut st.bitrate_k);
             faststart_ui(ui, &mut st.faststart, true);
             range_ui(ui, &mut st.range_convert);

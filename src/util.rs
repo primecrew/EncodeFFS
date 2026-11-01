@@ -9,6 +9,27 @@ pub const VIDEO_EXTS: &[&str] = &["mp4", "mkv", "avi", "mov", "avs"];
 pub const AUDIO_EXTS: &[&str] = &["wav", "mp3", "flac", "m4a"];
 /// Supported still images.
 pub const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg"];
+/// Video inputs accepted by custom presets.
+pub const ANY_VIDEO_EXTS: &[&str] = &["mp4", "mkv", "avi", "mov", "avs", "m4v", "webm", "ts", "mts", "m2ts", "flv", "wmv", "mpg", "mpeg"];
+/// Audio files accepted by custom presets (inputs and replace / add-track files).
+pub const ANY_AUDIO_EXTS: &[&str] = &["wav", "mp3", "flac", "m4a", "aac", "ogg", "opus", "mka", "ac3", "wma"];
+/// Subtitle files that can be imported.
+pub const SUB_EXTS: &[&str] = &["srt", "ass", "ssa", "vtt", "sup", "mks"];
+
+/// A sibling of `input` with the same stem and one of `exts` (first match in
+/// `exts` order), never `input` itself. Used by folder batches to pair e.g.
+/// `game.mkv` with `game.wav`.
+pub fn find_companion(input: &Path, exts: &[&str]) -> Option<PathBuf> {
+    let dir = input.parent()?;
+    let st = stem(input).to_lowercase();
+    let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_file() && p != input && stem(p).to_lowercase() == st && has_ext(p, exts))
+        .collect();
+    found.sort_by_key(|p| exts.iter().position(|e| *e == ext_lower(p)).unwrap_or(usize::MAX));
+    found.into_iter().next()
+}
 
 /// Lower-case extension without the dot ("" if none).
 pub fn ext_lower(p: &Path) -> String {
@@ -124,5 +145,19 @@ mod tests {
     fn display_quotes_spaces() {
         let s = display_command(Path::new("ffmpeg"), &["-i".into(), "a b.mp4".into()]);
         assert_eq!(s, "ffmpeg -i \"a b.mp4\"");
+    }
+
+    #[test]
+    fn companion() {
+        let d = std::env::temp_dir().join(format!("comp_{}", unique_id()));
+        std::fs::create_dir_all(&d).unwrap();
+        for f in ["Game 1.mkv", "game 1.FLAC", "Game 1.wav", "Game 2.mkv", "Game 1.srt"] {
+            std::fs::write(d.join(f), b"x").unwrap();
+        }
+        assert_eq!(find_companion(&d.join("Game 1.mkv"), &["wav", "flac"]).unwrap().file_name().unwrap(), "Game 1.wav");
+        assert_eq!(find_companion(&d.join("Game 1.mkv"), &["flac"]).unwrap().file_name().unwrap(), "game 1.FLAC");
+        assert!(find_companion(&d.join("Game 2.mkv"), &["wav"]).is_none());
+        assert!(find_companion(&d.join("Game 1.mkv"), &["mkv"]).is_none(), "never the input itself");
+        std::fs::remove_dir_all(&d).unwrap();
     }
 }

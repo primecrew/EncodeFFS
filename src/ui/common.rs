@@ -175,6 +175,19 @@ pub fn output_rows(ui: &mut Ui, dir: &mut String, name: &mut String, fallback_di
     ui.end_row();
 }
 
+/// Output folder + name + suffix rows. Returns true when the suffix changed.
+pub fn output_rows_sfx(ui: &mut Ui, dir: &mut String, name: &mut String, suffix: &mut String, fallback_dir: &str) -> bool {
+    output_rows(ui, dir, name, fallback_dir);
+    ui.label("Name suffix");
+    let r = ui.horizontal(|ui| {
+        let c = ui.add(egui::TextEdit::singleline(suffix).desired_width(160.0)).changed();
+        hint(ui, "added to the input name for the automatic output name");
+        c
+    });
+    ui.end_row();
+    r.inner
+}
+
 /// Keep an auto-generated name in sync unless the user typed their own.
 pub fn auto_name(name: &mut String, last_auto: &mut String, new_auto: String) {
     if name.trim().is_empty() || *name == *last_auto {

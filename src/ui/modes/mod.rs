@@ -10,6 +10,7 @@ use ffenc::settings::Settings;
 
 pub mod batch;
 pub mod commentary;
+pub mod custom;
 pub mod extract;
 pub mod mix;
 pub mod reencode;
@@ -44,6 +45,11 @@ pub trait Mode {
     fn needs_encoders(&self) -> bool {
         true
     }
+    /// Keys of `save()` that belong to one run (input files, typed output
+    /// names) and are therefore not stored in a preset.
+    fn run_fields(&self) -> &'static [&'static str] {
+        &["input", "out_name", "last_auto"]
+    }
     fn ui(&mut self, ui: &mut egui::Ui, cx: &Ctx);
     /// Validate and build the jobs.
     fn build(&mut self, cx: &Ctx) -> Result<Plan, String>;
@@ -75,7 +81,18 @@ pub fn all_modes() -> Vec<Box<dyn Mode>> {
         Box::new(batch::BatchMode::default()),
         Box::new(subs::SubsMode::default()),
         Box::new(remux::RemuxMode::default()),
+        Box::new(custom::CustomMode::default()),
     ]
+}
+
+/// A fresh, unloaded form for a preset type.
+pub fn new_mode(kind: &str) -> Option<Box<dyn Mode>> {
+    all_modes().into_iter().find(|m| m.key() == kind)
+}
+
+/// (kind, label) of every preset type.
+pub fn kinds() -> Vec<(&'static str, &'static str)> {
+    all_modes().iter().map(|m| (m.key(), m.title())).collect()
 }
 
 /// Defaults derived from settings, shared by several modes.

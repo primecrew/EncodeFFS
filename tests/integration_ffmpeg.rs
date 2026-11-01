@@ -434,3 +434,110 @@ fn all_modes_end_to_end() {
     println!("integration outputs in {}", d.display());
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// Custom preset pipelines (CustomOptions -> params -> builder -> real ffmpeg).
+#[test]
+fn custom_pipelines_end_to_end() {
+    use ffenc::cmd::custom::{self, AudioAction, CustomOptions, SubAction, VideoAction};
+    let Some(env) = setup() else {
+        eprintln!("ffmpeg/ffprobe not on PATH – skipping integration test");
+        return;
+    };
+    let d = env.dir.clone();
+    let out = d.join("custom out");
+    std::fs::create_dir_all(&out).unwrap();
+    let go = |name: &str, o: &CustomOptions, input: &Path, af: Option<PathBuf>, sf: Option<PathBuf>| -> (PathBuf, Value) {
+        let output = out.join(name);
+        let i = info(&env, input);
+        let pr = o.params(input, &output, &i, af, sf).unwrap();
+        let cmd = custom::build(&pr).unwrap();
+        eprintln!("custom {name}: {}", cmd.args.join(" "));
+        let st = run(&env, vec![spec(name, cmd, &output, pr.output_duration())], None);
+        assert_ok(&st, name);
+        let j = probe_json(&env, &output);
+        (output, j)
+    };
+    let base = CustomOptions { video_encode: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: None }, ..Default::default() };
+
+    // 1. default re-encode -> mp4: trim, resize, auto chapters, faststart, extra in/out args, both tracks kept
+    let o = CustomOptions {
+        trim_start: 1.0,
+        resize: true,
+        resize_height: 120,
+        chapter_mode: ChapterMode::Auto,
+        chapter_interval_min: 2.0 / 60.0,
+        input_args: "-analyzeduration 10M".into(),
+        output_args: "-metadata \"comment=from custom preset\"".into(),
+        ..base.clone()
+    };
+    let (_, j) = go("c1.mp4", &o, &d.join("two_audio.mkv"), None, None);
+    let v = streams(&j, "video");
+    assert_eq!((v[0]["codec_name"].as_str(), v[0]["width"].as_u64(), v[0]["height"].as_u64()), (Some("h264"), Some(160), Some(120)));
+    let a = streams(&j, "audio");
+    assert_eq!(a.len(), 2);
+    assert!(a.iter().all(|s| s["codec_name"] == "aac"));
+    assert!((duration(&j) - 5.0).abs() < 0.2, "{}", duration(&j));
+    assert_eq!(j["chapters"].as_array().unwrap().len(), 3);
+    assert_eq!(j["format"]["tags"]["comment"], "from custom preset");
+
+    // 2. copy video + mix tracks with gain and a title -> mkv
+    let o = CustomOptions { container: "mkv".into(), video: VideoAction::Copy, audio: AudioAction::Mix, track_title: "Mixed".into(), audio_encode: AudioEncode { gain_db: 2.0, ..Default::default() }, ..base.clone() };
+    let (_, j) = go("c2.mkv", &o, &d.join("two_audio.mkv"), None, None);
+    let a = streams(&j, "audio");
+    assert_eq!(a.len(), 1);
+    assert_eq!(a[0]["tags"]["title"], "Mixed");
+    assert_eq!(j["chapters"].as_array().unwrap().len(), 2, "source chapters kept by default");
+
+    // 3. copy + add track (mp4 handler name)
+    let o = CustomOptions { video: VideoAction::Copy, audio: AudioAction::AddTrack, track_title: "Commentary".into(), ..base.clone() };
+    let (_, j) = go("c3.mp4", &o, &d.join("two_audio.mkv"), Some(d.join("voice.wav")), None);
+    let a = streams(&j, "audio");
+    assert_eq!(a.len(), 3);
+    assert_eq!(a[2]["tags"]["handler_name"], "Commentary");
+
+    // 4. replace audio, drop subtitles, keep attachment in mkv
+    let o = CustomOptions { container: "mkv".into(), video: VideoAction::Copy, audio: AudioAction::Replace, subs: SubAction::Drop, ..base.clone() };
+    let (_, j) = go("c4.mkv", &o, &d.join("subs.mkv"), Some(d.join("voice.wav")), None);
+    assert_eq!(streams(&j, "audio").len(), 1);
+    assert_eq!(streams(&j, "subtitle").len(), 0);
+    assert_eq!(streams(&j, "attachment").len(), 1);
+
+    // 5. convert subs for mp4 (attachment dropped)
+    let o = CustomOptions { video: VideoAction::Copy, audio: AudioAction::Copy, subs: SubAction::Convert, ..base.clone() };
+    let (_, j) = go("c5.mp4", &o, &d.join("subs.mkv"), None, None);
+    let s = streams(&j, "subtitle");
+    assert_eq!(s.len(), 2);
+    assert!(s.iter().all(|x| x["codec_name"] == "mov_text"));
+    assert_eq!(streams(&j, "attachment").len(), 0);
+
+    // 6. import an .srt into an mp4 source, output mkv
+    let o = CustomOptions { container: "mkv".into(), video: VideoAction::Copy, audio: AudioAction::Copy, subs: SubAction::Import, ..base.clone() };
+    let (_, j) = go("c6.mkv", &o, &d.join("prog clip.mp4"), None, Some(d.join("a.srt")));
+    assert_eq!(streams(&j, "subtitle").len(), 1);
+
+    // 7. audio only: drop video, AAC -> m4a
+    let o = CustomOptions { container: "m4a".into(), video: VideoAction::Drop, ..base.clone() };
+    let (_, j) = go("c7.m4a", &o, &d.join("two_audio.mkv"), None, None);
+    assert_eq!(streams(&j, "video").len(), 0);
+    assert_eq!(streams(&j, "audio").len(), 2);
+
+    // 8. deinterlace (double rate) and drop source chapters
+    let o = CustomOptions { container: "mkv".into(), drop_chapters: true, ..base.clone() };
+    let (_, j) = go("c8.mkv", &o, &d.join("interlaced.mkv"), None, None);
+    assert_eq!(streams(&j, "video")[0]["r_frame_rate"], "50/1");
+    let (_, j) = go("c9.mkv", &o, &d.join("two_audio.mkv"), None, None);
+    assert_eq!(j["chapters"].as_array().unwrap().len(), 0);
+
+    // 10. folder batch pairing: same-name audio file next to the video
+    let bd = d.join("batch pair");
+    std::fs::create_dir_all(&bd).unwrap();
+    std::fs::copy(d.join("prog clip.mp4"), bd.join("g1.mp4")).unwrap();
+    std::fs::copy(d.join("voice.wav"), bd.join("g1.wav")).unwrap();
+    let af = ffenc::util::find_companion(&bd.join("g1.mp4"), ffenc::util::ANY_AUDIO_EXTS).unwrap();
+    let o = CustomOptions { video: VideoAction::Copy, audio: AudioAction::Replace, ..base.clone() };
+    let (_, j) = go(&o.output_name(&bd.join("g1.mp4")), &o, &bd.join("g1.mp4"), Some(af), None);
+    assert_eq!(streams(&j, "audio")[0]["sample_rate"], "44100", "replacement audio used");
+    assert!(out.join("g1_custom.mp4").is_file());
+
+    let _ = std::fs::remove_dir_all(&d);
+}

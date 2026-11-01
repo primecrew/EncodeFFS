@@ -21,6 +21,11 @@ struct State {
     out_dir: String,
     out_name: String,
     last_auto: String,
+    #[serde(default = "sfx")]
+    suffix: String,
+    /// "auto" = .mkv for .mkv input, else .mp4 (script behaviour)
+    #[serde(default = "auto_container")]
+    container: String,
     override_duration: bool,
     duration: f64,
     trim_start: f64,
@@ -38,13 +43,31 @@ struct State {
     faststart: bool,
 }
 
+fn sfx() -> String {
+    "_encoded".into()
+}
+fn auto_container() -> String {
+    "auto".into()
+}
+
 impl State {
+    fn regen_name(&mut self) {
+        if self.input.trim().is_empty() {
+            return;
+        }
+        let p = PathBuf::from(self.input.trim());
+        let ext = if self.container == "auto" { reencode::default_output_ext(&p).to_string() } else { self.container.clone() };
+        auto_name(&mut self.out_name, &mut self.last_auto, format!("{}{}.{}", stem(&p), self.suffix, ext));
+    }
+
     fn from_settings(s: &Settings) -> Self {
         State {
             input: String::new(),
             out_dir: s.output_folder.clone(),
             out_name: String::new(),
             last_auto: String::new(),
+            suffix: sfx(),
+            container: auto_container(),
             override_duration: false,
             duration: 0.0,
             trim_start: s.trim_start,
@@ -81,10 +104,13 @@ impl Mode for ReencodeMode {
         "reencode"
     }
     fn title(&self) -> &'static str {
-        "1. Re-encode video"
+        "Re-encode video"
     }
     fn description(&self) -> &'static str {
         "libx264 + AAC with trim, resize, chapters, passthrough, gain/compressor and deinterlacing."
+    }
+    fn run_fields(&self) -> &'static [&'static str] {
+        &["input", "out_name", "last_auto", "override_duration", "duration"]
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, cx: &Ctx) {
@@ -97,9 +123,7 @@ impl Mode for ReencodeMode {
         let summary = self.probe.info().and_then(|i| i.video_summary().ok());
         egui::Grid::new("m1").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             if path_row(ui, "Input video", &mut st.input, Pick::File("Video", VIDEO_EXTS), &cx.settings.input_folder) {
-                let p = PathBuf::from(st.input.trim());
-                let ext = reencode::default_output_ext(&p);
-                auto_name(&mut st.out_name, &mut st.last_auto, format!("{}_encoded.{}", stem(&p), ext));
+                st.regen_name();
             }
             ui.label("");
             self.probe.status_ui(ui, describe_video);
@@ -133,7 +157,20 @@ impl Mode for ReencodeMode {
             });
             ui.end_row();
 
-            output_rows(ui, &mut st.out_dir, &mut st.out_name, &cx.settings.output_folder);
+            if output_rows_sfx(ui, &mut st.out_dir, &mut st.out_name, &mut st.suffix, &cx.settings.output_folder) {
+                st.regen_name();
+            }
+            ui.label("Container");
+            let before = st.container.clone();
+            egui::ComboBox::from_id_salt("m1_cont").selected_text(st.container.clone()).show_ui(ui, |ui| {
+                for c in ["auto", "mp4", "mkv", "mov"] {
+                    ui.selectable_value(&mut st.container, c.to_string(), if c == "auto" { "auto (MKV in -> MKV, else MP4)" } else { c });
+                }
+            });
+            if before != st.container {
+                st.regen_name();
+            }
+            ui.end_row();
             passthrough_ui(ui, "m1_pt", &mut st.passthrough);
         });
 
@@ -300,8 +337,7 @@ impl Mode for ReencodeMode {
     fn on_drop(&mut self, paths: &[PathBuf], _cx: &Ctx) {
         if let Some(p) = first_with_ext(paths, VIDEO_EXTS) {
             self.st.input = s(p);
-            let ext = reencode::default_output_ext(p);
-            auto_name(&mut self.st.out_name, &mut self.st.last_auto, format!("{}_encoded.{}", stem(p), ext));
+            self.st.regen_name();
         }
     }
 

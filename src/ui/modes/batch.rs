@@ -71,10 +71,13 @@ impl Mode for BatchMode {
         "batch"
     }
     fn title(&self) -> &'static str {
-        "7. Batch re-encode folder"
+        "Batch re-encode folder"
     }
     fn description(&self) -> &'static str {
         "Re-encode every .mp4/.mkv/.avi/.mov/.avs in a folder with shared settings."
+    }
+    fn run_fields(&self) -> &'static [&'static str] {
+        &["in_dir"]
     }
     fn ui(&mut self, ui: &mut egui::Ui, cx: &Ctx) {
         if let Some(t) = &self.scan {
@@ -248,6 +251,9 @@ impl Mode for BatchMode {
             ..Default::default()
         };
         self.st = restore(v, State { in_dir: s.input_folder.clone(), out_dir: s.output_folder.clone(), bs });
+        if self.st.in_dir.trim().is_empty() {
+            self.st.in_dir = s.input_folder.clone();
+        }
         self.rows.clear();
         self.scanned_dir.clear();
     }

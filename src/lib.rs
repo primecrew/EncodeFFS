@@ -4,11 +4,13 @@
 //! * `ffmpeg`   – locating ffmpeg/ffprobe, probing media, running jobs with progress
 //! * `updater`  – discovering, downloading, verifying and installing FFmpeg builds
 //! * `settings` – persisted JSON settings
+//! * `presets`  – named, user-editable configurations (built-ins + custom)
 //!
 //! Everything here is unit-testable on Linux; the egui front end lives in the binary crate.
 
 pub mod cmd;
 pub mod ffmpeg;
+pub mod presets;
 pub mod settings;
 pub mod updater;
 pub mod util;

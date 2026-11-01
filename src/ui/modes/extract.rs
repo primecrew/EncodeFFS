@@ -19,6 +19,8 @@ struct State {
     out_dir: String,
     out_name: String,
     last_auto: String,
+    #[serde(default = "sfx")]
+    suffix: String,
 }
 
 #[derive(Default)]
@@ -27,9 +29,13 @@ pub struct ExtractMode {
     probe: ProbeSlot,
 }
 
+fn sfx() -> String {
+    "_audio".into()
+}
+
 fn set_input(st: &mut State, p: &std::path::Path) {
     st.input = s(p);
-    auto_name(&mut st.out_name, &mut st.last_auto, format!("{}_audio.wav", stem(p)));
+    auto_name(&mut st.out_name, &mut st.last_auto, format!("{}{}.wav", stem(p), st.suffix));
 }
 
 impl Mode for ExtractMode {
@@ -37,7 +43,7 @@ impl Mode for ExtractMode {
         "extract"
     }
     fn title(&self) -> &'static str {
-        "4. Extract audio to WAV"
+        "Extract audio to WAV"
     }
     fn description(&self) -> &'static str {
         "PCM 16-bit stereo WAV at the source sample rate (fallback from Settings)."
@@ -53,7 +59,10 @@ impl Mode for ExtractMode {
             ui.label("");
             self.probe.status_ui(ui, describe_audio);
             ui.end_row();
-            output_rows(ui, &mut st.out_dir, &mut st.out_name, &cx.settings.output_folder);
+            if output_rows_sfx(ui, &mut st.out_dir, &mut st.out_name, &mut st.suffix, &cx.settings.output_folder) && !st.input.trim().is_empty() {
+                let p = PathBuf::from(st.input.trim());
+                set_input(st, &p);
+            }
         });
         if let Some(i) = self.probe.info() {
             if i.audio_count() > 0 && i.first_audio_sample_rate().is_none() {
@@ -89,7 +98,7 @@ impl Mode for ExtractMode {
         serde_json::to_value(&self.st).unwrap_or_default()
     }
     fn load(&mut self, v: &serde_json::Value, s: &Settings) {
-        self.st = restore(v, State { out_dir: s.output_folder.clone(), ..Default::default() });
+        self.st = restore(v, State { out_dir: s.output_folder.clone(), suffix: sfx(), ..Default::default() });
         self.probe = ProbeSlot::default();
     }
 }

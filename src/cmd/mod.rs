@@ -15,6 +15,7 @@ pub mod mix;        // mode 6
 pub mod batch;      // mode 7 planning
 pub mod subs;       // mode 8
 pub mod remux;      // mode 9
+pub mod custom;     // composable "custom" preset type
 
 use std::path::PathBuf;
 
