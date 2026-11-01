@@ -9,6 +9,7 @@
 //! Everything here is unit-testable on Linux; the egui front end lives in the binary crate.
 
 pub mod cmd;
+pub mod cmdline;
 pub mod ffmpeg;
 pub mod presets;
 pub mod settings;

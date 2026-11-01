@@ -839,7 +839,7 @@ dependencies = [
 
 [[package]]
 name = "ffmpeg-encoder"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "eframe",
  "embed-resource",

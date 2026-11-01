@@ -307,7 +307,7 @@ impl Queue {
     fn run_job(&self, job: &Job) -> JobStatus {
         let spec = &job.spec;
         let args = full_args(&spec.args);
-        self.log(format!("Running: {}", crate::util::display_command(&job.program, &args)));
+        self.log(format!("Running: {}", crate::cmdline::cmd_line(&job.program, &args)));
 
         for (path, text) in &spec.side_files {
             if let Some(d) = path.parent() {
@@ -324,7 +324,7 @@ impl Queue {
         }
         let mut log_file = spec.log_file.as_ref().and_then(|p| File::create(p).ok());
         if let Some(f) = log_file.as_mut() {
-            let _ = writeln!(f, "{}\n", crate::util::display_command(&job.program, &args));
+            let _ = writeln!(f, "{}\n", crate::cmdline::cmd_line(&job.program, &args));
         }
 
         let child = super::hidden_command(&job.program)

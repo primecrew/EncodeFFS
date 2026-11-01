@@ -391,3 +391,30 @@ pub fn same_file(a: &Path, b: &Path) -> bool {
         _ => a == b,
     }
 }
+
+/// Button with the standard "copy" icon (two overlapping pages, drawn – no icon
+/// font needed, so it renders the same on every Windows install) and a text label.
+pub fn copy_button(ui: &mut Ui, label: &str, tooltip: &str) -> egui::Response {
+    let galley = egui::WidgetText::from(label).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Button);
+    let pad = ui.spacing().button_padding;
+    let icon = 14.0;
+    let gap = if label.is_empty() { 0.0 } else { 6.0 };
+    let size = egui::vec2(pad.x * 2.0 + icon + gap + galley.size().x, galley.size().y.max(icon) + pad.y * 2.0).max(ui.spacing().interact_size);
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let vis = ui.style().interact(&resp);
+        let p = ui.painter();
+        p.rect(rect.expand(vis.expansion), vis.corner_radius, vis.weak_bg_fill, vis.bg_stroke, egui::StrokeKind::Inside);
+        let stroke = egui::Stroke::new(1.3_f32, vis.fg_stroke.color);
+        let top_left = egui::pos2(rect.left() + pad.x, rect.center().y - icon / 2.0);
+        let page = egui::vec2(9.0, 11.0);
+        let back = egui::Rect::from_min_size(top_left, page);
+        let front = back.translate(egui::vec2(4.5, 3.0));
+        p.rect_stroke(back, 1.5, stroke, egui::StrokeKind::Inside);
+        p.rect_filled(front, 1.5, vis.weak_bg_fill);
+        p.rect_stroke(front, 1.5, stroke, egui::StrokeKind::Inside);
+        let text_pos = egui::pos2(rect.left() + pad.x + icon + gap, rect.center().y - galley.size().y / 2.0);
+        p.galley(text_pos, galley, vis.text_color());
+    }
+    resp.on_hover_text(tooltip)
+}

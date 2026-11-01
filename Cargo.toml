@@ -1,6 +1,6 @@
 [package]
 name = "ffmpeg-encoder"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "Portable Windows GUI for FFmpeg encoding tasks (port of the user's PowerShell script v22.0)"
 build = "build.rs"

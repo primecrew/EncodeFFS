@@ -17,9 +17,10 @@ use ffenc::ffmpeg::version::{self, compare, FfmpegCheck, Verdict};
 use ffenc::presets::{self as pstore, Preset};
 use ffenc::settings::{self, Settings};
 use ffenc::updater::{install, AvailableBuild};
-use ffenc::util::{display_command, fmt_hms, now_unix};
+use ffenc::cmdline::{self, Shell};
+use ffenc::util::{fmt_hms, now_unix};
 
-use common::{hint, Bg};
+use common::{copy_button, hint, Bg};
 use modes::{kinds, new_mode, Ctx, Plan};
 use presets::{Action, Dialog, PresetUi, SideEvent};
 use updater::{UpdaterEvent, UpdaterUi};
@@ -27,8 +28,19 @@ use updater::{UpdaterEvent, UpdaterUi};
 struct Preview {
     plan: Plan,
     program: PathBuf,
-    text: String,
     overwrite: Vec<PathBuf>,
+    /// Which copy button was pressed last (None = "Copy all") and when.
+    copied: Option<(Option<usize>, std::time::Instant)>,
+}
+
+/// The full command of one job as it will run, for the given terminal.
+fn job_command(shell: Shell, program: &Path, j: &ffenc::ffmpeg::runner::JobSpec) -> String {
+    cmdline::job_script(shell, program, &full_args(&j.args), &j.side_files)
+}
+
+/// Every job, one after another (CRLF separated), for "Copy all".
+fn all_commands(shell: Shell, program: &Path, plan: &Plan) -> String {
+    plan.jobs.iter().map(|j| job_command(shell, program, j)).collect::<Vec<_>>().join(shell.newline())
 }
 
 /// First-run / "FFmpeg not found" dialog state.
@@ -256,27 +268,15 @@ impl App {
         let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx };
         match self.pre.editor(idx, &self.settings).mode.build(&cx) {
             Ok(plan) => {
-                let mut text = String::new();
                 let mut overwrite = vec![];
-                for n in &plan.notes {
-                    text.push_str(&format!("# {n}\n"));
-                }
-                for (i, j) in plan.jobs.iter().enumerate() {
-                    text.push_str(&format!("\n# [{}] {}\n", i + 1, j.label));
-                    for w in &j.warnings {
-                        for l in w.lines() {
-                            text.push_str(&format!("#   {l}\n"));
-                        }
-                    }
-                    text.push_str(&display_command(&ff.ffmpeg, &full_args(&j.args)));
-                    text.push('\n');
+                for j in &plan.jobs {
                     if let Some(o) = &j.output {
                         if o.exists() && matches!(j.post, ffenc::ffmpeg::runner::PostAction::None) {
                             overwrite.push(o.clone());
                         }
                     }
                 }
-                self.preview = Some(Preview { plan, program: ff.ffmpeg.clone(), text, overwrite });
+                self.preview = Some(Preview { plan, program: ff.ffmpeg.clone(), overwrite, copied: None });
             }
             Err(e) => {
                 // double-click / Run right after switching presets: the form probes its input first
@@ -592,26 +592,103 @@ impl App {
         let mut run = false;
         let mut cancel = false;
         if let Some(p) = &mut self.preview {
-            egui::Window::new(format!("Preview – {}", self.pre.list[self.pre.current].name)).collapsible(false).resizable(true).default_size([820.0, 420.0]).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
-                ui.label(format!("{} job(s) will be queued:", p.plan.jobs.len()));
-                for o in &p.overwrite {
-                    ui.colored_label(Color32::from_rgb(230, 180, 60), format!("⚠ Output exists and will be overwritten: {}", o.display()));
-                }
-                egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                    ui.add(egui::TextEdit::multiline(&mut p.text.as_str()).code_editor().desired_width(f32::INFINITY));
+            let shell = &mut self.settings.copy_shell;
+            let mut shell_changed = false;
+            let last_copy = p.copied;
+            let mut new_copy: Option<Option<usize>> = None;
+            let copied_recently = |which: Option<usize>| last_copy.map(|(w, t)| w == which && t.elapsed() < Duration::from_millis(1500)).unwrap_or(false);
+            egui::Window::new(format!("Confirm – {}", self.pre.list[self.pre.current].name))
+                .collapsible(false)
+                .resizable(true)
+                .default_size([900.0, 520.0])
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    let n = p.plan.jobs.len();
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("{n} job{} will be queued with these exact commands:", if n == 1 { "" } else { "s" })).strong());
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            egui::ComboBox::from_id_salt("copy_shell").selected_text(shell.label()).show_ui(ui, |ui| {
+                                for s in Shell::ALL {
+                                    shell_changed |= ui.selectable_value(shell, s, s.label()).changed();
+                                }
+                            });
+                            ui.label("Command syntax:");
+                        });
+                    });
+                    hint(ui, format!("ffmpeg: {}", p.program.display()));
+                    for note in &p.plan.notes {
+                        hint(ui, note);
+                    }
+                    for o in &p.overwrite {
+                        ui.colored_label(Color32::from_rgb(230, 180, 60), format!("⚠ Output exists and will be overwritten: {}", o.display()));
+                    }
+                    ui.separator();
+                    let bottom = 44.0;
+                    egui::ScrollArea::vertical().id_salt("confirm_jobs").auto_shrink([false, true]).max_height((ui.available_height() - bottom).max(160.0)).show(ui, |ui| {
+                        for (i, j) in p.plan.jobs.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("[{}] {}", i + 1, j.label)).strong());
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if copied_recently(Some(i)) {
+                                        ui.colored_label(Color32::from_rgb(120, 200, 120), "Copied");
+                                    }
+                                    if copy_button(ui, "Copy", "Copy command to clipboard").clicked() {
+                                        ui.ctx().copy_text(job_command(*shell, &p.program, j));
+                                        new_copy = Some(Some(i));
+                                    }
+                                });
+                            });
+                            for w in &j.warnings {
+                                if !w.starts_with("Chapters:") {
+                                    hint(ui, w);
+                                }
+                            }
+                            // read-only but selectable; wraps, never truncated
+                            let cmd = job_command(*shell, &p.program, j);
+                            ui.add(egui::TextEdit::multiline(&mut cmd.as_str()).font(egui::TextStyle::Monospace).desired_width(f32::INFINITY).desired_rows(1));
+                            for (path, text) in &j.side_files {
+                                egui::CollapsingHeader::new(format!("Temporary chapter file: {}", path.display())).id_salt(("side", i, path.to_string_lossy().to_string())).default_open(n == 1).show(ui, |ui| {
+                                    ui.add(egui::TextEdit::multiline(&mut text.as_str()).font(egui::TextStyle::Monospace).desired_width(f32::INFINITY).desired_rows(2));
+                                    hint(ui, match *shell {
+                                        Shell::PowerShell => "Written by the app before the job and deleted afterwards. The copied PowerShell command writes it first, so it can be run on its own.",
+                                        Shell::Cmd => "Written by the app before the job and deleted afterwards. To run the copied cmd command yourself, save this text (UTF-8) to that path first, or copy as PowerShell.",
+                                    });
+                                });
+                            }
+                            ui.add_space(6.0);
+                        }
+                    });
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.add(egui::Button::new(RichText::new(if n == 1 { "▶  Run" } else { "▶  Run all" }).strong()).min_size(egui::vec2(110.0, 28.0))).on_hover_text("Add to the queue and start").clicked() {
+                            run = true;
+                        }
+                        if ui.add(egui::Button::new("Cancel").min_size(egui::vec2(80.0, 28.0))).clicked() {
+                            cancel = true;
+                        }
+                        ui.separator();
+                        let (label, tip) = if n == 1 { ("Copy", "Copy command to clipboard") } else { ("Copy all", "Copy all commands to clipboard") };
+                        if copy_button(ui, label, tip).clicked() {
+                            ui.ctx().copy_text(all_commands(*shell, &p.program, &p.plan));
+                            new_copy = Some(None);
+                        }
+                        if copied_recently(None) {
+                            ui.colored_label(Color32::from_rgb(120, 200, 120), "Copied");
+                        }
+                    });
                 });
-                ui.horizontal(|ui| {
-                    if ui.button(RichText::new("▶ Run").strong()).clicked() {
-                        run = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                    if ui.button("Copy commands").clicked() {
-                        ui.ctx().copy_text(p.text.clone());
-                    }
-                });
-            });
+            if let Some(w) = new_copy {
+                p.copied = Some((w, std::time::Instant::now()));
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                cancel = true;
+            }
+            if p.copied.map(|(_, t)| t.elapsed() < Duration::from_millis(1600)).unwrap_or(false) {
+                ctx.request_repaint_after(Duration::from_millis(200));
+            }
+            if shell_changed {
+                let _ = self.settings.save();
+            }
         }
         if run {
             if let Some(p) = self.preview.take() {
@@ -1093,6 +1170,29 @@ fn migrate_legacy(list: &mut [Preset], s: &mut Settings) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copy_all_has_every_full_command() {
+        use ffenc::ffmpeg::runner::JobSpec;
+        let cmd = |a: &[&str]| ffenc::cmd::BuiltCommand { args: a.iter().map(|s| s.to_string()).collect(), ..Default::default() };
+        let mut a = JobSpec::new("one", cmd(&["-i", r"C:\v\my clip.mkv", r"C:\out\a b.mp4"]), PathBuf::from("a"), PathBuf::from("a.log"), None);
+        a.side_files = vec![(PathBuf::from(r"C:\T\ffenc_chapters_1.ffmeta"), ";FFMETADATA1\n".into())];
+        let b = JobSpec::new("two", cmd(&["-i", "x.mkv", "y.mp4"]), PathBuf::from("b"), PathBuf::from("b.log"), None);
+        let plan = Plan { jobs: vec![a, b], ..Default::default() };
+        let prog = Path::new(r"C:\Program Files\ffmpeg\bin\ffmpeg.exe");
+        let ps = all_commands(Shell::PowerShell, prog, &plan);
+        let lines: Vec<&str> = ps.split("\r\n").collect();
+        assert_eq!(lines.len(), 3, "{ps}");
+        assert_eq!(lines[0], r#"[IO.File]::WriteAllText('C:\T\ffenc_chapters_1.ffmeta', (@(';FFMETADATA1') -join "`n") + "`n")"#);
+        assert_eq!(lines[1], r"& 'C:\Program Files\ffmpeg\bin\ffmpeg.exe' -hide_banner -nostats -progress pipe:1 -i 'C:\v\my clip.mkv' 'C:\out\a b.mp4'");
+        assert!(lines[2].ends_with("-i x.mkv y.mp4"));
+        let c = all_commands(Shell::Cmd, prog, &plan);
+        let cl: Vec<&str> = c.split("\r\n").collect();
+        assert_eq!(cl.len(), 2, "cmd: commands only");
+        assert_eq!(cl[0], r#""C:\Program Files\ffmpeg\bin\ffmpeg.exe" -hide_banner -nostats -progress pipe:1 -i "C:\v\my clip.mkv" "C:\out\a b.mp4""#);
+        assert_eq!(job_command(Shell::Cmd, prog, &plan.jobs[1]), cl[1]);
+    }
+
     use serde_json::json;
 
     #[test]

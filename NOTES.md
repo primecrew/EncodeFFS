@@ -1,5 +1,29 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.3.1
+- **Run confirmation shows the full commands with copy buttons.** Before: the popup already showed the commands next to
+  Run / Cancel, but as one plain-text block with POSIX-style quoting (`\"`, no PowerShell call operator), and a
+  text-only "Copy commands" button. Now:
+  - every job gets its own block: label, warnings, the full read-only (selectable, monospace, wrapped, never truncated)
+    command starting with the full path to `ffmpeg.exe` and the runner's `-hide_banner -nostats -progress pipe:1`,
+    exactly as it runs; the temp chapter file is shown with its path and contents;
+  - **Copy** buttons with the standard copy icon (two overlapping pages, drawn so it renders on any Windows) +
+    label, tooltip "Copy command to clipboard"; per job, plus **Copy all** for batches (one command per line, CRLF);
+    "Copied" shows for 1.5 s;
+  - **Command syntax** selector, remembered: **PowerShell** (default) or **Command Prompt**. The copied text is
+    exactly what's shown.
+    - cmd: CRT quoting (`"…"`, `\"`, trailing backslashes doubled) plus `^` escapes for `& | < > ^ ( )` wherever cmd
+      would see them unquoted (cmd's quote state is tracked across the whole line).
+    - PowerShell: `& '…\ffmpeg.exe'`, single-quoted literals for anything not plainly safe, so `$ \` , ; @ {}` are never
+      interpreted; dash tokens like `-c:v` / `-metadata:s:a:0` are quoted because PowerShell can split them. If a job uses
+      a chapter file, the copied PowerShell text writes it first (`[IO.File]::WriteAllText`, UTF-8 without BOM, LF), so
+      it runs on its own. With cmd, save the shown chapter text to the shown path first.
+    - Limits: arguments containing `"` need PowerShell 7.3+ (5.1 mangles embedded quotes in native arguments); cmd
+      expands `%NAME%` when such a variable exists; an argument that is exactly `--%` can't go through PowerShell
+      (ffmpeg never needs one).
+  - Run / Run all, Cancel and Esc work as before; Run is labelled "Run all" for several jobs.
+- The queue log's "Running:" line uses the cmd syntax.
+
 ## 0.3.0
 - **Chapter creator** (Re-encode, Custom pipeline incl. its folder batch, Batch re-encode):
   - ffprobe now reads chapters (`-show_entries chapter=start_time,end_time:chapter_tags=title`); each form shows

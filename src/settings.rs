@@ -43,6 +43,8 @@ pub struct Settings {
     pub last_preset: String,
     /// Right-hand "Source" panel (ffprobe summary of the selected input).
     pub show_source_panel: bool,
+    /// Terminal syntax for "Copy command" in the run confirmation.
+    pub copy_shell: crate::cmdline::Shell,
     /// Legacy (0.1.x): last-used values per mode; migrated into presets on first start of 0.2.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, serde_json::Value>,
@@ -74,6 +76,7 @@ impl Default for Settings {
             drafts: BTreeMap::new(),
             last_preset: String::new(),
             show_source_panel: true,
+            copy_shell: crate::cmdline::Shell::PowerShell,
             modes: BTreeMap::new(),
             last_mode: String::new(),
         }

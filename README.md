@@ -11,8 +11,10 @@ One `FFmpegEncoder.exe`, no installer, no runtime. Needs `ffmpeg.exe` + `ffprobe
    `bin` folder is accepted too). Secondary buttons: **Download newest FFmpeg** and **Skip for now**.
    Later: Help › Locate FFmpeg folder… or File › Settings.
 3. Pick a preset in the **preset panel** on the left, choose a file (Browse… or drag-and-drop onto the window) and
-   press **Preview & run…** — or double-click a preset / press **▶ Run** / F5. The preview shows the exact ffmpeg
-   command(s) and any overwrite warnings; **Run** queues them. The **Source** panel on the right shows what ffprobe
+   press **Preview & run…** — or double-click a preset / press **▶ Run** / F5. The confirmation shows every job's full
+   ffmpeg command (full `ffmpeg.exe` path, temp chapter file contents) and any overwrite warnings; **Run** queues them.
+   Each command has a **Copy** button (copy icon; "Copy all" for batches) that copies it for **PowerShell** or
+   **Command Prompt** (pick under "Command syntax"), with paths and special characters quoted for that shell. The **Source** panel on the right shows what ffprobe
    reports about the input.
 4. The queue shows progress per job and can cancel one or all. Cancel sends `q` to ffmpeg, kills it after 4 s,
    and deletes the partial output.
