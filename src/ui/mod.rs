@@ -60,6 +60,10 @@ pub struct App {
     preview: Option<Preview>,
     error: Option<String>,
     info: Option<(String, String)>,
+    /// Feedback after a file drop: (text, accepted, when).
+    drop_note: Option<(String, bool, std::time::Instant)>,
+    started: std::time::Instant,
+    sim_drop_done: bool,
     settings_edit: Option<Settings>,
     updater: UpdaterUi,
     show_about: bool,
@@ -142,6 +146,9 @@ impl App {
             preview: None,
             error: None,
             info: None,
+            drop_note: None,
+            started: std::time::Instant::now(),
+            sim_drop_done: false,
             settings_edit: None,
             updater: UpdaterUi::default(),
             show_about: false,
@@ -647,7 +654,8 @@ impl App {
                             let cmd = job_command(*shell, &p.program, j);
                             ui.add(egui::TextEdit::multiline(&mut cmd.as_str()).font(egui::TextStyle::Monospace).desired_width(f32::INFINITY).desired_rows(1));
                             for (path, text) in &j.side_files {
-                                egui::CollapsingHeader::new(format!("Temporary chapter file: {}", path.display())).id_salt(("side", i, path.to_string_lossy().to_string())).default_open(n == 1).show(ui, |ui| {
+                                let kind = if path.file_name().map(|f| f.to_string_lossy().starts_with(ffenc::cmd::join::LIST_PREFIX)).unwrap_or(false) { "concat list" } else { "chapter file" };
+                                egui::CollapsingHeader::new(format!("Temporary {kind}: {}", path.display())).id_salt(("side", i, path.to_string_lossy().to_string())).default_open(n == 1).show(ui, |ui| {
                                     ui.add(egui::TextEdit::multiline(&mut text.as_str()).font(egui::TextStyle::Monospace).desired_width(f32::INFINITY).desired_rows(2));
                                     hint(ui, match *shell {
                                         Shell::PowerShell => "Written by the app before the job and deleted afterwards. The copied PowerShell command writes it first, so it can be run on its own.",
@@ -871,12 +879,12 @@ impl App {
                 common::section(ui, "Folders");
                 egui::Grid::new("set_f").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                     let d = ed.input_folder.clone();
-                    common::path_row(ui, "FFmpeg bin folder", &mut ed.ffmpeg_bin_path, common::Pick::Folder, &d);
+                    common::path_row_nodrop(ui, "FFmpeg bin folder", &mut ed.ffmpeg_bin_path, common::Pick::Folder, &d);
                     ui.label("");
                     hint(ui, "Must contain ffmpeg.exe and ffprobe.exe (ffprobe is used to read source info).");
                     ui.end_row();
-                    common::path_row(ui, "Input folder", &mut ed.input_folder, common::Pick::Folder, &d);
-                    common::path_row(ui, "Output folder", &mut ed.output_folder, common::Pick::Folder, &d);
+                    common::path_row_nodrop(ui, "Input folder", &mut ed.input_folder, common::Pick::Folder, &d);
+                    common::path_row_nodrop(ui, "Output folder", &mut ed.output_folder, common::Pick::Folder, &d);
                 });
                 hint(ui, "FFmpeg lookup order: this folder -> ffmpeg\\ next to the app -> app-managed copy -> PATH.");
                 common::section(ui, "Encoding defaults (used by built-in presets that are not customised, and by new blank presets)");
@@ -999,8 +1007,37 @@ impl App {
     }
 }
 
+/// Test hook for drag & drop where the OS drag cannot be scripted (e.g. Wine):
+/// `FFENC_SIMULATE_DROP="path1|path2"` hovers the paths from 3 s to 7 s after
+/// start, then drops them once.
+fn simulate_drop(start: std::time::Instant, done: &mut bool, raw: &mut egui::RawInput) {
+    if *done {
+        return;
+    }
+    let Ok(v) = std::env::var("FFENC_SIMULATE_DROP") else {
+        *done = true;
+        return;
+    };
+    let files: Vec<egui::HoveredFile> = v.split('|').filter(|s| !s.is_empty()).map(|s| egui::HoveredFile { path: Some(PathBuf::from(s)), mime: String::new() }).collect();
+    let t = start.elapsed().as_secs_f32();
+    if (3.0..7.0).contains(&t) {
+        raw.hovered_files = files;
+    } else if t >= 7.0 {
+        raw.dropped_files = files.into_iter().map(|f| egui::DroppedFile { path: f.path, ..Default::default() }).collect();
+        *done = true;
+    }
+}
+
 impl eframe::App for App {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        let _ = ctx;
+        simulate_drop(self.started, &mut self.sim_drop_done, raw);
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.sim_drop_done {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
         self.poll_background();
 
         // drag & drop
@@ -1009,7 +1046,21 @@ impl eframe::App for App {
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
             let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
             let idx = self.pre.current;
-            self.pre.editor(idx, &self.settings).mode.on_drop(&dropped, &cx);
+            let ed = self.pre.editor(idx, &self.settings);
+            let paths = if ed.mode.wants_folders() { dropped.clone() } else { ffenc::util::expand_dropped(&dropped) };
+            let before = ed.mode.save();
+            ed.mode.on_drop(&paths, &cx);
+            let accepted = ed.mode.save() != before;
+            let name = self.pre.cur().name.clone();
+            self.drop_note = Some((
+                if accepted {
+                    format!("Added to “{name}”")
+                } else {
+                    format!("Nothing in the drop fits “{name}” – check the file type")
+                },
+                accepted,
+                std::time::Instant::now(),
+            ));
         }
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
@@ -1114,12 +1165,29 @@ impl eframe::App for App {
             self.start_preview(ctx);
         }
 
-        // file hover overlay
-        if ctx.input(|i| !i.raw.hovered_files.is_empty()) {
+        // file hover: accent frame around the window + a banner; the fields that
+        // accept files highlight themselves (common::path_row / the join list)
+        let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
+        let note = self.drop_note.as_ref().filter(|n| n.2.elapsed() < Duration::from_secs(3)).map(|n| (n.0.clone(), n.1));
+        if hovering || note.is_some() {
             let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("drop")));
             let rect = ctx.screen_rect();
-            painter.rect_filled(rect, 0.0, Color32::from_black_alpha(160));
-            painter.text(rect.center(), egui::Align2::CENTER_CENTER, format!("Drop files for “{}”", self.pre.cur().name), egui::FontId::proportional(24.0), Color32::WHITE);
+            let accent = ctx.style().visuals.selection.stroke.color;
+            let (text, color) = if hovering {
+                painter.rect_stroke(rect.shrink(2.0), 6.0, egui::Stroke::new(4.0_f32, accent), egui::StrokeKind::Inside);
+                let n = ctx.input(|i| i.raw.hovered_files.len());
+                (format!("Drop {} for “{}” – highlighted fields accept files", if n > 1 { format!("{n} items") } else { "here".into() }, self.pre.cur().name), accent)
+            } else {
+                let (t, ok) = note.unwrap();
+                (t, if ok { Color32::from_rgb(90, 170, 90) } else { Color32::from_rgb(200, 120, 60) })
+            };
+            let galley = painter.layout_no_wrap(text, egui::FontId::proportional(17.0), Color32::WHITE);
+            let pill = egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.top() + 44.0), galley.size() + egui::vec2(28.0, 14.0));
+            painter.rect_filled(pill, 14.0, color.gamma_multiply(0.95));
+            painter.galley(pill.center() - galley.size() / 2.0, galley, Color32::WHITE);
+            ctx.request_repaint_after(Duration::from_millis(200));
+        } else if self.drop_note.is_some() {
+            self.drop_note = None;
         }
 
         self.dialogs(ctx);

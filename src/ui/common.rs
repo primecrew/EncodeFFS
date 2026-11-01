@@ -141,13 +141,49 @@ fn start_dir(current: &str, fallback: &str) -> Option<PathBuf> {
     d.or_else(|| Some(PathBuf::from(fallback)).filter(|p| p.is_dir()))
 }
 
-/// Label + text field + Browse button. Returns true when the value changed.
+/// True while the OS is dragging files over the window.
+pub fn files_hovering(ctx: &egui::Context) -> bool {
+    ctx.input(|i| !i.raw.hovered_files.is_empty())
+}
+
+/// Highlight a drop target (accent border + faint fill) while files hover the window.
+pub fn paint_drop_target(ui: &Ui, rect: egui::Rect) {
+    let c = ui.visuals().selection.stroke.color;
+    let t = ui.ctx().input(|i| i.time) as f32;
+    let a = 0.75 + 0.25 * (t * 5.0).sin();
+    ui.painter().rect(rect.expand(2.0), 4.0, c.gamma_multiply(0.12), egui::Stroke::new(2.0_f32, c.gamma_multiply(a)), egui::StrokeKind::Outside);
+    ui.ctx().request_repaint();
+}
+
+/// Label + text field + Browse button. The field is a drop target: it is
+/// highlighted while files are dragged over the window (the drop itself is
+/// routed by the window to the active preset). Returns true when the value changed.
 pub fn path_row(ui: &mut Ui, label: &str, value: &mut String, pick: Pick, fallback_dir: &str) -> bool {
+    path_row_impl(ui, label, value, pick, fallback_dir, true)
+}
+
+/// Like [`path_row`] but not a drop target (output folders, settings).
+pub fn path_row_nodrop(ui: &mut Ui, label: &str, value: &mut String, pick: Pick, fallback_dir: &str) -> bool {
+    path_row_impl(ui, label, value, pick, fallback_dir, false)
+}
+
+fn path_row_impl(ui: &mut Ui, label: &str, value: &mut String, pick: Pick, fallback_dir: &str, droppable: bool) -> bool {
     let mut changed = false;
     ui.label(label);
     ui.horizontal(|ui| {
         let w = (ui.available_width() - 80.0).max(120.0);
-        changed |= ui.add(egui::TextEdit::singleline(value).desired_width(w)).changed();
+        let mut te = egui::TextEdit::singleline(value).desired_width(w);
+        if droppable {
+            te = te.hint_text(match pick {
+                Pick::File(..) => "Drop a file here, or Browse…",
+                Pick::Folder => "Drop a folder here, or Browse…",
+            });
+        }
+        let r = ui.add(te);
+        changed |= r.changed();
+        if droppable && files_hovering(ui.ctx()) {
+            paint_drop_target(ui, r.rect);
+        }
         if ui.button("Browse…").clicked() {
             let mut d = rfd::FileDialog::new();
             if let Some(s) = start_dir(value, fallback_dir) {
@@ -169,7 +205,7 @@ pub fn path_row(ui: &mut Ui, label: &str, value: &mut String, pick: Pick, fallba
 
 /// Output folder + file name rows.
 pub fn output_rows(ui: &mut Ui, dir: &mut String, name: &mut String, fallback_dir: &str) {
-    path_row(ui, "Output folder", dir, Pick::Folder, fallback_dir);
+    path_row_nodrop(ui, "Output folder", dir, Pick::Folder, fallback_dir);
     ui.label("Output file name");
     ui.add(egui::TextEdit::singleline(name).desired_width(f32::INFINITY));
     ui.end_row();

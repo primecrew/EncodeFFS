@@ -12,6 +12,7 @@ pub mod batch;
 pub mod commentary;
 pub mod custom;
 pub mod extract;
+pub mod join;
 pub mod mix;
 pub mod reencode;
 pub mod remux;
@@ -53,6 +54,11 @@ pub trait Mode {
     fn ui(&mut self, ui: &mut egui::Ui, cx: &Ctx);
     /// Validate and build the jobs.
     fn build(&mut self, cx: &Ctx) -> Result<Plan, String>;
+    /// Whether drops should keep folders as folders (folder-based presets).
+    /// Otherwise the window expands each dropped folder into its files first.
+    fn wants_folders(&self) -> bool {
+        false
+    }
     /// Files dropped onto the window while this mode is active.
     fn on_drop(&mut self, paths: &[PathBuf], cx: &Ctx);
     /// Remembered values.
@@ -81,6 +87,7 @@ pub fn all_modes() -> Vec<Box<dyn Mode>> {
         Box::new(batch::BatchMode::default()),
         Box::new(subs::SubsMode::default()),
         Box::new(remux::RemuxMode::default()),
+        Box::new(join::JoinMode::default()),
         Box::new(custom::CustomMode::default()),
     ]
 }

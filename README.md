@@ -10,7 +10,7 @@ One `FFmpegEncoder.exe`, no installer, no runtime. Needs `ffmpeg.exe` + `ffprobe
    `ffprobe.exe`, pre-filled with `C:\ffmpeg\bin`, with Browse… and live validation (the parent of a
    `bin` folder is accepted too). Secondary buttons: **Download newest FFmpeg** and **Skip for now**.
    Later: Help › Locate FFmpeg folder… or File › Settings.
-3. Pick a preset in the **preset panel** on the left, choose a file (Browse… or drag-and-drop onto the window) and
+3. Pick a preset in the **preset panel** on the left, choose a file (Browse… or drag-and-drop – see below) and
    press **Preview & run…** — or double-click a preset / press **▶ Run** / F5. The confirmation shows every job's full
    ffmpeg command (full `ffmpeg.exe` path, temp chapter file contents) and any overwrite warnings; **Run** queues them.
    Each command has a **Copy** button (copy icon; "Copy all" for batches) that copies it for **PowerShell** or
@@ -22,6 +22,42 @@ One `FFmpegEncoder.exe`, no installer, no runtime. Needs `ffmpeg.exe` + `ffprobe
 FFmpeg lookup order: Settings folder (default `C:\ffmpeg\bin`) → `ffmpeg\` or `ffmpeg\bin\` next to
 the exe → app-managed copy `%LOCALAPPDATA%\FFmpegEncoder\ffmpeg\bin` → `PATH`.
 On start the app checks the build has `libx264` and `aac`.
+
+## Drag and drop
+Drop files or folders anywhere on the window; they go to the selected preset. While you drag, the window gets an accent
+frame, a banner names the preset, and every field that accepts a drop (input file / folder fields, the Join list) is
+highlighted. Empty input fields read "Drop a file here, or Browse…"; Browse… always works too. After the drop a short
+note says "Added to …" or that nothing in the drop fits that preset.
+- **Single-file presets** take the first matching file: a dropped folder is expanded to the files inside it (natural
+  name order), so dropping a folder on Re-encode picks its first video. Presets with a second input (commentary audio,
+  replacement WAV, subtitle file, still image + audio) fill those from the same drop.
+- **Folder presets** (Batch re-encode, Remux, Custom pipeline in batch mode) use the dropped folder (or the folder of a
+  dropped file).
+- **Join / stitch files** takes every video in the drop (folders expanded), sorted naturally, duplicates ignored.
+
+## Join / stitch files
+Built-in preset (type "Join / stitch files", editable like any other) that joins several videos into one, top to bottom.
+- **File list:** add with drag-and-drop (files or folders), **Add files…** or **Add folder…**. New files are sorted in
+  natural order (`file2` before `file10`, case-insensitive). Reorder by dragging the dotted grip or with ⬆ / ⬇; ✖
+  removes; **Sort by name** (natural), **Sort by modified date** (oldest first), **Reverse**, **Clear**. Each file is
+  probed: duration, codec, size, fps, audio; the total duration is shown.
+- **Fast, lossless** (default): concat demuxer, `-f concat -safe 0 -i <list> -c copy`. The list is a temp file
+  (`%TEMP%\ffenc_concat_<id>.txt`, UTF-8) in FFmpeg's syntax: `ffconcat version 1.0`, then `file '<full path>'` per input;
+  an apostrophe in a path is written `'\''`, backslashes stay as they are (literal inside single quotes). Deleted after
+  the job (success, failure or cancel). Maps all video and audio (plus subtitles for MKV).
+- **Compatibility check:** compares every file with the first (video codec, resolution, frame rate, pixel format, audio
+  codec, sample rate, channels, audio track count). Any difference shows a warning with the details and a **Switch to
+  re-encode join** button.
+- **Re-encode:** concat filter. Every file is scaled (keeping aspect) and padded to the first file's size, `setsar=1`,
+  converted to its frame rate and yuv420p; audio is resampled to the first file's rate, mono or stereo. Files without
+  audio get silence and files without video get black frames. Encoded with the preset's x264 (CRF / preset / tune) and AAC
+  (bitrate / gain / compressor) settings. Subtitles are not carried over.
+- **One chapter per source file** (on by default): titled with the file name (without extension), start/end from
+  the probed durations, accumulated in milliseconds; written with the same FFMETADATA1 writer as the chapter creator.
+- Output: folder, name (auto `<first file><suffix>.<container>`, suffix `_joined`), container mp4 / mkv / mov,
+  faststart.
+- The confirmation shows the full command plus the temp list and chapter file contents. The copied PowerShell command
+  writes both files first, so it runs on its own.
 
 ## Main window (HandBrake-style)
 - **Left – presets:** every preset, built-in and yours, in your order. One click selects; **double-click** (or **▶ Run**,
@@ -40,7 +76,7 @@ On start the app checks the build has `libx264` and `aac`.
 ## Presets
 Everything in the preset panel is a **preset**: a named, saved set of options for an operation **type**. Nothing is locked.
 
-- Ships with 11 built-ins: the 9 script modes, **Custom pipeline** and **Add chapters (no re-encode)**. Edit, rename, reorder, duplicate or delete any of them;
+- Ships with 12 built-ins: the 9 script modes, **Join / stitch files**, **Custom pipeline** and **Add chapters (no re-encode)**. Edit, rename, reorder, duplicate or delete any of them;
   built-ins can be **reset to factory defaults** and deleted ones restored (Presets › Restore missing built-in presets).
 - Editing a form marks the preset `*` (unsaved). **Save preset** (Ctrl+S) stores it, **Revert** drops the edits,
   **Save as new…** turns the current form into a new preset (the original keeps its saved values).
@@ -66,6 +102,7 @@ Everything in the preset panel is a **preset**: a named, saved set of options fo
 | Batch re-encode folder | Scans a folder, probes every file, include/exclude per file, same options as re-encode, per-file progress + summary. |
 | Copy subtitle tracks | Re-mux or re-encode with chosen subtitle tracks from a second file; MP4 converts text subs to mov_text (or try copy). |
 | Remux MKV → MP4 | Stream copy, never overwrites, optional delete of source only after the MP4 verifies; summary in the script's wording. |
+| **Join / stitch files** | Concatenate several videos: lossless concat demuxer or re-encode with the concat filter, chapter per file (see above). |
 | **Custom pipeline** | Build your own from independent choices (below). |
 | **Add chapters (no re-encode)** | Custom pipeline preset: copies every stream, adds chapters every 5 min (or your list), same container as the input, suffix `_chapters`. |
 
@@ -151,6 +188,9 @@ Live network tests: `cargo test --lib live -- --ignored` (`FFENC_LIVE=btbn-stabl
 - `src/ffmpeg/` – locate, probe (ffprobe JSON), version/encoder check, progress parsing, job queue/runner.
 - `src/updater/` – source lookup (BtbN/gyan), download+verify, extract, install/rollback.
 - `src/presets.rs` – preset file format, built-in list, import/export rules.
+- `src/cmd/join.rs` – join/stitch: concat list writer, compatibility check, chapter-per-file math, both command builders.
+- `src/cmdline.rs` – Windows cmd / PowerShell quoting for the copied commands.
+- `assets/` – `icon-source.png` (app artwork), `make_icon.py` → `app.ico` (16–256 px), `app.rc`, manifest.
 - `src/cmd/chapters.rs` – chapter list building, validation, FFMETADATA1 writer/parser, timestamp/list parsing, temp files.
 - `src/ui/` – egui app, dialogs, updater window; `src/ui/presets.rs` – preset panel (search, favorites, folders), editors,
   change tracking; `src/ui/chapter_creator.rs` – chapter creator; `src/ui/source.rs` – Source panel;

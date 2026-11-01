@@ -65,6 +65,8 @@ pub fn primary_input(e: &Editor) -> Option<PathBuf> {
         .filter_map(|k| v.get(*k).and_then(|x| x.as_str()).map(|s| (*k, s.trim())))
         .find(|(k, s)| !s.is_empty() && (*k == "input" || s.contains(['\\', '/'])))
         .map(|(_, s)| PathBuf::from(s))
+        // Join: the first file of its list
+        .or_else(|| v.get("files").and_then(|f| f.as_array()).and_then(|a| a.first()).and_then(|x| x.as_str()).map(PathBuf::from))
 }
 
 #[derive(Clone, PartialEq)]

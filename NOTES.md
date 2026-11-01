@@ -23,6 +23,43 @@
       (ffmpeg never needs one).
   - Run / Run all, Cancel and Esc work as before; Run is labelled "Run all" for several jobs.
 - The queue log's "Running:" line uses the cmd syntax.
+- **Drag and drop everywhere:**
+  - While files are dragged over the window there's an accent frame, a banner ("Drop N items for “preset” –
+    highlighted fields accept files"), and every droppable field is highlighted. The full-screen dark overlay is gone,
+    because it hid the targets.
+  - Input fields show "Drop a file here, or Browse…" or "Drop a folder here, or Browse…". Output folders and Settings
+    are not drop targets.
+  - After a drop, a 3 s note says "Added to …" or "Nothing in the drop fits …".
+  - Folders dropped on single-file presets are expanded to their files in natural order, so the first video wins.
+    Folder presets (Batch, Remux, Custom batch) still get the folder (`Mode::wants_folders`). Join takes every video.
+  - Test hook: `FFENC_SIMULATE_DROP="path1|path2"` hovers those paths 3–7 s after start and then drops them. It's used
+    for the Wine smoke test, where OS drags can't be scripted.
+- **New built-in preset "Join / stitch files"** (`kind: "join"`, appended once to existing presets files via
+  `known_builtins`):
+  - File list with drag-and-drop, Add files/folder, natural sort, drag-grip reordering (egui DnD with an insertion
+    line), ⬆/⬇/✖, Sort by name / modified date, Reverse, Clear. Per-file ffprobe in the background (duration, codec,
+    size, fps, audio) and the total.
+  - Lossless join with the concat demuxer: a temp list `%TEMP%\ffenc_concat_<id>.txt` with `ffconcat version 1.0` and
+    `file '<path>'` lines, `'` → `'\''`. It's a runner side file, so it's deleted after the job; stale ones are cleaned
+    at startup together with chapter files. Durations come from the container duration, because that's what the concat
+    demuxer advances by.
+  - Compatibility check (codec, size, fps, pix_fmt, audio codec/rate/channels/track count) with a "Switch to re-encode
+    join" button.
+  - Re-encode join with the concat filter: scale+pad to the first file, `setsar=1`, its fps (NTSC rates as exact
+    fractions), yuv420p; `aresample` + `aformat` to its rate, mono or stereo; `anullsrc` silence or `color` black for
+    missing streams. Uses the preset's x264/AAC settings, and gain/compressor after the concat.
+  - One chapter per file, titled with the file stem. Cumulative times are rounded once on the running total, so no
+    drift.
+  - Output folder/name/suffix (`_joined`), container mp4/mkv/mov, faststart.
+- `util::natural_cmp` / `natural_sort_paths` / `expand_dropped` / `same_path`.
+- **App icon:** the user's film-strip artwork.
+  - `assets/icon-source.png` is 128×128 RGBA. `assets/make_icon.py` builds `assets/app.ico` with 16, 24, 32, 48, 64,
+    128 and 256 px PNG entries. Resampling is premultiplied-alpha Lanczos, with a light unsharp mask at ≤ 32 px, and
+    transparency is kept.
+  - The 256 px entry is a 2× upscale, so it's a little soft. At 16 px the sprocket holes merge into a brown tilted tile,
+    while from 32 px up the frame and holes read clearly.
+  - The same artwork (native 128 px) is the window/taskbar icon (`eframe::icon_data::from_png_bytes`), replacing the
+    generated play-button icon.
 
 ## 0.3.0
 - **Chapter creator** (Re-encode, Custom pipeline incl. its folder batch, Batch re-encode):

@@ -319,7 +319,7 @@ pub fn cleanup_stale(dir: &Path, max_age: std::time::Duration) -> usize {
     let mut n = 0;
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        if !name.starts_with(TEMP_PREFIX) || !(name.ends_with(&format!(".{TEMP_EXT}")) || name.ends_with(".txt")) {
+        if !(name.starts_with(TEMP_PREFIX) || name.starts_with(super::join::LIST_PREFIX)) || !(name.ends_with(&format!(".{TEMP_EXT}")) || name.ends_with(".txt")) {
             continue;
         }
         let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|m| m.elapsed().ok()).map(|a| a >= max_age).unwrap_or(false);

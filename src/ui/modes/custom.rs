@@ -155,7 +155,7 @@ impl Mode for CustomMode {
                     }
                 });
                 ui.end_row();
-                path_row(ui, "Output folder", &mut st.out_dir, Pick::Folder, &cx.settings.output_folder);
+                path_row_nodrop(ui, "Output folder", &mut st.out_dir, Pick::Folder, &cx.settings.output_folder);
                 ui.label("Name suffix");
                 ui.text_edit_singleline(&mut st.o.suffix);
                 ui.end_row();
@@ -423,6 +423,9 @@ impl Mode for CustomMode {
         Ok(Plan { jobs, group: Some(("Custom batch".into(), false, skipped)), notes })
     }
 
+    fn wants_folders(&self) -> bool {
+        self.st.o.batch
+    }
     fn on_drop(&mut self, paths: &[PathBuf], cx: &Ctx) {
         let Some(p) = paths.first() else { return };
         if self.st.o.batch {

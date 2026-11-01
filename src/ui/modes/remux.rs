@@ -183,6 +183,9 @@ impl Mode for RemuxMode {
             .collect();
         Ok(Plan { jobs, group: Some(("Remux".into(), true, plan.skipped.len())), notes })
     }
+    fn wants_folders(&self) -> bool {
+        true
+    }
     fn on_drop(&mut self, paths: &[PathBuf], _cx: &Ctx) {
         if let Some(d) = paths.iter().find(|p| p.is_dir()) {
             self.st.src_dir = s(d);

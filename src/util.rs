@@ -122,6 +122,75 @@ pub fn join(dir: &Path, name: &str) -> PathBuf {
     dir.join(name)
 }
 
+/// Two paths name the same file (case-insensitive on Windows, canonicalised when they exist).
+pub fn same_path(a: &Path, b: &Path) -> bool {
+    let n = |p: &Path| {
+        let c = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let s = c.to_string_lossy().into_owned();
+        if cfg!(windows) {
+            s.to_lowercase()
+        } else {
+            s
+        }
+    };
+    n(a) == n(b)
+}
+
+/// "Natural" order: case-insensitive, digit runs compared by value, so
+/// `file2` < `file10` and `Clip 9` < `clip 10`. Ties fall back to a plain comparison.
+pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (ac, bc): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let (mut i, mut j) = (0, 0);
+    while i < ac.len() && j < bc.len() {
+        if ac[i].is_ascii_digit() && bc[j].is_ascii_digit() {
+            let si = i;
+            while i < ac.len() && ac[i].is_ascii_digit() {
+                i += 1;
+            }
+            let sj = j;
+            while j < bc.len() && bc[j].is_ascii_digit() {
+                j += 1;
+            }
+            let na: String = ac[si..i].iter().collect::<String>().trim_start_matches('0').to_string();
+            let nb: String = bc[sj..j].iter().collect::<String>().trim_start_matches('0').to_string();
+            let o = na.len().cmp(&nb.len()).then_with(|| na.cmp(&nb));
+            if o != Ordering::Equal {
+                return o;
+            }
+        } else {
+            let (x, y) = (ac[i].to_lowercase().next().unwrap_or(ac[i]), bc[j].to_lowercase().next().unwrap_or(bc[j]));
+            if x != y {
+                return x.cmp(&y);
+            }
+            i += 1;
+            j += 1;
+        }
+    }
+    (ac.len() - i).cmp(&(bc.len() - j)).then_with(|| a.cmp(b))
+}
+
+/// Sort paths by file name in natural order.
+pub fn natural_sort_paths(v: &mut [PathBuf]) {
+    v.sort_by(|a, b| natural_cmp(&a.file_name().unwrap_or_default().to_string_lossy(), &b.file_name().unwrap_or_default().to_string_lossy()));
+}
+
+/// Dropped paths for presets that take files: files are kept in the given order,
+/// each folder is replaced by the files directly inside it (natural order).
+pub fn expand_dropped(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out = vec![];
+    for p in paths {
+        if p.is_dir() {
+            let mut v: Vec<PathBuf> = std::fs::read_dir(p).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_file()).collect()).unwrap_or_default();
+            natural_sort_paths(&mut v);
+            out.extend(v);
+        } else {
+            out.push(p.clone());
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +227,31 @@ mod tests {
         assert_eq!(find_companion(&d.join("Game 1.mkv"), &["flac"]).unwrap().file_name().unwrap(), "game 1.FLAC");
         assert!(find_companion(&d.join("Game 2.mkv"), &["wav"]).is_none());
         assert!(find_companion(&d.join("Game 1.mkv"), &["mkv"]).is_none(), "never the input itself");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn natural_order() {
+        let mut v = vec!["file10.mkv", "file2.mkv", "File1.mkv", "file02b.mkv", "clip 9.mp4", "Clip 10.mp4", "a.mkv", "file2.mkv.bak", "ünï 1.mkv"];
+        v.sort_by(|a, b| natural_cmp(a, b));
+        assert_eq!(v, ["a.mkv", "clip 9.mp4", "Clip 10.mp4", "File1.mkv", "file2.mkv", "file2.mkv.bak", "file02b.mkv", "file10.mkv", "ünï 1.mkv"]);
+        assert_eq!(natural_cmp("x007", "x7"), std::cmp::Ordering::Less, "equal value: deterministic tie-break");
+        assert_eq!(natural_cmp("part 1", "part 1"), std::cmp::Ordering::Equal);
+        assert_eq!(natural_cmp("99999999999999999999999", "100000000000000000000000"), std::cmp::Ordering::Less, "no integer overflow");
+    }
+
+    #[test]
+    fn expand_drops() {
+        let d = std::env::temp_dir().join(format!("drop_{}", unique_id()));
+        std::fs::create_dir_all(d.join("sub")).unwrap();
+        for f in ["e10.mkv", "e2.mkv", "e1.mkv"] {
+            std::fs::write(d.join(f), b"x").unwrap();
+        }
+        std::fs::write(d.join("sub/inner.mkv"), b"x").unwrap();
+        let single = PathBuf::from("/x/z.mp4");
+        let got = expand_dropped(&[single.clone(), d.clone()]);
+        let names: Vec<String> = got.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, ["z.mp4", "e1.mkv", "e2.mkv", "e10.mkv"], "files first as dropped; folder natural-sorted, not recursive");
         std::fs::remove_dir_all(&d).unwrap();
     }
 }

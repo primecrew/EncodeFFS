@@ -112,7 +112,7 @@ impl Mode for BatchMode {
                 }
             });
             ui.end_row();
-            path_row(ui, "Output folder", &mut self.st.out_dir, Pick::Folder, &cx.settings.output_folder);
+            path_row_nodrop(ui, "Output folder", &mut self.st.out_dir, Pick::Folder, &cx.settings.output_folder);
         });
         if rescan {
             self.start_scan(cx);
@@ -246,6 +246,9 @@ impl Mode for BatchMode {
         Ok(Plan { jobs: specs, group: Some(("Batch re-encode".into(), false, 0)), notes: vec![format!("Prepared {n} batch encoding job(s).")] })
     }
 
+    fn wants_folders(&self) -> bool {
+        true
+    }
     fn on_drop(&mut self, paths: &[PathBuf], cx: &Ctx) {
         if let Some(p) = paths.first() {
             let dir = if p.is_dir() { p.clone() } else { p.parent().map(|d| d.to_path_buf()).unwrap_or_default() };

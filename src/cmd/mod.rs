@@ -16,6 +16,7 @@ pub mod batch;      // mode 7 planning
 pub mod subs;       // mode 8
 pub mod remux;      // mode 9
 pub mod custom;     // composable "custom" preset type
+pub mod join;       // join / stitch files
 
 use std::path::PathBuf;
 
