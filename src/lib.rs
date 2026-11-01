@@ -11,6 +11,7 @@
 pub mod cmd;
 pub mod cmdline;
 pub mod ffmpeg;
+pub mod output_guard;
 pub mod presets;
 pub mod settings;
 pub mod updater;

@@ -26,6 +26,9 @@ pub enum PostAction {
     None,
     /// Mode 9: move the temp MP4 to its final name without overwriting; optionally delete the MKV.
     Remux { temp: PathBuf, dest: PathBuf, delete_source: Option<PathBuf> },
+    /// Every other job (0.3.3): ffmpeg writes `temp` (same folder); after success it is renamed to
+    /// `dest` – replacing an existing file only when `overwrite` was confirmed.
+    Publish { temp: PathBuf, dest: PathBuf, overwrite: bool },
 }
 
 /// What a mode hands to the queue.
@@ -107,6 +110,10 @@ pub struct Shared {
     pub groups: HashMap<u64, GroupState>,
     next_id: u64,
     app_log: Option<File>,
+    /// Keep chapter/list side files and partial outputs (debugging).
+    pub keep_temp: bool,
+    /// List of partial files of running jobs (cleaned at the next start after a crash).
+    pub partials_registry: Option<PathBuf>,
 }
 
 const MAX_LOG_LINES: usize = 5000;
@@ -153,6 +160,19 @@ impl Queue {
         let qc = q.clone();
         thread::Builder::new().name("ffmpeg-worker".into()).spawn(move || qc.worker()).expect("spawn worker");
         q
+    }
+
+    /// "Keep temporary files for debugging".
+    pub fn set_keep_temp(&self, on: bool) {
+        self.shared.lock().unwrap().keep_temp = on;
+    }
+
+    pub fn set_partials_registry(&self, p: Option<PathBuf>) {
+        self.shared.lock().unwrap().partials_registry = p;
+    }
+
+    fn keep_temp(&self) -> bool {
+        self.shared.lock().unwrap().keep_temp
     }
 
     pub fn log(&self, line: impl Into<String>) {
@@ -265,7 +285,20 @@ impl Queue {
             match next {
                 Some(job) => {
                     let started = Instant::now();
+                    let partial = match &job.spec.post {
+                        PostAction::Publish { temp, .. } => Some(temp.clone()),
+                        _ => None,
+                    };
+                    let registry = self.shared.lock().unwrap().partials_registry.clone();
+                    if let (Some(r), Some(p)) = (&registry, &partial) {
+                        crate::output_guard::register(r, p);
+                    }
                     let status = self.run_job(&job);
+                    if let (Some(r), Some(p)) = (&registry, &partial) {
+                        if !p.exists() || !self.keep_temp() {
+                            crate::output_guard::unregister(r, p);
+                        }
+                    }
                     let mut s = self.shared.lock().unwrap();
                     let msg = match &status {
                         JobStatus::Done => format!("Processing complete: {}", job.spec.label),
@@ -430,11 +463,17 @@ impl Queue {
         if cancel_at.is_some() {
             // Remove the partial output (for remux this is the temp file).
             let partial = match &spec.post {
-                PostAction::Remux { temp, .. } => Some(temp.clone()),
+                PostAction::Remux { temp, .. } | PostAction::Publish { temp, .. } => Some(temp.clone()),
                 PostAction::None => spec.output.clone(),
             };
             if let Some(p) = partial {
-                let _ = std::fs::remove_file(p);
+                if matches!(spec.post, PostAction::Publish { .. }) && self.keep_temp() {
+                    if p.exists() {
+                        self.log(format!("Kept partial output (debugging): {}", p.display()));
+                    }
+                } else {
+                    let _ = std::fs::remove_file(p);
+                }
             }
             return JobStatus::Cancelled;
         }
@@ -446,16 +485,43 @@ impl Queue {
             if let PostAction::Remux { temp, .. } = &spec.post {
                 let _ = std::fs::remove_file(temp);
             }
+            if let PostAction::Publish { temp, .. } = &spec.post {
+                if self.keep_temp() {
+                    if temp.exists() {
+                        self.log(format!("Kept partial output (debugging): {}", temp.display()));
+                    }
+                } else {
+                    let _ = std::fs::remove_file(temp);
+                }
+            }
             let last = tail.back().cloned().unwrap_or_default();
             return JobStatus::Failed(format!("FFmpeg exited with code {code}. {last}{log_hint}"));
         }
-        if let Some(out) = &spec.output {
+        let check = match &spec.post {
+            PostAction::Publish { temp, .. } => Some(temp.clone()),
+            _ => spec.output.clone(),
+        };
+        if let Some(out) = &check {
             let good = std::fs::metadata(out).map(|m| m.len() > 0).unwrap_or(false);
             if !good {
                 return JobStatus::Failed(format!("Output file not created: {}{log_hint}", out.display()));
             }
         }
         // Post actions
+        if let PostAction::Publish { temp, dest, overwrite } = &spec.post {
+            match crate::output_guard::publish(temp, dest, *overwrite) {
+                Ok(used) => {
+                    if &used != dest {
+                        self.log(format!("{} appeared while encoding; the new file was saved as {} instead.", dest.display(), used.display()));
+                    } else if *overwrite {
+                        self.log(format!("Replaced {}", dest.display()));
+                    }
+                }
+                Err(e) => {
+                    return JobStatus::Failed(format!("Could not move the finished file {} to {}: {e}. The finished file was kept under its temporary name.{log_hint}", temp.display(), dest.display()));
+                }
+            }
+        }
         if let PostAction::Remux { temp, dest, delete_source } = &spec.post {
             if let Err(e) = publish_no_overwrite(temp, dest) {
                 let _ = std::fs::remove_file(temp);
@@ -491,6 +557,12 @@ impl Queue {
     }
 
     fn cleanup_side_files(&self, spec: &JobSpec) {
+        if self.keep_temp() {
+            for (p, _) in &spec.side_files {
+                self.log(format!("Kept temporary file (debugging): {}", p.display()));
+            }
+            return;
+        }
         for (p, _) in &spec.side_files {
             let _ = std::fs::remove_file(p);
         }

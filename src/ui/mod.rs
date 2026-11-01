@@ -13,7 +13,8 @@ use std::time::Duration;
 
 use eframe::egui::{self, RichText};
 use ffenc::ffmpeg::locate::{self, FfPaths};
-use ffenc::ffmpeg::runner::{full_args, JobStatus, Queue};
+use ffenc::ffmpeg::runner::{full_args, JobSpec, JobStatus, PostAction, Queue};
+use ffenc::output_guard::{self, Choice, Conflict, Outcome, Reason, Target, WhenExists};
 use ffenc::ffmpeg::version::{self, compare, FfmpegCheck, Verdict};
 use ffenc::presets::{self as pstore, Preset};
 use ffenc::settings::{self, Settings};
@@ -27,23 +28,194 @@ use presets::{Action, Dialog, PresetUi, SideEvent};
 use updater::{UpdaterEvent, UpdaterUi};
 
 struct Preview {
+    /// Jobs as the preset built them (before overwrite protection).
     plan: Plan,
     program: PathBuf,
-    overwrite: Vec<PathBuf>,
+    /// Temp-file id per job (stable while the popup is open).
+    ids: Vec<String>,
+    /// target index -> job index (jobs that go through overwrite protection; remux has its own).
+    tgt_job: Vec<usize>,
+    targets: Vec<Target>,
+    conflicts: Vec<Conflict>,
+    /// One choice per conflict.
+    choices: Vec<Choice>,
+    policy: WhenExists,
+    /// Final jobs (after choices): what Run queues and what is shown/copied.
+    jobs: Vec<JobSpec>,
+    /// Outcome per target.
+    outcomes: Vec<Outcome>,
+    /// Focus "Keep both" of the first conflict when the popup opens (Ask mode).
+    focus_keep: bool,
     /// Which copy button was pressed last (None = "Copy all") and when.
     copied: Option<(Option<usize>, std::time::Instant)>,
     /// Put keyboard focus on Run when the popup opens (Enter/Space runs, Esc cancels).
     focus_run: bool,
 }
 
-/// The full command of one job as it will run, for the given terminal.
-fn job_command(shell: Shell, program: &Path, j: &ffenc::ffmpeg::runner::JobSpec) -> String {
-    cmdline::job_script(shell, program, &full_args(&j.args), &j.side_files)
+/// The full command of one job as it will run, for the given terminal, followed by the
+/// rename of the temporary output that the app does after success.
+fn job_command(shell: Shell, program: &Path, j: &JobSpec) -> String {
+    let mut s = cmdline::job_script(shell, program, &full_args(&j.args), &j.side_files);
+    if let PostAction::Publish { temp, dest, overwrite } = &j.post {
+        s.push_str(shell.newline());
+        s.push_str(&cmdline::publish_line(shell, temp, dest, *overwrite));
+    }
+    s
 }
 
 /// Every job, one after another (CRLF separated), for "Copy all".
-fn all_commands(shell: Shell, program: &Path, plan: &Plan) -> String {
-    plan.jobs.iter().map(|j| job_command(shell, program, j)).collect::<Vec<_>>().join(shell.newline())
+fn all_commands(shell: Shell, program: &Path, jobs: &[JobSpec]) -> String {
+    jobs.iter().map(|j| job_command(shell, program, j)).collect::<Vec<_>>().join(shell.newline())
+}
+
+fn fmt_modified(t: Option<std::time::SystemTime>) -> String {
+    match t {
+        Some(t) => chrono::DateTime::<chrono::Local>::from(t).format("%Y-%m-%d %H:%M").to_string(),
+        None => "unknown date".into(),
+    }
+}
+
+fn file_name(p: &Path) -> String {
+    p.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| p.display().to_string())
+}
+
+impl Preview {
+    fn new(plan: Plan, program: PathBuf, policy: WhenExists) -> Self {
+        let ids = plan.jobs.iter().map(|_| ffenc::util::unique_id()).collect();
+        let mut tgt_job = vec![];
+        let mut targets = vec![];
+        for (i, j) in plan.jobs.iter().enumerate() {
+            if let (Some(o), PostAction::None) = (&j.output, &j.post) {
+                tgt_job.push(i);
+                targets.push(Target { output: o.clone(), inputs: output_guard::job_inputs(j) });
+            }
+        }
+        let conflicts = output_guard::find_conflicts(&targets, &output_guard::stat, output_guard::CASE_INSENSITIVE);
+        let choices = conflicts.iter().map(|c| {
+            let ch = policy.initial_choice();
+            if ch == Choice::Overwrite && !c.can_overwrite() { Choice::KeepBoth } else { ch }
+        }).collect();
+        let focus_keep = policy == WhenExists::Ask && !conflicts.is_empty();
+        let mut p = Preview { plan, program, ids, tgt_job, targets, conflicts, choices, policy, jobs: vec![], outcomes: vec![], focus_keep, copied: None, focus_run: !focus_keep };
+        p.recompute();
+        p
+    }
+
+    /// Apply the choices: final names, -n/-y, temp files.
+    fn recompute(&mut self) {
+        let choice_of = |t: usize| self.conflicts.iter().position(|c| c.job == t).map(|k| self.choices[k]).unwrap_or(Choice::KeepBoth);
+        self.outcomes = output_guard::resolve(&self.targets, &choice_of, &|p| p.exists(), output_guard::CASE_INSENSITIVE);
+        let mut jobs = vec![];
+        for (i, j) in self.plan.jobs.iter().enumerate() {
+            match self.tgt_job.iter().position(|&x| x == i) {
+                None => jobs.push(j.clone()),
+                Some(t) => match &self.outcomes[t] {
+                    Outcome::Skip => {}
+                    Outcome::Run { output, overwrite } => match output_guard::prepare(j.clone(), output, *overwrite, &self.ids[i]) {
+                        Ok(s) => jobs.push(s),
+                        // cannot happen for the built-in builders (output is always the last argument)
+                        Err(_) => {}
+                    },
+                },
+            }
+        }
+        self.jobs = jobs;
+    }
+
+    fn counts(&self) -> (usize, usize, usize) {
+        let mut c = (0, 0, 0);
+        for k in &self.conflicts {
+            match &self.outcomes[k.job] {
+                Outcome::Skip => c.2 += 1,
+                Outcome::Run { overwrite: true, .. } => c.1 += 1,
+                Outcome::Run { .. } => c.0 += 1,
+            }
+        }
+        c
+    }
+
+    /// Conflict list with per-file choices. Returns true when a choice changed.
+    fn conflicts_ui(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
+        let n = self.conflicts.len();
+        let pal = crate::ui::theme::c();
+        ui.label(RichText::new(format!("⚠ {n} output file{} already exist{} or clash – choose what to do:", if n == 1 { "" } else { "s" }, if n == 1 { "s" } else { "" })).color(pal.warn).strong());
+        if self.policy != WhenExists::Ask {
+            hint(ui, format!("Pre-selected by File › Settings › When the output file exists: {}. You can still change each file here.", self.policy.label()));
+        }
+        let focus_keep = std::mem::replace(&mut self.focus_keep, false);
+        for k in 0..n {
+            let c = self.conflicts[k].clone();
+            let name = file_name(&c.output);
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(RichText::new(&name).strong());
+                hint(ui, c.output.display().to_string());
+                for r in &c.reasons {
+                    match r {
+                        Reason::Exists(e) => ui.label(format!("Existing file: {}, modified {}", output_guard::fmt_size(e.size), fmt_modified(e.modified))),
+                        Reason::SameAsInput => ui.colored_label(pal.err, "This is an input file of the job – it can never be overwritten."),
+                        Reason::SameAsJob(j) => ui.label(format!("Job {} of this run already writes this file.", self.tgt_job[*j] + 1)),
+                    };
+                }
+                let new_name = |p: &Self| match &p.outcomes[c.job] {
+                    Outcome::Run { output, overwrite: false } if *output != c.output => Some(file_name(output)),
+                    _ => None,
+                };
+                let keep_name = new_name(self).unwrap_or_else(|| "a numbered name".into());
+                ui.horizontal_wrapped(|ui| {
+                    let cur = self.choices[k];
+                    let r = ui.radio(cur == Choice::KeepBoth, "Keep both");
+                    let r = common::named(r, egui::WidgetType::RadioButton, &format!("Keep both: save the new file as {keep_name}"));
+                    if focus_keep && k == 0 {
+                        r.request_focus();
+                    }
+                    if r.clicked() && cur != Choice::KeepBoth {
+                        self.choices[k] = Choice::KeepBoth;
+                        changed = true;
+                    }
+                    let r = ui.add_enabled(c.can_overwrite(), egui::RadioButton::new(cur == Choice::Overwrite, "Overwrite"));
+                    let why = if c.can_overwrite() { format!("Overwrite: replace the existing {name}") } else { format!("Overwrite is not possible for {name}") };
+                    let r = common::named(r, egui::WidgetType::RadioButton, &why);
+                    if r.clicked() && cur != Choice::Overwrite {
+                        self.choices[k] = Choice::Overwrite;
+                        changed = true;
+                    }
+                    let r = ui.radio(cur == Choice::Skip, "Skip this file");
+                    let r = common::named(r, egui::WidgetType::RadioButton, &format!("Skip: don't create {name}"));
+                    if r.clicked() && cur != Choice::Skip {
+                        self.choices[k] = Choice::Skip;
+                        changed = true;
+                    }
+                });
+                let result = match &self.outcomes[c.job] {
+                    Outcome::Skip => "Result: skipped; the existing file stays as it is.".to_string(),
+                    Outcome::Run { overwrite: true, .. } => "Result: the existing file will be replaced when the new one is finished.".to_string(),
+                    Outcome::Run { output, .. } => format!("Result: new file {}", file_name(output)),
+                };
+                ui.label(RichText::new(result).strong());
+            });
+        }
+        if n > 1 {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Apply to all:");
+                for (ch, label, name) in [
+                    (Choice::KeepBoth, "Keep both", "Keep both for all files"),
+                    (Choice::Overwrite, "Overwrite", "Overwrite all files that can be overwritten (the others keep both)"),
+                    (Choice::Skip, "Skip", "Skip all conflicting files"),
+                ] {
+                    let r = common::named(ui.button(label), egui::WidgetType::Button, name);
+                    if r.clicked() {
+                        for (k, c) in self.conflicts.iter().enumerate() {
+                            self.choices[k] = if ch == Choice::Overwrite && !c.can_overwrite() { Choice::KeepBoth } else { ch };
+                        }
+                        changed = true;
+                    }
+                }
+            });
+        }
+        changed
+    }
 }
 
 /// First-run / "FFmpeg not found" dialog state.
@@ -156,10 +328,26 @@ impl App {
         let ctx = cc.egui_ctx.clone();
         let queue = Queue::new(Some(settings::logs_dir().join("FFmpegEncoder.log")), move || ctx.request_repaint());
         queue.log(format!("{} {} started. Settings: {}", ffenc::APP_NAME, ffenc::APP_VERSION, settings::settings_path().display()));
-        // chapter files left behind by a crash (older than 6 h, so a second instance's live jobs are safe)
-        let stale = ffenc::cmd::chapters::cleanup_stale(&std::env::temp_dir(), Duration::from_secs(6 * 3600));
-        if stale > 0 {
-            queue.log(format!("Removed {stale} stale temporary chapter file(s)."));
+        queue.set_keep_temp(settings.keep_temp_files);
+        let registry = settings::logs_dir().join("partial-outputs.txt");
+        queue.set_partials_registry(Some(registry.clone()));
+        if settings.keep_temp_files {
+            queue.log("Keep temporary files for debugging is on: temporary files are kept and not cleaned up at startup.");
+        } else {
+            // chapter files left behind by a crash (older than 6 h, so a second instance's live jobs are safe)
+            let stale = ffenc::cmd::chapters::cleanup_stale(&std::env::temp_dir(), Duration::from_secs(6 * 3600));
+            if stale > 0 {
+                queue.log(format!("Removed {stale} stale temporary chapter file(s)."));
+            }
+            // unfinished outputs of a crashed run (not touched for 30 min, so another instance's live encodes are safe)
+            // (background thread: the folders may be slow or offline network drives)
+            let dirs: Vec<PathBuf> = [settings.output_folder.as_str(), settings.input_folder.as_str()].iter().filter(|s| !s.is_empty()).map(PathBuf::from).collect();
+            let (q, reg) = (queue.clone(), registry.clone());
+            std::thread::spawn(move || {
+                for p in output_guard::cleanup_stale(Some(&reg), &dirs, Duration::from_secs(30 * 60)) {
+                    q.log(format!("Removed unfinished output left by an earlier run: {}", p.display()));
+                }
+            });
         }
         let presets_path = pstore::presets_path();
         let had_file = presets_path.exists();
@@ -248,6 +436,7 @@ impl App {
     fn save_settings(&mut self) {
         self.settings.drafts = self.pre.drafts();
         self.settings.last_preset = self.pre.cur().id.clone();
+        self.queue.set_keep_temp(self.settings.keep_temp_files);
         if let Err(e) = self.settings.save() {
             self.queue.log(format!("Could not save settings: {e}"));
         }
@@ -327,15 +516,7 @@ impl App {
         let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx };
         match self.pre.editor(idx, &self.settings).mode.build(&cx) {
             Ok(plan) => {
-                let mut overwrite = vec![];
-                for j in &plan.jobs {
-                    if let Some(o) = &j.output {
-                        if o.exists() && matches!(j.post, ffenc::ffmpeg::runner::PostAction::None) {
-                            overwrite.push(o.clone());
-                        }
-                    }
-                }
-                self.preview = Some(Preview { plan, program: ff.ffmpeg.clone(), overwrite, copied: None, focus_run: true });
+                self.preview = Some(Preview::new(plan, ff.ffmpeg.clone(), self.settings.when_exists));
             }
             Err(e) => {
                 // double-click / Run right after switching presets: the form probes its input first
@@ -704,9 +885,10 @@ impl App {
                 .default_size([900.0_f32.min(ctx.screen_rect().width() - 40.0), 520.0_f32.min(ctx.screen_rect().height() - 40.0)])
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 , ctx, false).show(ctx, |ui| {
-                    let n = p.plan.jobs.len();
+                    let n = p.jobs.len();
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(format!("{n} job{} will be queued with these exact commands:", if n == 1 { "" } else { "s" })).strong());
+                        let head = if n == 0 { "Nothing to run – every job is skipped.".to_string() } else { format!("{n} job{} will be queued with these exact commands:", if n == 1 { "" } else { "s" }) };
+                        ui.label(RichText::new(head).strong());
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             egui::ComboBox::from_id_salt("copy_shell").selected_text(shell.label()).show_ui(ui, |ui| {
                                 for s in Shell::ALL {
@@ -720,13 +902,15 @@ impl App {
                     for note in &p.plan.notes {
                         hint(ui, note);
                     }
-                    for o in &p.overwrite {
-                        ui.colored_label(crate::ui::theme::c().warn, format!("⚠ Output exists and will be overwritten: {}", o.display()));
-                    }
                     ui.separator();
                     let bottom = 44.0;
+                    let mut changed = false;
                     egui::ScrollArea::vertical().id_salt("confirm_jobs").auto_shrink([false, true]).max_height((ui.available_height() - bottom).max(160.0)).show(ui, |ui| {
-                        for (i, j) in p.plan.jobs.iter().enumerate() {
+                        if !p.conflicts.is_empty() {
+                            changed = p.conflicts_ui(ui);
+                            ui.separator();
+                        }
+                        for (i, j) in p.jobs.iter().enumerate() {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(format!("[{}] {}", i + 1, j.label)).strong());
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -748,6 +932,12 @@ impl App {
                             // read-only but selectable; wraps, never truncated
                             let cmd = job_command(*shell, &p.program, j);
                             ui.add(egui::TextEdit::multiline(&mut cmd.as_str()).font(egui::TextStyle::Monospace).desired_width(f32::INFINITY).desired_rows(1));
+                            if let PostAction::Publish { temp, dest, overwrite } = &j.post {
+                                hint(ui, format!(
+                                    "FFmpeg writes the temporary file {} first; when it succeeds the app renames it to {}{}. If it fails or is cancelled, only the temporary file is deleted.",
+                                    file_name(temp), file_name(dest), if *overwrite { ", replacing the existing file" } else { " (never replacing an existing file)" }
+                                ));
+                            }
                             for (path, text) in &j.side_files {
                                 let kind = if path.file_name().map(|f| f.to_string_lossy().starts_with(ffenc::cmd::join::LIST_PREFIX)).unwrap_or(false) { "concat list" } else { "chapter file" };
                                 egui::CollapsingHeader::new(format!("Temporary {kind}: {}", path.display())).id_salt(("side", i, path.to_string_lossy().to_string())).default_open(n == 1).show(ui, |ui| {
@@ -761,10 +951,16 @@ impl App {
                             ui.add_space(6.0);
                         }
                     });
+                    if changed {
+                        p.recompute();
+                    }
+                    let n = p.jobs.len();
                     ui.separator();
-                    ui.horizontal(|ui| {
-                        let rb = ui.add(egui::Button::new(RichText::new(if n == 1 { "▶  Run" } else { "▶  Run all" }).strong()).min_size(egui::vec2(110.0, 28.0)));
-                        let rb = common::named(rb, egui::WidgetType::Button, if n == 1 { "Run: add to the queue and start" } else { "Run all: add to the queue and start" });
+                    ui.horizontal_wrapped(|ui| {
+                        let (kb, ow, sk) = p.counts();
+                        let summary = if p.conflicts.is_empty() { String::new() } else { format!(" – {kb} kept both, {ow} overwritten, {sk} skipped") };
+                        let rb = ui.add_enabled(n > 0, egui::Button::new(RichText::new(if n == 1 { "▶  Run" } else { "▶  Run all" }).strong()).min_size(egui::vec2(110.0, 28.0)));
+                        let rb = common::named(rb, egui::WidgetType::Button, &if n == 1 { format!("Run: add to the queue and start{summary}") } else { format!("Run all {n} jobs: add to the queue and start{summary}") });
                         if focus_run {
                             rb.request_focus();
                         }
@@ -777,7 +973,7 @@ impl App {
                         ui.separator();
                         let (label, tip) = if n == 1 { ("Copy", "Copy command to clipboard") } else { ("Copy all", "Copy all commands to clipboard") };
                         if copy_button(ui, label, tip).clicked() {
-                            ui.ctx().copy_text(all_commands(*shell, &p.program, &p.plan));
+                            ui.ctx().copy_text(all_commands(*shell, &p.program, &p.jobs));
                             new_copy = Some(None);
                         }
                         if copied_recently(None) {
@@ -800,7 +996,13 @@ impl App {
         }
         if run {
             if let Some(p) = self.preview.take() {
-                self.queue.enqueue(&p.program, p.plan.jobs, p.plan.group, self.settings.keep_logs_on_success);
+                let skipped = p.plan.jobs.len().saturating_sub(p.jobs.len());
+                if skipped > 0 {
+                    self.queue.log(format!("Skipped {skipped} job(s) whose output already exists."));
+                }
+                if !p.jobs.is_empty() {
+                    self.queue.enqueue(&p.program, p.jobs, p.plan.group, self.settings.keep_logs_on_success);
+                }
                 self.save_settings();
             }
         }
@@ -1202,6 +1404,20 @@ impl App {
                     ui.label("");
                     ui.checkbox(&mut ed.keep_logs_on_success, "Keep ffmpeg_error*.log files when a job succeeds");
                     ui.end_row();
+                    ui.label("When the output file exists");
+                    ui.vertical(|ui| {
+                        for w in WhenExists::ALL {
+                            ui.radio_value(&mut ed.when_exists, w, w.label());
+                        }
+                        hint(ui, "Ask shows each existing file in the run confirmation with Keep both / Overwrite / Skip. An input file is never overwritten.");
+                    });
+                    ui.end_row();
+                    ui.label("");
+                    ui.vertical(|ui| {
+                        ui.checkbox(&mut ed.keep_temp_files, "Keep temporary files for debugging");
+                        hint(ui, "Chapter and join-list files and unfinished outputs (*.ffenc-partial-*) are kept, their paths are written to the log, and they are not cleaned up at startup.");
+                    });
+                    ui.end_row();
                 });
             });
             ui.separator();
@@ -1522,17 +1738,61 @@ mod tests {
         let b = JobSpec::new("two", cmd(&["-i", "x.mkv", "y.mp4"]), PathBuf::from("b"), PathBuf::from("b.log"), None);
         let plan = Plan { jobs: vec![a, b], ..Default::default() };
         let prog = Path::new(r"C:\Program Files\ffmpeg\bin\ffmpeg.exe");
-        let ps = all_commands(Shell::PowerShell, prog, &plan);
+        let ps = all_commands(Shell::PowerShell, prog, &plan.jobs);
         let lines: Vec<&str> = ps.split("\r\n").collect();
         assert_eq!(lines.len(), 3, "{ps}");
         assert_eq!(lines[0], r#"[IO.File]::WriteAllText('C:\T\ffenc_chapters_1.ffmeta', (@(';FFMETADATA1') -join "`n") + "`n")"#);
         assert_eq!(lines[1], r"& 'C:\Program Files\ffmpeg\bin\ffmpeg.exe' -hide_banner -nostats -progress pipe:1 -i 'C:\v\my clip.mkv' 'C:\out\a b.mp4'");
         assert!(lines[2].ends_with("-i x.mkv y.mp4"));
-        let c = all_commands(Shell::Cmd, prog, &plan);
+        let c = all_commands(Shell::Cmd, prog, &plan.jobs);
         let cl: Vec<&str> = c.split("\r\n").collect();
         assert_eq!(cl.len(), 2, "cmd: commands only");
         assert_eq!(cl[0], r#""C:\Program Files\ffmpeg\bin\ffmpeg.exe" -hide_banner -nostats -progress pipe:1 -i "C:\v\my clip.mkv" "C:\out\a b.mp4""#);
         assert_eq!(job_command(Shell::Cmd, prog, &plan.jobs[1]), cl[1]);
+    }
+
+    #[test]
+    fn preview_resolves_conflicts_and_commands() {
+        let d = std::env::temp_dir().join(format!("ffenc_prev_{}", ffenc::util::unique_id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let input = d.join("in.mkv");
+        std::fs::write(&input, "x").unwrap();
+        let out = d.join("Out.mp4");
+        std::fs::write(&out, "old").unwrap();
+        let job = |o: &Path| {
+            let args = vec!["-y".into(), "-i".into(), input.to_string_lossy().into_owned(), o.to_string_lossy().into_owned()];
+            JobSpec::new("j", ffenc::cmd::BuiltCommand { args, ..Default::default() }, o.to_path_buf(), d.join("l.log"), None)
+        };
+        let fresh = d.join("new.mp4");
+        let plan = Plan { jobs: vec![job(&out), job(&fresh), job(&fresh), job(&input)], ..Default::default() };
+        let prog = Path::new("ffmpeg.exe");
+        // Ask: keep both pre-selected, focus goes to the first "Keep both"
+        let mut p = Preview::new(plan, prog.into(), WhenExists::Ask);
+        assert!(p.focus_keep && !p.focus_run);
+        assert_eq!(p.conflicts.iter().map(|c| c.job).collect::<Vec<_>>(), vec![0, 2, 3]);
+        let outs: Vec<String> = p.jobs.iter().map(|j| file_name(j.output.as_ref().unwrap())).collect();
+        assert_eq!(outs, ["Out (2).mp4", "new.mp4", "new (2).mp4", "in (2).mkv"]);
+        assert!(p.jobs.iter().all(|j| j.args[0] == "-n"));
+        let c = job_command(Shell::PowerShell, prog, &p.jobs[0]);
+        assert!(c.contains(".ffenc-partial-") && c.contains("[IO.File]::Move(") && c.contains("Out (2).mp4"), "{c}");
+        // overwrite only the real existing file; skip the rest
+        p.choices = vec![Choice::Overwrite, Choice::Skip, Choice::Skip];
+        p.recompute();
+        assert_eq!(p.jobs.len(), 2);
+        assert_eq!(p.jobs[0].args[0], "-y");
+        assert_eq!(p.jobs[0].output.as_deref(), Some(out.as_path()));
+        assert_eq!(p.counts(), (0, 1, 2));
+        assert!(job_command(Shell::Cmd, prog, &p.jobs[0]).contains("move /Y"));
+        // settings: always skip -> no focus on the conflict list, Run focused
+        let plan = Plan { jobs: vec![job(&out)], ..Default::default() };
+        let p = Preview::new(plan, prog.into(), WhenExists::Skip);
+        assert!(p.jobs.is_empty() && p.focus_run && !p.focus_keep);
+        // always overwrite: an input is still never overwritten
+        let plan = Plan { jobs: vec![job(&input)], ..Default::default() };
+        let p = Preview::new(plan, prog.into(), WhenExists::Overwrite);
+        assert_eq!(p.choices, vec![Choice::KeepBoth]);
+        assert_eq!(file_name(p.jobs[0].output.as_ref().unwrap()), "in (2).mkv");
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     use serde_json::json;

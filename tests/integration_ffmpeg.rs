@@ -55,6 +55,17 @@ fn info(env: &Env, p: &Path) -> MediaInfo {
 
 /// Run specs through the real queue and wait.
 fn run(env: &Env, specs: Vec<JobSpec>, group: Option<(String, bool, usize)>) -> Vec<JobStatus> {
+    // like the app (0.3.3): every non-remux job writes a partial file and is renamed after success
+    let specs: Vec<JobSpec> = specs
+        .into_iter()
+        .map(|s| match (&s.post, s.output.clone()) {
+            (PostAction::None, Some(o)) => {
+                let ow = o.exists();
+                ffenc::output_guard::prepare(s, &o, ow, &ffenc::util::unique_id()).unwrap()
+            }
+            _ => s,
+        })
+        .collect();
     let ids = env.queue.enqueue(&env.ffmpeg, specs, group, true);
     let start = Instant::now();
     loop {

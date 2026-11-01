@@ -186,6 +186,30 @@ pub fn job_script(shell: Shell, program: &Path, args: &[String], side_files: &[(
     out
 }
 
+/// The step after ffmpeg that the app performs itself: move the finished temporary file
+/// to its final name, only if ffmpeg succeeded. Without `overwrite` an existing file is
+/// never replaced.
+pub fn publish_line(shell: Shell, temp: &Path, dest: &Path, overwrite: bool) -> String {
+    let (t, d) = (temp.to_string_lossy(), dest.to_string_lossy());
+    match shell {
+        Shell::PowerShell => {
+            let (t, d) = (ps_quote(&t), ps_quote(&d));
+            if overwrite {
+                format!("if ($LASTEXITCODE -eq 0) {{ if ([IO.File]::Exists({d})) {{ [IO.File]::Replace({t}, {d}, $null) }} else {{ [IO.File]::Move({t}, {d}) }} }}")
+            } else {
+                format!("if ($LASTEXITCODE -eq 0) {{ [IO.File]::Move({t}, {d}) }}")
+            }
+        }
+        Shell::Cmd => {
+            if overwrite {
+                format!("if not errorlevel 1 move /Y \"{t}\" \"{d}\" >nul")
+            } else {
+                format!("if not errorlevel 1 if not exist \"{d}\" move \"{t}\" \"{d}\" >nul")
+            }
+        }
+    }
+}
+
 /// Split a command line the way the MSVC CRT / `CommandLineToArgvW` does
 /// (argv\[1..\] rules). Used to verify the quoting.
 pub fn parse_crt(line: &str) -> Vec<String> {
@@ -305,6 +329,15 @@ mod tests {
             "x&y (odd quote count before: cmd state carries over)",
             "plain",
         ])
+    }
+
+    #[test]
+    fn publish_lines() {
+        let (t, d) = (Path::new(r"C:\o\it's.ffenc-partial-1.mp4"), Path::new(r"C:\o\it's.mp4"));
+        assert_eq!(publish_line(Shell::PowerShell, t, d, false), r"if ($LASTEXITCODE -eq 0) { [IO.File]::Move('C:\o\it''s.ffenc-partial-1.mp4', 'C:\o\it''s.mp4') }");
+        assert!(publish_line(Shell::PowerShell, t, d, true).contains("[IO.File]::Replace("));
+        assert_eq!(publish_line(Shell::Cmd, t, d, false), r#"if not errorlevel 1 if not exist "C:\o\it's.mp4" move "C:\o\it's.ffenc-partial-1.mp4" "C:\o\it's.mp4" >nul"#);
+        assert_eq!(publish_line(Shell::Cmd, t, d, true), r#"if not errorlevel 1 move /Y "C:\o\it's.ffenc-partial-1.mp4" "C:\o\it's.mp4" >nul"#);
     }
 
     #[test]

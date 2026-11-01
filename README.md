@@ -12,7 +12,7 @@ One `FFmpegEncoder.exe`, no installer, no runtime. Needs `ffmpeg.exe` + `ffprobe
    Later: Help › Locate FFmpeg folder… or File › Settings.
 3. Pick a preset in the **preset panel** on the left, choose a file (Browse… or drag-and-drop – see below) and
    press **Preview & run…** — or double-click a preset / press **▶ Run** / F5. The confirmation shows every job's full
-   ffmpeg command (full `ffmpeg.exe` path, temp chapter file contents) and any overwrite warnings; **Run** queues them.
+   ffmpeg command (full `ffmpeg.exe` path, temp chapter file contents) and any existing output files (see below); **Run** queues them.
    Each command has a **Copy** button (copy icon; "Copy all" for batches) that copies it for **PowerShell** or
    **Command Prompt** (pick under "Command syntax"), with paths and special characters quoted for that shell. The **Source** panel on the right shows what ffprobe
    reports about the input.
@@ -38,6 +38,31 @@ On start the app checks the build has `libx264` and `aac`.
   presets, **F1** list of shortcuts.
 - **Screen readers:** buttons, labels, check boxes and text fields are exposed through UI Automation (AccessKit), and
   icon-only buttons have names (e.g. "Move chapter 2 up", "Copy command for job 1"). See NOTES for known gaps.
+
+## Existing output files (overwrite protection)
+Before anything is queued, every job's output is checked (all presets, single files, batches, Join, still image,
+WAV extract …; case-insensitive like Windows):
+- a file with that name already exists,
+- two jobs of the same run would write the same file,
+- the output is one of the job's own input files (never allowed – ffmpeg can't write over its input).
+
+The run confirmation then lists each such file with the existing file's size and date and three choices:
+**Keep both** (default, pre-selected and focused: the new file gets the first free Windows-style name
+`name (2).ext`, `name (3).ext` …, checking the folder and the other outputs of the run), **Overwrite** (replace the
+existing file; not offered for inputs / same-run clashes) and **Skip this file**. With several files, **Apply to all:
+Keep both / Overwrite / Skip** sets them all; **Cancel** (or Esc) runs nothing. Every choice is a labelled radio
+button reachable with Tab and Space.
+
+File › Settings › **When the output file exists**: *Ask* (default), *Always keep both (auto-number)*,
+*Always overwrite*, *Always skip* – the confirmation still shows the conflicts, pre-set to that choice.
+
+How a job writes its file: ffmpeg writes `name.ffenc-partial-<id>.ext` in the output folder (with `-n`; `-y` only
+for a confirmed overwrite) and the app renames it to the final name only after ffmpeg succeeded. A failed or
+cancelled job deletes just that partial file – an existing file is never touched. Without a confirmed overwrite the
+rename never replaces a file; if one appeared meanwhile, the result is saved as `name (2).ext` and the log says so.
+The confirmation and **Copy** show exactly this: the ffmpeg command with the partial name plus the rename step
+(`[IO.File]::Move` in PowerShell, `move` in cmd). Partial files left by a crash are removed at the next start.
+Remux (MKV → MP4) keeps its own rule: existing MP4s are skipped.
 
 ## Drag and drop
 Drop files or folders anywhere on the window; they go to the selected preset. While you drag, the window gets an accent
@@ -173,6 +198,8 @@ output `D:\Videos\Out`). Built-in presets you haven't customised follow these de
 
 Per-job ffmpeg stderr goes to `ffmpeg_error_<name>.log` in the output folder; it is deleted on success unless
 “keep logs on success” is ticked.
+**Keep temporary files for debugging** (Settings, off by default) keeps the temporary chapter files, Join list files
+and unfinished partial outputs, writes their paths to the log, and skips the startup clean-up.
 
 ## FFmpeg updates (Help › Check for FFmpeg updates…)
 - **Sources:** BtbN (GitHub, win64 GPL, default) or gyan.dev (essentials). **Channels:** Stable (latest release branch,

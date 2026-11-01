@@ -96,6 +96,12 @@ fn lenient<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Appearance, D::Erro
     Ok(serde_json::from_value::<Appearance>(v).unwrap_or_default().sanitized())
 }
 
+/// Unknown/garbage values fall back to the default instead of failing the whole file.
+fn lenient_default<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned + Default>(d: D) -> Result<T, D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(serde_json::from_value::<T>(v).unwrap_or_default())
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -132,6 +138,11 @@ pub struct Settings {
     /// Theme, text size, bold (0.3.2; older files get the defaults).
     #[serde(deserialize_with = "lenient")]
     pub appearance: Appearance,
+    /// What to do when an output file already exists (0.3.3).
+    #[serde(deserialize_with = "lenient_default")]
+    pub when_exists: crate::output_guard::WhenExists,
+    /// Keep chapter/list files and partial outputs and log their paths (debugging, 0.3.3).
+    pub keep_temp_files: bool,
     /// Legacy (0.1.x): last-used values per mode; migrated into presets on first start of 0.2.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, serde_json::Value>,
@@ -165,6 +176,8 @@ impl Default for Settings {
             show_source_panel: true,
             copy_shell: crate::cmdline::Shell::PowerShell,
             appearance: Appearance::default(),
+            when_exists: crate::output_guard::WhenExists::Ask,
+            keep_temp_files: false,
             modes: BTreeMap::new(),
             last_mode: String::new(),
         }
@@ -327,6 +340,30 @@ mod tests {
         s.appearance = Appearance { theme: ThemeChoice::HighContrast, scale: 2.5, mono_scale: 1.25, bold: true };
         s.save_to(&p).unwrap();
         assert_eq!(Settings::load_from(&p).appearance, s.appearance);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn when_exists_setting_migration() {
+        use crate::output_guard::WhenExists;
+        let dir = std::env::temp_dir().join(format!("ffenc_we_{}", crate::util::unique_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("s.json");
+        // 0.3.2 file: defaults (Ask, temp files cleaned)
+        std::fs::write(&p, r#"{"crf": 20}"#).unwrap();
+        let s = Settings::load_from(&p);
+        assert_eq!((s.crf, s.when_exists, s.keep_temp_files), (20, WhenExists::Ask, false));
+        std::fs::write(&p, r#"{"crf": 21, "when_exists": "Sometimes"}"#).unwrap();
+        let s = Settings::load_from(&p);
+        assert_eq!((s.crf, s.when_exists), (21, WhenExists::Ask));
+        for w in WhenExists::ALL {
+            let mut s = Settings::default();
+            s.when_exists = w;
+            s.keep_temp_files = true;
+            s.save_to(&p).unwrap();
+            let l = Settings::load_from(&p);
+            assert_eq!((l.when_exists, l.keep_temp_files), (w, true));
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

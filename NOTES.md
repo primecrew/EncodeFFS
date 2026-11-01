@@ -1,5 +1,29 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.3.3 — overwrite protection
+- **Before:** every builder passed `-y`, so an existing output was replaced silently (the confirmation only showed a
+  warning line); a failed/cancelled encode deleted or truncated the existing file; two jobs could write the same file;
+  output = input was only blocked in Batch, Mix and Join.
+- **Now** (`src/output_guard.rs`): conflicts = exists / same output as an earlier job of the run / equals one of the
+  job's inputs (`-i` arguments), compared case-insensitively on Windows. Choices Keep both (default) / Overwrite /
+  Skip per file + Apply to all; Overwrite is replaced by Keep both where it's not allowed. Keep-both names: last dot
+  splits the extension (`my.clip.v2 (2).mkv`, `noext (2)`, `.hidden (2)`), an existing ` (N)` continues at N+1
+  (`x (2).mp4` → `x (3).mp4`), first number free on disk, among the run's outputs and inputs.
+- Setting `when_exists` (Ask / KeepBoth / Overwrite / Skip, default Ask; an unknown value falls back to Ask).
+- Every non-remux job is rewritten by `prepare()`: `-n`/`-y`, output → `name.ffenc-partial-<id>.ext` (same folder,
+  same extension so the muxer is unchanged), `PostAction::Publish`. After success: `rename` for a confirmed overwrite
+  (atomic replace), otherwise hard-link publish that never replaces (falls back to the next free `(n)` name if a file
+  appeared). Partial deleted on failure/cancel. Running partials are listed in `logs/partial-outputs.txt`; at start-up
+  (background thread) listed partials plus `*.ffenc-partial-*` in the default input/output folders that are older
+  than 30 min are removed.
+- Confirmation shows/copies the real sequence: ffmpeg command with the partial name + the rename line.
+- Setting `keep_temp_files` ("Keep temporary files for debugging", default off): side files (chapters, join list)
+  and partials of failed/cancelled jobs are kept and their paths logged; startup clean-up is skipped.
+- Accessibility: radios with full accessible names ("Keep both: save the new file as x (2).mp4"), the first
+  "Keep both" gets focus in Ask mode (Run otherwise); Run's accessible name includes the kept/overwritten/skipped counts.
+- Icon check: the exe's only RT_GROUP_ICON (ID 1) holds 16/24/32/48/64/128/256 px, pixel-identical to
+  `assets/make_icon.py` renders of `assets/icon-source.png`.
+
 ## 0.3.2 — appearance & accessibility
 - **Before:** no theme setting (followed eframe's default), egui's built-in Ctrl+/- zoom worked but was not saved,
   no screen-reader support (AccessKit off), ~60 hard-coded colours (some below 4.5:1 on light backgrounds), icon-only
