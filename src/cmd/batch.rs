@@ -17,6 +17,7 @@ pub struct BatchInput {
     pub field_order: Option<String>,
     pub subtitle_streams: Vec<StreamRef>,
     pub has_attachments: bool,
+    pub has_chapters: bool,
 }
 
 impl BatchInput {
@@ -40,6 +41,9 @@ pub struct BatchSettings {
     pub video: VideoEncode,
     pub audio: AudioEncode,
     pub faststart: bool,
+    /// Generate chapters every `chapter_interval_min` for files that have none.
+    pub auto_chapters_if_none: bool,
+    pub chapter_interval_min: f64,
 }
 impl Default for BatchSettings {
     fn default() -> Self {
@@ -54,6 +58,8 @@ impl Default for BatchSettings {
             video: VideoEncode::default(),
             audio: AudioEncode::default(),
             faststart: false,
+            auto_chapters_if_none: false,
+            chapter_interval_min: 5.0,
         }
     }
 }
@@ -85,6 +91,12 @@ pub fn plan(inputs: &[BatchInput], s: &BatchSettings, out_dir: &Path) -> Result<
         if output == inp.path {
             return Err(format!("Output would overwrite the input: {}. Use a suffix or another output folder.", output.display()));
         }
+        let chapters = if s.auto_chapters_if_none && !inp.has_chapters {
+            super::chapters::chapter_input(inp.duration_s - s.trim_start - s.trim_end, super::chapters::ChapterMode::Auto, s.chapter_interval_min * 60.0, &[])
+                .map_err(|e| format!("{}: {e}", inp.path.display()))?
+        } else {
+            None
+        };
         let pr = ReencodeParams {
             input: inp.path.clone(),
             output: output.clone(),
@@ -97,7 +109,7 @@ pub fn plan(inputs: &[BatchInput], s: &BatchSettings, out_dir: &Path) -> Result<
             range_convert: s.range_convert,
             resize: None,
             deinterlace: s.deinterlace && inp.interlaced(),
-            chapters: None,
+            chapters,
             faststart: s.faststart,
             subtitle_streams: inp.subtitle_streams.clone(),
             has_attachments: inp.has_attachments,
@@ -156,6 +168,21 @@ mod tests {
     fn refuses_overwriting_input() {
         let s = BatchSettings { container: "mkv".into(), suffix: "".into(), ..Default::default() };
         assert!(plan(&inputs(), &s, Path::new("/in")).is_err());
+    }
+
+    #[test]
+    fn auto_chapters_only_for_files_without() {
+        let mut ins = inputs();
+        ins[0].has_chapters = true;
+        let s = BatchSettings { auto_chapters_if_none: true, chapter_interval_min: 0.25, ..Default::default() };
+        let jobs = plan(&ins, &s, Path::new("/out")).unwrap();
+        assert!(jobs[0].cmd.side_files.is_empty());
+        assert!(!jobs[0].cmd.args.iter().any(|a| a == "-map_chapters"));
+        assert_eq!(jobs[1].cmd.side_files.len(), 1);
+        let chs = crate::cmd::chapters::parse_ffmetadata(&jobs[1].cmd.side_files[0].1).unwrap();
+        assert_eq!(chs.len(), 2, "30 s file, 15 s interval");
+        assert_eq!(chs[1].end_ms, 30_000);
+        assert!(jobs[1].cmd.args.windows(2).any(|w| w == ["-map_chapters", "1"]));
     }
 
     #[test]

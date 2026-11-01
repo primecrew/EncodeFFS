@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::{default_audio, default_video, restore, Ctx, Mode, Plan};
 use crate::ui::common::*;
 use ffenc::cmd::chapters::{self, ChapterMode, ManualChapter};
+use crate::ui::chapter_creator::{ChapterCreator, Source, Spec};
 use ffenc::cmd::common::*;
 use ffenc::cmd::reencode::{self, ReencodeParams};
 use ffenc::ffmpeg::runner::JobSpec;
@@ -37,6 +38,8 @@ struct State {
     chapter_mode: ChapterMode,
     chapter_interval_min: f64,
     manual: Vec<ManualChapter>,
+    /// With chapters off: create chapters every interval when the input has none.
+    auto_chapters_if_none: bool,
     passthrough: Passthrough,
     video: VideoEncode,
     audio: AudioEncode,
@@ -79,6 +82,7 @@ impl State {
             chapter_mode: ChapterMode::Off,
             chapter_interval_min: s.chapter_interval_min,
             manual: vec![],
+            auto_chapters_if_none: false,
             passthrough: Passthrough::None,
             video: default_video(s),
             audio: default_audio(s),
@@ -97,6 +101,7 @@ impl Default for State {
 pub struct ReencodeMode {
     st: State,
     probe: ProbeSlot,
+    creator: ChapterCreator,
 }
 
 impl Mode for ReencodeMode {
@@ -225,47 +230,18 @@ impl Mode for ReencodeMode {
         }
 
         section(ui, "Chapters & output");
+        let full = if st.override_duration { Some(st.duration) } else { summary.as_ref().map(|v| v.duration_s) };
+        let src = Source {
+            info: self.probe.info(),
+            probing: self.probe.busy(),
+            out_dur: full.map(|d| d - st.trim_start - st.trim_end),
+            trim_start: st.trim_start,
+            batch_note: None,
+        };
+        let creator = &mut self.creator;
         egui::Grid::new("m1c").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("Chapters");
-            egui::ComboBox::from_id_salt("m1_ch").selected_text(st.chapter_mode.label()).show_ui(ui, |ui| {
-                for m in ChapterMode::ALL {
-                    ui.selectable_value(&mut st.chapter_mode, m, m.label());
-                }
-            });
-            ui.end_row();
-            if matches!(st.chapter_mode, ChapterMode::Auto | ChapterMode::Both) {
-                ui.label("Interval");
-                num_f64(ui, &mut st.chapter_interval_min, 0.1..=600.0, 0.1, " min");
-                ui.end_row();
-            }
-            if matches!(st.chapter_mode, ChapterMode::Manual | ChapterMode::Both) {
-                ui.label("Manual chapters");
-                ui.vertical(|ui| {
-                    hint(ui, "hh:mm:ss relative to the trimmed output");
-                    let mut remove = None;
-                    for (i, c) in st.manual.iter_mut().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.add(egui::TextEdit::singleline(&mut c.time).hint_text("00:15:30").desired_width(80.0));
-                            ui.add(egui::TextEdit::singleline(&mut c.title).hint_text(format!("Chapter {}", i + 1)).desired_width(220.0));
-                            if ui.small_button("✖").clicked() {
-                                remove = Some(i);
-                            }
-                            if !c.time.trim().is_empty() {
-                                if let Err(e) = chapters::parse_hms(&c.time) {
-                                    ui.colored_label(egui::Color32::LIGHT_RED, e);
-                                }
-                            }
-                        });
-                    }
-                    if let Some(i) = remove {
-                        st.manual.remove(i);
-                    }
-                    if ui.button("+ Add chapter").clicked() {
-                        st.manual.push(ManualChapter::default());
-                    }
-                });
-                ui.end_row();
-            }
+            let mut spec = Spec { mode: &mut st.chapter_mode, interval_min: &mut st.chapter_interval_min, manual: &mut st.manual, auto_if_none: &mut st.auto_chapters_if_none };
+            creator.grid_rows(ui, "m1", &mut spec, &src);
             let mp4 = reencode::is_mp4_like(&PathBuf::from(&st.out_name));
             faststart_ui(ui, &mut st.faststart, mp4);
         });
@@ -283,20 +259,11 @@ impl Mode for ReencodeMode {
         let duration = if st.override_duration { st.duration } else { v.duration_s };
         let out_dur = duration - st.trim_start - st.trim_end;
         let resize = if st.resize && st.passthrough.encodes_video() { Some(resize_dims(v.width, v.height, st.resize_height)?) } else { None };
-        let chapters = if st.chapter_mode != ChapterMode::Off {
-            if out_dur <= 0.0 {
-                return Err("Trim duration exceeds video duration".into());
-            }
-            let list = chapters::build_chapters(out_dur, st.chapter_mode, st.chapter_interval_min * 60.0, &st.manual)?;
-            if list.is_empty() {
-                None
-            } else {
-                let path = std::env::temp_dir().join(format!("ffenc_chapters_{}.txt", ffenc::util::unique_id()));
-                Some((path, chapters::ffmetadata(&list)))
-            }
-        } else {
-            None
-        };
+        let mode = if st.chapter_mode == ChapterMode::Off && st.auto_chapters_if_none && !info.has_chapters() { ChapterMode::Auto } else { st.chapter_mode };
+        if mode != ChapterMode::Off && out_dur <= 0.0 {
+            return Err("Trim duration exceeds video duration".into());
+        }
+        let chapters = chapters::chapter_input(out_dur, mode, st.chapter_interval_min * 60.0, &st.manual)?;
         let pr = ReencodeParams {
             input: input.clone(),
             output: output.clone(),
@@ -315,7 +282,10 @@ impl Mode for ReencodeMode {
             has_attachments: info.has_attachments(),
         };
         let mut cmd = reencode::build(&pr)?;
-        if st.chapter_mode != ChapterMode::Off && pr.chapters.is_none() {
+        if mode != st.chapter_mode {
+            cmd.warnings.push("The input has no chapters: creating them automatically.".into());
+        }
+        if mode != ChapterMode::Off && pr.chapters.is_none() {
             cmd.warnings.push("No chapters generated.".into());
         }
         if let Some((_, text)) = &pr.chapters {

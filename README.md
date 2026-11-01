@@ -10,8 +10,10 @@ One `FFmpegEncoder.exe`, no installer, no runtime. Needs `ffmpeg.exe` + `ffprobe
    `ffprobe.exe`, pre-filled with `C:\ffmpeg\bin`, with Browse… and live validation (the parent of a
    `bin` folder is accepted too). Secondary buttons: **Download newest FFmpeg** and **Skip for now**.
    Later: Help › Locate FFmpeg folder… or File › Settings.
-3. Pick a preset on the left, fill the form (Browse… or drag-and-drop files onto the window), press **Preview & run…**.
-   The preview shows the exact ffmpeg command(s) and any overwrite warnings; **Run** queues them.
+3. Pick a preset in the **preset panel** on the left, choose a file (Browse… or drag-and-drop onto the window) and
+   press **Preview & run…** — or double-click a preset / press **▶ Run** / F5. The preview shows the exact ffmpeg
+   command(s) and any overwrite warnings; **Run** queues them. The **Source** panel on the right shows what ffprobe
+   reports about the input.
 4. The queue shows progress per job and can cancel one or all. Cancel sends `q` to ffmpeg, kills it after 4 s,
    and deletes the partial output.
 
@@ -19,17 +21,32 @@ FFmpeg lookup order: Settings folder (default `C:\ffmpeg\bin`) → `ffmpeg\` or 
 the exe → app-managed copy `%LOCALAPPDATA%\FFmpegEncoder\ffmpeg\bin` → `PATH`.
 On start the app checks the build has `libx264` and `aac`.
 
-## Presets
-Everything on the left is a **preset**: a named, saved set of options for an operation **type**. Nothing is locked.
+## Main window (HandBrake-style)
+- **Left – presets:** every preset, built-in and yours, in your order. One click selects; **double-click** (or **▶ Run**,
+  F5) loads the current input into that preset and opens the command preview, from where it goes to the queue.
+  `*` = unsaved changes. Quick buttons **New… / Duplicate / Import… / Export**, a **search** box (name, type, folder,
+  description), **Pin** to put favourites in a "Favorites" group at the top, and optional **folders**
+  (right-click › Set folder…; groups only appear once you use them). ⬆/⬇ reorder within a group; right-click has
+  everything else. The **Presets** menu has the full set of actions too.
+- **Middle – the selected preset's form**, with Save preset / Revert / Save as new….
+- **Right – Source** (View › Source info panel): ffprobe's summary of the input — container, duration, size, bitrate,
+  video codec/profile, resolution, frame rate, pixel format, interlaced/progressive (field order), every audio track
+  (codec, channels, sample rate, bitrate, language, title, default), every subtitle track (language, forced), chapters
+  and attachments. ffprobe must sit in the same folder as ffmpeg; the panel shows which one is used.
+- **Bottom – queue** with per-job progress, cancel and logs.
 
-- Ships with 10 built-ins: the 9 script modes plus **Custom pipeline**. Edit, rename, reorder, duplicate or delete any of them;
+## Presets
+Everything in the preset panel is a **preset**: a named, saved set of options for an operation **type**. Nothing is locked.
+
+- Ships with 11 built-ins: the 9 script modes, **Custom pipeline** and **Add chapters (no re-encode)**. Edit, rename, reorder, duplicate or delete any of them;
   built-ins can be **reset to factory defaults** and deleted ones restored (Presets › Restore missing built-in presets).
 - Editing a form marks the preset `*` (unsaved). **Save preset** (Ctrl+S) stores it, **Revert** drops the edits,
   **Save as new…** turns the current form into a new preset (the original keeps its saved values).
 - **New…** starts from a copy of any preset or a blank preset of any type. Right-click a preset for the same actions.
 - Files chosen for a run (inputs, typed output names) are *not* part of a preset; they're remembered as a draft and carried
   over when you switch to another preset that takes a file.
-- **Import / export** (Presets menu): JSON files with one or many presets. Imports get new ids and unique names;
+- **Favorites** (`"pinned": true`) and **folders** (`"category"`) are stored with the preset and survive export/import.
+- **Import / export** (panel buttons or Presets menu): JSON files with one or many presets. Imports get new ids and unique names;
   unknown types are skipped.
 - Stored in `FFmpegEncoder.presets.json` next to the settings file (or `%APPDATA%\FFmpegEncoder\presets.json`).
   Built-ins that you never customised store `"values": null` = “type defaults from File › Settings”.
@@ -48,6 +65,36 @@ Everything on the left is a **preset**: a named, saved set of options for an ope
 | Copy subtitle tracks | Re-mux or re-encode with chosen subtitle tracks from a second file; MP4 converts text subs to mov_text (or try copy). |
 | Remux MKV → MP4 | Stream copy, never overwrites, optional delete of source only after the MP4 verifies; summary in the script's wording. |
 | **Custom pipeline** | Build your own from independent choices (below). |
+| **Add chapters (no re-encode)** | Custom pipeline preset: copies every stream, adds chapters every 5 min (or your list), same container as the input, suffix `_chapters`. |
+
+## Chapters & the chapter creator
+Re-encode, Custom pipeline (single file and folder batch) and Batch re-encode can write chapters.
+- The form shows whether ffprobe found chapters in the input ("No chapters found in this file" → **Create chapters…**).
+- **Chapter creator…** opens a window with: mode (off / every N min / manual / both), the manual list (add, edit,
+  delete, move, sort, clear), **set from timestamp** (paste `750.5`, `12:30`, `1:02:03.250` or `1h2m3s`),
+  **import from text** — one chapter per line:
+  ```
+  00:00:00 Intro
+  00:12:30 Boss fight
+  1:02:03.250 - Credits
+  ```
+  (also opens a .txt or an existing FFMETADATA file), **load the file's own chapters** to edit them, and a live
+  **preview** with start/end/length and the exact FFMETADATA1 file. Errors (duplicate or out-of-range times, invalid
+  times, trim longer than the input) are shown before you run.
+- **"If the input has no chapters, create one every N min"** (chapters off): files with chapters keep theirs; the
+  others get automatic chapters. Batch re-encode has the same switch.
+- Times are relative to the trimmed output. Untitled chapters are named "Chapter N".
+- The chapter list is written to `%TEMP%\ffenc_chapters_<id>.ffmeta` (UTF-8, no BOM) in FFmpeg's FFMETADATA1 format:
+  ```
+  ;FFMETADATA1
+  [CHAPTER]
+  TIMEBASE=1/1000
+  START=0
+  END=750000
+  title=Intro
+  ```
+  with `=`, `;`, `#`, `\` and newlines in titles escaped by `\`. It's passed as `-f ffmetadata -i <file>` and mapped
+  with `-map_chapters <n>` (other metadata is untouched) and deleted after the job, also on failure/cancel.
 
 ### Custom pipeline options
 - **Input:** single file (video or audio) or every video in a folder (with per-file include).
@@ -57,7 +104,7 @@ Everything on the left is a **preset**: a named, saved set of options for an ope
   same name next to each video (`game.mkv` + `game.wav`).
 - **Subtitles:** copy / convert text subs (MP4: mov_text, others: SRT) / drop / import from a file (optionally keeping
   the originals; batches use the same-name `.srt/.ass/.vtt`).
-- **Trim**, **chapters** (auto/manual/both, or remove the source's), **container** (mp4, mkv, mov, m4v, m4a, mka),
+- **Trim**, **chapters** (chapter creator, auto-create when missing, or remove the source's), **container** (same as input, mp4, mkv, mov, m4v, m4a, mka),
   **name suffix**, **faststart**, and free-form **extra input options** (before `-i`) and **extra output options**
   (before the output file; quotes group values with spaces).
 
@@ -102,7 +149,9 @@ Live network tests: `cargo test --lib live -- --ignored` (`FFENC_LIVE=btbn-stabl
 - `src/ffmpeg/` – locate, probe (ffprobe JSON), version/encoder check, progress parsing, job queue/runner.
 - `src/updater/` – source lookup (BtbN/gyan), download+verify, extract, install/rollback.
 - `src/presets.rs` – preset file format, built-in list, import/export rules.
-- `src/ui/` – egui app, dialogs, updater window; `src/ui/presets.rs` – preset list, editors, change tracking;
+- `src/cmd/chapters.rs` – chapter list building, validation, FFMETADATA1 writer/parser, timestamp/list parsing, temp files.
+- `src/ui/` – egui app, dialogs, updater window; `src/ui/presets.rs` – preset panel (search, favorites, folders), editors,
+  change tracking; `src/ui/chapter_creator.rs` – chapter creator; `src/ui/source.rs` – Source panel;
   `src/ui/modes/` – one form (`Mode`) per preset type.
 
 ## Adding a preset type

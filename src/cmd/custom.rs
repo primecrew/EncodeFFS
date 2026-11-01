@@ -86,7 +86,8 @@ impl SubAction {
 }
 
 /// Containers offered for custom presets.
-pub const CONTAINERS: &[&str] = &["mp4", "mkv", "mov", "m4v", "m4a", "mka"];
+/// "same" = the input's extension when it is one of mp4/mkv/mov/m4v, else mkv.
+pub const CONTAINERS: &[&str] = &["same", "mp4", "mkv", "mov", "m4v", "m4a", "mka"];
 
 pub fn is_audio_only_container(ext: &str) -> bool {
     matches!(ext, "m4a" | "mka")
@@ -426,6 +427,8 @@ pub struct CustomOptions {
     pub chapter_interval_min: f64,
     pub manual: Vec<ManualChapter>,
     pub drop_chapters: bool,
+    /// With chapters "off": generate chapters every `chapter_interval_min` when the input has none.
+    pub auto_chapters_if_none: bool,
     pub faststart: bool,
     pub input_args: String,
     pub output_args: String,
@@ -454,6 +457,7 @@ impl Default for CustomOptions {
             chapter_interval_min: 5.0,
             manual: vec![],
             drop_chapters: false,
+            auto_chapters_if_none: false,
             faststart: true,
             input_args: String::new(),
             output_args: String::new(),
@@ -464,7 +468,25 @@ impl Default for CustomOptions {
 impl CustomOptions {
     /// `<stem><suffix>.<container>`
     pub fn output_name(&self, input: &Path) -> String {
-        format!("{}{}.{}", crate::util::stem(input), self.suffix, self.container.trim_start_matches('.'))
+        format!("{}{}.{}", crate::util::stem(input), self.suffix, self.output_ext(input))
+    }
+
+    pub fn output_ext(&self, input: &Path) -> String {
+        let c = self.container.trim_start_matches('.').to_lowercase();
+        if c == "same" || c.is_empty() {
+            let e = crate::util::ext_lower(input);
+            return if matches!(e.as_str(), "mp4" | "mkv" | "mov" | "m4v") { e } else { "mkv".into() };
+        }
+        c
+    }
+
+    /// Chapter mode actually used for an input (auto-create when it has none).
+    pub fn effective_chapter_mode(&self, input_has_chapters: bool) -> ChapterMode {
+        if self.chapter_mode == ChapterMode::Off && self.auto_chapters_if_none && !input_has_chapters {
+            ChapterMode::Auto
+        } else {
+            self.chapter_mode
+        }
     }
 
     /// Turn the options plus one input's probe facts into builder parameters.
@@ -480,14 +502,10 @@ impl CustomOptions {
             None
         };
         let interlaced = video.map(|v| is_interlaced(v.field_order.as_deref())).unwrap_or(false);
-        let chapters = if self.chapter_mode != ChapterMode::Off {
+        let mode = self.effective_chapter_mode(info.has_chapters());
+        let chapters = if mode != ChapterMode::Off {
             let d = duration_s.ok_or("The input duration is unknown, so chapters can't be generated.")?;
-            let out_dur = d - self.trim_start - self.trim_end;
-            if out_dur <= 0.0 {
-                return Err("Trim duration exceeds the input duration".into());
-            }
-            let list = chapters::build_chapters(out_dur, self.chapter_mode, self.chapter_interval_min * 60.0, &self.manual)?;
-            (!list.is_empty()).then(|| (std::env::temp_dir().join(format!("ffenc_chapters_{}.txt", crate::util::unique_id())), chapters::ffmetadata(&list)))
+            chapters::chapter_input(d - self.trim_start - self.trim_end, mode, self.chapter_interval_min * 60.0, &self.manual)?
         } else {
             None
         };
@@ -510,7 +528,7 @@ impl CustomOptions {
             sub_file,
             keep_existing_subs: self.keep_existing_subs,
             chapters,
-            drop_chapters: self.drop_chapters && self.chapter_mode == ChapterMode::Off,
+            drop_chapters: self.drop_chapters && mode == ChapterMode::Off,
             faststart: self.faststart,
             input_args: split_args(&self.input_args)?,
             output_args: split_args(&self.output_args)?,

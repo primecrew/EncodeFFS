@@ -1,8 +1,10 @@
 //! The egui application: menu, mode list, mode form, preview dialog, queue + log.
 
+pub mod chapter_creator;
 pub mod common;
 pub mod modes;
 pub mod presets;
+pub mod source;
 pub mod updater;
 
 use std::path::{Path, PathBuf};
@@ -19,7 +21,7 @@ use ffenc::util::{display_command, fmt_hms, now_unix};
 
 use common::{hint, Bg};
 use modes::{kinds, new_mode, Ctx, Plan};
-use presets::{Action, Dialog, PresetUi};
+use presets::{Action, Dialog, PresetUi, SideEvent};
 use updater::{UpdaterEvent, UpdaterUi};
 
 struct Preview {
@@ -54,6 +56,9 @@ pub struct App {
     startup_check: Option<Bg<Result<AvailableBuild, String>>>,
     update_banner: Option<String>,
     rollback_confirm: bool,
+    source: source::SourcePanel,
+    /// Run requested while the form was still probing: retry until this deadline.
+    pending_run: Option<std::time::Instant>,
 }
 
 /// Open a file or folder with the OS (Explorer on Windows).
@@ -88,6 +93,11 @@ impl App {
         let ctx = cc.egui_ctx.clone();
         let queue = Queue::new(Some(settings::logs_dir().join("FFmpegEncoder.log")), move || ctx.request_repaint());
         queue.log(format!("{} {} started. Settings: {}", ffenc::APP_NAME, ffenc::APP_VERSION, settings::settings_path().display()));
+        // chapter files left behind by a crash (older than 6 h, so a second instance's live jobs are safe)
+        let stale = ffenc::cmd::chapters::cleanup_stale(&std::env::temp_dir(), Duration::from_secs(6 * 3600));
+        if stale > 0 {
+            queue.log(format!("Removed {stale} stale temporary chapter file(s)."));
+        }
         let presets_path = pstore::presets_path();
         let had_file = presets_path.exists();
         let (mut list, warning) = pstore::load_from(&presets_path);
@@ -111,7 +121,7 @@ impl App {
         let current = list.iter().position(|p| p.id == settings.last_preset).unwrap_or(0);
         let mut app = App {
             settings,
-            pre: PresetUi { list, current, editors: Default::default(), dialog: None },
+            pre: PresetUi { list, current, editors: Default::default(), dialog: None, filter: String::new() },
             presets_path,
             queue,
             ff: None,
@@ -128,6 +138,8 @@ impl App {
             startup_check: None,
             update_banner: None,
             rollback_confirm: false,
+            source: Default::default(),
+            pending_run: None,
         };
         app.refresh_ffmpeg(&cc.egui_ctx);
         if !had_file {
@@ -220,6 +232,7 @@ impl App {
     }
 
     fn start_preview(&mut self, ctx: &egui::Context) {
+        let pending = self.pending_run.take();
         let Some(ff) = self.ff.clone() else {
             self.error = Some("FFmpeg was not found. Set the folder in File › Settings or use Help › Check for FFmpeg updates to download it.".into());
             return;
@@ -265,7 +278,18 @@ impl App {
                 }
                 self.preview = Some(Preview { plan, program: ff.ffmpeg.clone(), text, overwrite });
             }
-            Err(e) => self.error = Some(e),
+            Err(e) => {
+                // double-click / Run right after switching presets: the form probes its input first
+                if e.contains("still probing") || e.contains("Still scanning") {
+                    let t0 = pending.unwrap_or_else(std::time::Instant::now);
+                    if t0.elapsed() < Duration::from_secs(15) {
+                        self.pending_run = Some(t0);
+                        ctx.request_repaint_after(Duration::from_millis(150));
+                        return;
+                    }
+                }
+                self.error = Some(e);
+            }
         }
     }
 
@@ -315,6 +339,21 @@ impl App {
                     self.pre.dialog = Some(Dialog::Rename { id: self.pre.cur().id.clone(), name: self.pre.cur().name.clone() });
                     ui.close_menu();
                 }
+                let pinned = self.pre.cur().pinned;
+                if ui.button(if pinned { "Remove from favorites" } else { "Pin to favorites" }).clicked() {
+                    let i = self.pre.current;
+                    self.pre.list[i].pinned = !pinned;
+                    self.save_presets();
+                    ui.close_menu();
+                }
+                if ui.button("Set folder…").clicked() {
+                    self.pre.dialog = Some(Dialog::Category { id: self.pre.cur().id.clone(), category: self.pre.cur().category.clone() });
+                    ui.close_menu();
+                }
+                if ui.button("Run selected preset   (F5)").clicked() {
+                    ui.close_menu();
+                    self.start_preview(ctx);
+                }
                 if ui.add_enabled(self.pre.cur().builtin.is_some(), egui::Button::new("Reset to factory defaults…")).clicked() {
                     self.pre.dialog = Some(Dialog::Reset { id: self.pre.cur().id.clone() });
                     ui.close_menu();
@@ -345,6 +384,12 @@ impl App {
                 if ui.button("Open presets file").clicked() {
                     self.save_presets();
                     open_path(&self.presets_path);
+                    ui.close_menu();
+                }
+            });
+            ui.menu_button("View", |ui| {
+                if ui.checkbox(&mut self.settings.show_source_panel, "Source info panel (ffprobe)").clicked() {
+                    self.save_settings();
                     ui.close_menu();
                 }
             });
@@ -592,6 +637,7 @@ impl App {
             egui::Window::new(if dl.first_run { "Welcome – where is FFmpeg?" } else { "Locate FFmpeg" }).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
                 ui.set_max_width(620.0);
                 ui.label("Select the folder that contains ffmpeg.exe and ffprobe.exe.");
+                hint(ui, "ffmpeg does the encoding; ffprobe (from the same folder) reads each input's duration, streams, interlacing and chapters.");
                 if let (Some(f), true) = (&self.ff, !invalid) {
                     hint(ui, format!("Currently using {} ({}).", f.bin_dir.display(), f.source.label()));
                 } else if let Some(Err(e)) = &self.ff_check {
@@ -749,6 +795,9 @@ impl App {
                 egui::Grid::new("set_f").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                     let d = ed.input_folder.clone();
                     common::path_row(ui, "FFmpeg bin folder", &mut ed.ffmpeg_bin_path, common::Pick::Folder, &d);
+                    ui.label("");
+                    hint(ui, "Must contain ffmpeg.exe and ffprobe.exe (ffprobe is used to read source info).");
+                    ui.end_row();
                     common::path_row(ui, "Input folder", &mut ed.input_folder, common::Pick::Folder, &d);
                     common::path_row(ui, "Output folder", &mut ed.output_folder, common::Pick::Folder, &d);
                 });
@@ -891,6 +940,10 @@ impl eframe::App for App {
             self.banners(ctx, ui);
         });
 
+        // F5 runs (previews) the selected preset
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F5)) && self.preview.is_none() {
+            self.start_preview(ctx);
+        }
         // Ctrl+S saves the current preset
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) && self.pre.modified(&self.pre.cur().id.clone()) {
             self.pre.save_current(&self.settings);
@@ -901,13 +954,31 @@ impl eframe::App for App {
             ui.add_space(4.0);
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
             let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
-            if let Some(what) = self.pre.sidebar(ui, &cx) {
-                if what == "moved" {
+            match self.pre.sidebar(ui, &cx) {
+                None => {}
+                Some(SideEvent::Selected) => self.save_settings(),
+                Some(SideEvent::Changed) => {
                     self.save_presets();
+                    self.save_settings();
                 }
-                self.save_settings();
+                Some(SideEvent::Run) => {
+                    self.save_settings();
+                    self.start_preview(ctx);
+                }
+                Some(SideEvent::Import) => self.import_presets(ctx),
+                Some(SideEvent::Export { all }) => self.export_presets(all),
             }
         });
+
+        if self.settings.show_source_panel {
+            egui::SidePanel::right("source").resizable(true).default_width(300.0).width_range(220.0..=520.0).show(ctx, |ui| {
+                ui.add_space(4.0);
+                let idx = self.pre.current;
+                let input = presets::primary_input(self.pre.editor(idx, &self.settings));
+                let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
+                self.source.ui(ui, input, ffprobe.as_deref());
+            });
+        }
 
         egui::TopBottomPanel::bottom("queue").resizable(true).default_height(270.0).min_height(120.0).show(ctx, |ui| {
             self.queue_panel(ui);
@@ -961,6 +1032,10 @@ impl eframe::App for App {
                 ui.add_space(10.0);
             });
         });
+
+        if self.pending_run.is_some() && self.preview.is_none() && self.error.is_none() {
+            self.start_preview(ctx);
+        }
 
         // file hover overlay
         if ctx.input(|i| !i.raw.hovered_files.is_empty()) {

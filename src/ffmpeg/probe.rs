@@ -22,12 +22,35 @@ pub struct StreamInfo {
     pub channels: Option<u32>,
     pub language: Option<String>,
     pub title: Option<String>,
+    pub profile: Option<String>,
+    pub pix_fmt: Option<String>,
+    /// Average frame rate (frames/s) for video streams.
+    pub fps: Option<f64>,
+    pub bit_rate: Option<u64>,
+    pub channel_layout: Option<String>,
+    pub default: bool,
+    pub forced: bool,
+    /// Cover art stored as a video stream.
+    pub attached_pic: bool,
+}
+
+/// A chapter already present in the file (seconds).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ProbeChapter {
+    pub start: f64,
+    pub end: f64,
+    pub title: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct MediaInfo {
     pub streams: Vec<StreamInfo>,
     pub format_duration: Option<f64>,
+    pub chapters: Vec<ProbeChapter>,
+    pub format_name: Option<String>,
+    pub format_long_name: Option<String>,
+    pub size: Option<u64>,
+    pub bit_rate: Option<u64>,
 }
 
 /// The facts the re-encode modes need (script: Get-VideoInfo).
@@ -46,10 +69,32 @@ struct RawProbe {
     #[serde(default)]
     streams: Vec<RawStream>,
     format: Option<RawFormat>,
+    #[serde(default)]
+    chapters: Vec<RawChapter>,
 }
 #[derive(Deserialize)]
 struct RawFormat {
     duration: Option<serde_json::Value>,
+    format_name: Option<String>,
+    format_long_name: Option<String>,
+    size: Option<serde_json::Value>,
+    bit_rate: Option<serde_json::Value>,
+}
+#[derive(Deserialize)]
+struct RawChapter {
+    start_time: Option<serde_json::Value>,
+    end_time: Option<serde_json::Value>,
+    #[serde(default)]
+    tags: HashMap<String, String>,
+}
+#[derive(Deserialize, Default)]
+struct RawDisposition {
+    #[serde(default)]
+    default: i64,
+    #[serde(default)]
+    forced: i64,
+    #[serde(default)]
+    attached_pic: i64,
 }
 #[derive(Deserialize)]
 struct RawStream {
@@ -64,6 +109,21 @@ struct RawStream {
     channels: Option<serde_json::Value>,
     #[serde(default)]
     tags: HashMap<String, String>,
+    profile: Option<String>,
+    pix_fmt: Option<String>,
+    avg_frame_rate: Option<String>,
+    r_frame_rate: Option<String>,
+    bit_rate: Option<serde_json::Value>,
+    channel_layout: Option<String>,
+    #[serde(default)]
+    disposition: RawDisposition,
+}
+
+/// "30000/1001" -> 29.97; "0/0" -> None.
+pub fn parse_rate(s: &str) -> Option<f64> {
+    let (n, d) = s.split_once('/').unwrap_or((s, "1"));
+    let (n, d): (f64, f64) = (n.trim().parse().ok()?, d.trim().parse().ok()?);
+    (n > 0.0 && d > 0.0).then(|| n / d)
 }
 
 /// ffprobe emits numbers sometimes as JSON numbers, sometimes as strings ("10.000000", "N/A").
@@ -97,9 +157,31 @@ pub fn parse_probe_json(json: &str) -> Result<MediaInfo, String> {
             channels: num(&s.channels).map(|v| v as u32),
             language: tag(&s.tags, "language"),
             title: tag(&s.tags, "title"),
+            profile: s.profile,
+            pix_fmt: s.pix_fmt,
+            fps: s.avg_frame_rate.as_deref().and_then(parse_rate).or_else(|| s.r_frame_rate.as_deref().and_then(parse_rate)),
+            bit_rate: num(&s.bit_rate).map(|v| v as u64),
+            channel_layout: s.channel_layout,
+            default: s.disposition.default != 0,
+            forced: s.disposition.forced != 0,
+            attached_pic: s.disposition.attached_pic != 0,
         })
         .collect();
-    Ok(MediaInfo { streams, format_duration: raw.format.and_then(|f| num(&f.duration)) })
+    let chapters = raw
+        .chapters
+        .into_iter()
+        .map(|c| ProbeChapter { start: num(&c.start_time).unwrap_or(0.0), end: num(&c.end_time).unwrap_or(0.0), title: tag(&c.tags, "title").unwrap_or_default() })
+        .collect();
+    let f = raw.format;
+    Ok(MediaInfo {
+        streams,
+        format_duration: f.as_ref().and_then(|f| num(&f.duration)),
+        chapters,
+        format_name: f.as_ref().and_then(|f| f.format_name.clone()),
+        format_long_name: f.as_ref().and_then(|f| f.format_long_name.clone()),
+        size: f.as_ref().and_then(|f| num(&f.size)).map(|v| v as u64),
+        bit_rate: f.as_ref().and_then(|f| num(&f.bit_rate)).map(|v| v as u64),
+    })
 }
 
 fn round2(v: f64) -> f64 {
@@ -110,8 +192,12 @@ impl MediaInfo {
     pub fn of_type<'a>(&'a self, t: &'a str) -> impl Iterator<Item = &'a StreamInfo> + 'a {
         self.streams.iter().filter(move |s| s.codec_type == t)
     }
+    /// First real video stream (cover art is skipped).
     pub fn video(&self) -> Option<&StreamInfo> {
-        self.of_type("video").next()
+        self.of_type("video").find(|s| !s.attached_pic)
+    }
+    pub fn has_chapters(&self) -> bool {
+        !self.chapters.is_empty()
     }
     pub fn audio_count(&self) -> usize {
         self.of_type("audio").count()
@@ -164,7 +250,7 @@ pub fn probe_args(path: &Path) -> Vec<String> {
         "-v".into(),
         "error".into(),
         "-show_entries".into(),
-        "stream=index,codec_type,codec_name,width,height,duration,field_order,sample_rate,channels:stream_tags=language,title:format=duration".into(),
+        "stream=index,codec_type,codec_name,profile,width,height,duration,field_order,sample_rate,channels,channel_layout,avg_frame_rate,r_frame_rate,pix_fmt,bit_rate:stream_tags=language,title:stream_disposition=default,forced,attached_pic:format=duration,format_name,format_long_name,size,bit_rate:chapter=start_time,end_time:chapter_tags=title".into(),
         "-of".into(),
         "json".into(),
         path.to_string_lossy().into_owned(),
@@ -238,5 +324,28 @@ mod tests {
     fn audio_only_duration() {
         let j = r#"{"streams":[{"index":0,"codec_type":"audio","sample_rate":"44100"}],"format":{"duration":"12.345"}}"#;
         assert_eq!(parse_probe_json(j).unwrap().any_duration(), Some(12.35));
+    }
+
+    #[test]
+    fn chapters_fps_format() {
+        let j = r#"{"streams":[
+            {"index":0,"codec_type":"video","codec_name":"h264","profile":"High","width":1280,"height":720,"pix_fmt":"yuv420p","avg_frame_rate":"30000/1001","r_frame_rate":"30000/1001","disposition":{"default":1,"forced":0,"attached_pic":0}},
+            {"index":1,"codec_type":"video","codec_name":"mjpeg","width":300,"height":300,"avg_frame_rate":"0/0","disposition":{"attached_pic":1}},
+            {"index":2,"codec_type":"audio","codec_name":"aac","channel_layout":"stereo","bit_rate":"192000"}],
+          "chapters":[{"start_time":"0.000000","end_time":"2.500000","tags":{"title":"x=y;z#w\\v ü"}},{"start_time":"2.5","end_time":"4"}],
+          "format":{"duration":"4.000","format_name":"mov,mp4,m4a,3gp,3g2,mj2","format_long_name":"QuickTime / MOV","size":"12345","bit_rate":"999"}}"#;
+        let m = parse_probe_json(j).unwrap();
+        assert_eq!(m.chapters.len(), 2);
+        assert_eq!(m.chapters[0], ProbeChapter { start: 0.0, end: 2.5, title: "x=y;z#w\\v ü".into() });
+        assert_eq!(m.chapters[1].title, "");
+        assert!(m.has_chapters());
+        let v = m.video().unwrap();
+        assert_eq!(v.index, 0, "cover art skipped");
+        assert!((v.fps.unwrap() - 29.97).abs() < 0.01);
+        assert!(v.default);
+        assert_eq!(m.streams[2].bit_rate, Some(192000));
+        assert_eq!((m.size, m.bit_rate, m.format_long_name.as_deref()), (Some(12345), Some(999), Some("QuickTime / MOV")));
+        assert_eq!(parse_rate("25"), Some(25.0));
+        assert_eq!(parse_rate("0/0"), None);
     }
 }

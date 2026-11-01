@@ -166,7 +166,7 @@ fn all_modes_end_to_end() {
     assert_eq!(a[1]["tags"]["title"], "Mic");
     assert!((duration(&j) - out_dur).abs() < 0.3, "duration {}", duration(&j));
     let chs = j["chapters"].as_array().unwrap();
-    assert_eq!(chs.len(), 4, "chapters relative to trimmed output: 0, 2, 3(manual), 4 -> {chs:?}");
+    assert_eq!(chs.len(), 3, "chapters relative to trimmed output: 0, 2, 3(manual); no auto chapter in the last second -> {chs:?}");
     assert_eq!(chs[2]["tags"]["title"], "Boss = fight");
     assert!(!chf.exists(), "chapter temp file cleaned up");
     assert!(!out.join("ffmpeg_error_m1 full.log").exists() || true);
@@ -302,7 +302,7 @@ fn all_modes_end_to_end() {
             let p = bdir.join(f);
             let i = info(&env, &p);
             let v = i.video_summary().unwrap();
-            batch::BatchInput { path: p, duration_s: v.duration_s, field_order: v.field_order, subtitle_streams: i.subtitle_refs(), has_attachments: i.has_attachments() }
+            batch::BatchInput { path: p, duration_s: v.duration_s, field_order: v.field_order, subtitle_streams: i.subtitle_refs(), has_attachments: i.has_attachments(), has_chapters: i.has_chapters() }
         })
         .collect();
     let bs = batch::BatchSettings {
@@ -514,6 +514,50 @@ fn custom_pipelines_end_to_end() {
     let o = CustomOptions { container: "mkv".into(), video: VideoAction::Copy, audio: AudioAction::Copy, subs: SubAction::Import, ..base.clone() };
     let (_, j) = go("c6.mkv", &o, &d.join("prog clip.mp4"), None, Some(d.join("a.srt")));
     assert_eq!(streams(&j, "subtitle").len(), 1);
+
+    // 6b. chapter creator: copy-only "add chapters" on a file without chapters, container "same"
+    let src = d.join("prog clip.mp4");
+    assert!(!info(&env, &src).has_chapters());
+    let title = "Boss = fight; #1 \\ ü 視頻";
+    let o = CustomOptions {
+        container: "same".into(),
+        video: VideoAction::Copy,
+        audio: AudioAction::Copy,
+        chapter_mode: ChapterMode::Both,
+        chapter_interval_min: 2.0 / 60.0,
+        manual: vec![ManualChapter { time: "00:00:01.250".into(), title: title.into() }],
+        ..base.clone()
+    };
+    assert_eq!(o.output_name(&src), "prog clip_custom.mp4");
+    let (_, j) = go(&o.output_name(&src), &o, &src, None, None);
+    let chs = j["chapters"].as_array().unwrap();
+    let titles: Vec<&str> = chs.iter().map(|c| c["tags"]["title"].as_str().unwrap_or("")).collect();
+    assert_eq!(titles[1], title, "special characters survive FFMETADATA escaping: {titles:?}");
+    assert_eq!(chs[1]["start_time"], "1.250000");
+    let last_end: f64 = chs.last().unwrap()["end_time"].as_str().unwrap().parse().unwrap();
+    assert!((last_end - duration(&j)).abs() < 0.1, "last chapter ends at the output duration");
+
+    // 6c. "auto-create if none": adds chapters only when the source has none
+    let o = CustomOptions { container: "mkv".into(), video: VideoAction::Copy, audio: AudioAction::Copy, auto_chapters_if_none: true, chapter_interval_min: 2.0 / 60.0, ..base.clone() };
+    let (_, j) = go("c6c_none.mkv", &o, &src, None, None);
+    assert!(j["chapters"].as_array().unwrap().len() >= 2, "generated for a file without chapters");
+    let (_, j) = go("c6c_has.mkv", &o, &d.join("two_audio.mkv"), None, None);
+    assert_eq!(j["chapters"].as_array().unwrap().len(), 2, "existing chapters untouched");
+
+    // 6d. ffmpeg reads a CRLF chapter file too
+    let crlf = ffenc::cmd::chapters::ffmetadata_with(
+        &[ffenc::cmd::chapters::Chapter { start_ms: 0, end_ms: 1000, title: "a=b".into() }, ffenc::cmd::chapters::Chapter { start_ms: 1000, end_ms: 2000, title: "ü".into() }],
+        true,
+    );
+    std::fs::write(d.join("crlf.ffmeta"), crlf).unwrap();
+    let crlf_out = out.join("crlf.mkv");
+    let st = std::process::Command::new(&env.ffmpeg)
+        .args(["-v", "error", "-y", "-i"]).arg(&src).args(["-f", "ffmetadata", "-i"]).arg(d.join("crlf.ffmeta"))
+        .args(["-map", "0", "-map_chapters", "1", "-c", "copy", "-t", "2"]).arg(&crlf_out).status().unwrap();
+    assert!(st.success());
+    let j = probe_json(&env, &crlf_out);
+    let chs = j["chapters"].as_array().unwrap();
+    assert_eq!((chs[0]["tags"]["title"].as_str(), chs[1]["tags"]["title"].as_str()), (Some("a=b"), Some("ü")));
 
     // 7. audio only: drop video, AAC -> m4a
     let o = CustomOptions { container: "m4a".into(), video: VideoAction::Drop, ..base.clone() };

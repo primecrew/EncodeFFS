@@ -41,6 +41,8 @@ pub struct Settings {
     pub drafts: BTreeMap<String, serde_json::Value>,
     /// Id of the preset that was open last.
     pub last_preset: String,
+    /// Right-hand "Source" panel (ffprobe summary of the selected input).
+    pub show_source_panel: bool,
     /// Legacy (0.1.x): last-used values per mode; migrated into presets on first start of 0.2.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, serde_json::Value>,
@@ -71,6 +73,7 @@ impl Default for Settings {
             keep_logs_on_success: false,
             drafts: BTreeMap::new(),
             last_preset: String::new(),
+            show_source_panel: true,
             modes: BTreeMap::new(),
             last_mode: String::new(),
         }

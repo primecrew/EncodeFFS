@@ -30,13 +30,29 @@ pub struct Preset {
     /// Option values (null = kind defaults).
     #[serde(default)]
     pub values: Value,
+    /// Shown in the "Favorites" group at the top of the sidebar.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
+    /// Optional folder in the sidebar ("" = none).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub category: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PresetFile {
     pub ffmpeg_encoder_presets: u32,
     pub presets: Vec<Preset>,
+    /// Factory ids this file has already seen; newer built-ins are appended on
+    /// load, deleted ones stay deleted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known_builtins: Vec<String>,
 }
+
+/// Built-ins that existed in 0.2.x (files without `known_builtins`).
+const BUILTINS_V02: &[&str] = &[
+    "builtin-reencode", "builtin-still", "builtin-commentary", "builtin-extract", "builtin-replace",
+    "builtin-mix", "builtin-batch", "builtin-subs", "builtin-remux", "builtin-custom",
+];
 
 /// (factory id, kind, name, description)
 pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
@@ -50,7 +66,20 @@ pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
     ("builtin-subs", "subs", "Copy subtitle tracks", "Copy subtitle tracks from one file into another."),
     ("builtin-remux", "remux", "Remux MKV -> MP4", "Stream-copy every MKV in a folder to MP4 (never overwrites)."),
     ("builtin-custom", "custom", "Custom pipeline", "Build your own: video / audio / subtitle actions, trim, chapters, container, extra ffmpeg args."),
+    ("builtin-addchapters", "custom", "Add chapters (no re-encode)", "Copy every stream and add chapters (every 5 min, your own list, or imported) – no quality loss."),
 ];
+
+/// Factory option values (null = the kind's defaults).
+pub fn factory_values(id: &str) -> Value {
+    match id {
+        "builtin-addchapters" => serde_json::json!({
+            "video": "Copy", "audio": "Copy", "subs": "Copy",
+            "chapter_mode": "Auto", "chapter_interval_min": 5.0,
+            "container": "same", "suffix": "_chapters", "faststart": true
+        }),
+        _ => Value::Null,
+    }
+}
 
 pub fn factory(id: &str) -> Option<Preset> {
     BUILTINS.iter().find(|b| b.0 == id).map(|&(id, kind, name, desc)| Preset {
@@ -59,7 +88,9 @@ pub fn factory(id: &str) -> Option<Preset> {
         kind: kind.into(),
         description: desc.into(),
         builtin: Some(id.into()),
-        values: Value::Null,
+        values: factory_values(id),
+        pinned: false,
+        category: String::new(),
     })
 }
 
@@ -103,9 +134,17 @@ pub fn unique_name(list: &[Preset], base: &str) -> String {
 
 /// Parse a presets file: the full file format, a bare array, or one preset object.
 pub fn parse(text: &str) -> Result<Vec<Preset>, String> {
+    parse_file(text).map(|f| f.0)
+}
+
+/// Like [`parse`], plus the file's `known_builtins` (None for arrays / single presets).
+pub fn parse_file(text: &str) -> Result<(Vec<Preset>, Option<Vec<String>>), String> {
     let v: Value = serde_json::from_str(text).map_err(|e| format!("Not valid JSON: {e}"))?;
+    let mut known = None;
     let list: Vec<Preset> = if v.get("presets").is_some() {
-        serde_json::from_value::<PresetFile>(v).map_err(|e| format!("Not a presets file: {e}"))?.presets
+        let f = serde_json::from_value::<PresetFile>(v).map_err(|e| format!("Not a presets file: {e}"))?;
+        known = Some(f.known_builtins);
+        f.presets
     } else if v.is_array() {
         serde_json::from_value(v).map_err(|e| format!("Not a list of presets: {e}"))?
     } else {
@@ -116,11 +155,28 @@ pub fn parse(text: &str) -> Result<Vec<Preset>, String> {
             return Err(format!("Preset \"{}\" has no type", p.name));
         }
     }
-    Ok(list)
+    Ok((list, known))
 }
 
 pub fn to_json(list: &[Preset]) -> String {
-    serde_json::to_string_pretty(&PresetFile { ffmpeg_encoder_presets: FORMAT_VERSION, presets: list.to_vec() }).unwrap_or_default()
+    serde_json::to_string_pretty(&PresetFile {
+        ffmpeg_encoder_presets: FORMAT_VERSION,
+        presets: list.to_vec(),
+        known_builtins: BUILTINS.iter().map(|b| b.0.to_string()).collect(),
+    })
+    .unwrap_or_default()
+}
+
+/// Append factory presets that are newer than the file (not deleted ones).
+fn add_new_builtins(list: &mut Vec<Preset>, known: &[String]) {
+    let known: Vec<&str> = if known.is_empty() { BUILTINS_V02.to_vec() } else { known.iter().map(|s| s.as_str()).collect() };
+    for f in factory_all() {
+        if !known.contains(&f.id.as_str()) && !list.iter().any(|p| p.builtin.as_deref() == Some(f.id.as_str())) {
+            let mut f = f;
+            f.name = unique_name(list, &f.name);
+            list.push(f);
+        }
+    }
 }
 
 /// Load presets; a missing file gives the factory list. A corrupt file is
@@ -128,8 +184,11 @@ pub fn to_json(list: &[Preset]) -> String {
 pub fn load_from(path: &Path) -> (Vec<Preset>, Option<String>) {
     match std::fs::read_to_string(path) {
         Err(_) => (factory_all(), None),
-        Ok(t) => match parse(&t) {
-            Ok(l) => (l, None),
+        Ok(t) => match parse_file(&t) {
+            Ok((mut l, known)) => {
+                add_new_builtins(&mut l, &known.unwrap_or_default());
+                (l, None)
+            }
             Err(e) => {
                 let bad = path.with_extension(format!("bad-{}", crate::util::now_unix()));
                 let _ = std::fs::rename(path, &bad);
@@ -201,7 +260,9 @@ mod tests {
     fn factory_list() {
         let f = factory_all();
         assert_eq!(f.len(), BUILTINS.len());
-        assert!(f.iter().all(|p| p.values.is_null() && p.builtin.as_deref() == Some(p.id.as_str())));
+        assert!(f.iter().all(|p| p.builtin.as_deref() == Some(p.id.as_str())));
+        assert!(f.iter().filter(|p| p.id != "builtin-addchapters").all(|p| p.values.is_null()));
+        assert_eq!(factory("builtin-addchapters").unwrap().values["container"], "same");
         let ids: std::collections::HashSet<_> = f.iter().map(|p| p.id.clone()).collect();
         assert_eq!(ids.len(), f.len());
     }
@@ -257,7 +318,7 @@ mod tests {
         let existing = factory_all();
         let mut a = factory("builtin-reencode").unwrap();
         a.values = json!({"x": 1});
-        let b = Preset { id: "zzz".into(), name: "Mine".into(), kind: "custom".into(), description: String::new(), builtin: None, values: Value::Null };
+        let b = Preset { id: "zzz".into(), name: "Mine".into(), kind: "custom".into(), description: String::new(), builtin: None, values: Value::Null, pinned: false, category: String::new() };
         let c = Preset { kind: "teleport".into(), ..b.clone() };
         let (out, skipped) = prepare_import(&existing, vec![a, b.clone(), c, b], &["reencode", "custom"]);
         assert_eq!(skipped.len(), 1);
@@ -282,6 +343,31 @@ mod tests {
         let reverted = overlay(json!({"input": "a.mkv", "out_name": "x", "crf": 30}), &s);
         assert_eq!(reverted, full);
         assert_eq!(overlay(Value::Null, &s), s);
+    }
+
+    #[test]
+    fn new_builtins_appended_deleted_stay_deleted() {
+        let dir = std::env::temp_dir().join(format!("pre_{}", crate::util::unique_id()));
+        let path = dir.join("p.json");
+        std::fs::create_dir_all(&dir).unwrap();
+        // a 0.2.x file (no known_builtins) where the user deleted "mix"
+        let mut old: Vec<Preset> = factory_all().into_iter().filter(|p| p.id != "builtin-addchapters" && p.id != "builtin-mix").collect();
+        old[0].pinned = true;
+        old[0].category = "Daily".into();
+        let v02 = serde_json::json!({"ffmpeg_encoder_presets": 1, "presets": old});
+        std::fs::write(&path, v02.to_string()).unwrap();
+        let (l, _) = load_from(&path);
+        assert!(l.iter().any(|p| p.id == "builtin-addchapters"), "new built-in appended");
+        assert!(!l.iter().any(|p| p.id == "builtin-mix"), "deleted built-in not resurrected");
+        assert!(l[0].pinned && l[0].category == "Daily");
+        // after saving, a deleted new built-in stays deleted
+        let l2: Vec<Preset> = l.into_iter().filter(|p| p.id != "builtin-addchapters").collect();
+        save_to(&path, &l2).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("known_builtins"));
+        assert!(!text.contains("\"pinned\": false"), "defaults not written");
+        assert_eq!(load_from(&path).0, l2);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

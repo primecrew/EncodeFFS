@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{default_audio, default_video, restore, Ctx, Mode, Plan};
 use crate::ui::common::*;
-use ffenc::cmd::chapters::{self, ChapterMode, ManualChapter};
+use ffenc::cmd::chapters::ChapterMode;
+use crate::ui::chapter_creator::{ChapterCreator, Source, Spec};
 use ffenc::cmd::custom::{self, AudioAction, CustomOptions, SubAction, VideoAction, CONTAINERS};
 use ffenc::ffmpeg::probe::{self, MediaInfo};
 use ffenc::ffmpeg::runner::JobSpec;
@@ -42,6 +43,7 @@ struct Row {
 pub struct CustomMode {
     st: State,
     probe: ProbeSlot,
+    creator: ChapterCreator,
     rows: Vec<Row>,
     scanned: String,
     scan: Option<Bg<Result<Vec<(PathBuf, Result<MediaInfo, String>)>, String>>>,
@@ -267,6 +269,23 @@ impl Mode for CustomMode {
             }
         });
 
+        let csrc = if o.batch {
+            let ok: Vec<&MediaInfo> = self.rows.iter().filter_map(|r| r.info.as_ref().ok()).collect();
+            let with = ok.iter().filter(|i| i.has_chapters()).count();
+            Source {
+                batch_note: Some(if ok.is_empty() { "batch: scan a folder to check for chapters".into() } else { format!("batch: {with} of {} file(s) already have chapters", ok.len()) }),
+                trim_start: o.trim_start,
+                ..Default::default()
+            }
+        } else {
+            Source {
+                info: self.probe.info(),
+                probing: self.probe.busy(),
+                out_dur: self.probe.info().and_then(|i| i.any_duration()).map(|d| d - o.trim_start - o.trim_end),
+                trim_start: o.trim_start,
+                batch_note: None,
+            }
+        };
         section(ui, "Subtitles, chapters & extras");
         egui::Grid::new("cu_s").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             ui.label("Subtitles");
@@ -288,26 +307,13 @@ impl Mode for CustomMode {
                 ui.checkbox(&mut o.keep_existing_subs, "Keep the input's own subtitle tracks too");
                 ui.end_row();
             }
-            ui.label("Chapters");
-            egui::ComboBox::from_id_salt("cu_ch").selected_text(o.chapter_mode.label()).show_ui(ui, |ui| {
-                for m in ChapterMode::ALL {
-                    ui.selectable_value(&mut o.chapter_mode, m, m.label());
-                }
-            });
-            ui.end_row();
+            {
+                let mut spec = Spec { mode: &mut o.chapter_mode, interval_min: &mut o.chapter_interval_min, manual: &mut o.manual, auto_if_none: &mut o.auto_chapters_if_none };
+                self.creator.grid_rows(ui, "cu", &mut spec, &csrc);
+            }
             if o.chapter_mode == ChapterMode::Off {
                 ui.label("");
-                ui.checkbox(&mut o.drop_chapters, "Remove the input's own chapters");
-                ui.end_row();
-            }
-            if matches!(o.chapter_mode, ChapterMode::Auto | ChapterMode::Both) {
-                ui.label("Interval");
-                num_f64(ui, &mut o.chapter_interval_min, 0.1..=600.0, 0.1, " min");
-                ui.end_row();
-            }
-            if matches!(o.chapter_mode, ChapterMode::Manual | ChapterMode::Both) {
-                ui.label("Manual chapters");
-                manual_chapters_ui(ui, &mut o.manual);
+                ui.add_enabled_ui(!o.auto_chapters_if_none || o.batch, |ui| ui.checkbox(&mut o.drop_chapters, "Remove the input's own chapters"));
                 ui.end_row();
             }
             let mp4 = matches!(o.container.as_str(), "mp4" | "mov" | "m4v" | "m4a");
@@ -450,38 +456,13 @@ impl Mode for CustomMode {
             chapter_interval_min: s.chapter_interval_min,
             ..Default::default()
         };
-        self.st = restore(v, State { out_dir: s.output_folder.clone(), o, ..Default::default() });
+        let base = State { out_dir: s.output_folder.clone(), o, ..Default::default() };
+        // partial values (e.g. a factory preset) are laid over the settings-derived defaults
+        let v = if v.is_object() { ffenc::presets::overlay(serde_json::to_value(&base).unwrap_or_default(), v) } else { v.clone() };
+        self.st = restore(&v, base);
         self.probe = ProbeSlot::default();
         self.rows.clear();
         self.scanned.clear();
         self.scan = None;
     }
-}
-
-/// Editable list of manual chapters (hh:mm:ss + title).
-pub fn manual_chapters_ui(ui: &mut egui::Ui, manual: &mut Vec<ManualChapter>) {
-    ui.vertical(|ui| {
-        hint(ui, "hh:mm:ss relative to the trimmed output");
-        let mut remove = None;
-        for (i, c) in manual.iter_mut().enumerate() {
-            ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut c.time).hint_text("00:15:30").desired_width(80.0));
-                ui.add(egui::TextEdit::singleline(&mut c.title).hint_text(format!("Chapter {}", i + 1)).desired_width(220.0));
-                if ui.small_button("✖").clicked() {
-                    remove = Some(i);
-                }
-                if !c.time.trim().is_empty() {
-                    if let Err(e) = chapters::parse_hms(&c.time) {
-                        ui.colored_label(egui::Color32::LIGHT_RED, e);
-                    }
-                }
-            });
-        }
-        if let Some(i) = remove {
-            manual.remove(i);
-        }
-        if ui.button("+ Add chapter").clicked() {
-            manual.push(ManualChapter::default());
-        }
-    });
 }

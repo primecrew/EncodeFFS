@@ -1,5 +1,44 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.3.0
+- **Chapter creator** (Re-encode, Custom pipeline incl. its folder batch, Batch re-encode):
+  - ffprobe now reads chapters (`-show_entries chapter=start_time,end_time:chapter_tags=title`); each form shows
+    "N chapter(s) found" or "No chapters found in this file" with a **Create chapters…** button.
+  - **Chapter creator…** window: mode (off / auto / manual / auto + manual), interval, manual table (add, edit, delete,
+    move, sort by time, clear), **set from timestamp** (`750.5`, `12:30`, `1:02:03.250`, `1h2m3s` → normalised
+    `hh:mm:ss.mmm`), **import from text** ("00:12:30 Title", "00:12:30 - Title", YouTube-style "0:00 Intro";
+    append/replace; open a .txt or an existing FFMETADATA file), **load the file's own chapters** (shifted by trim start),
+    copy list as text, live **preview** (start/end/length/title) and the exact FFMETADATA1 text.
+  - Option **"If the input has no chapters, create one every N min"** (chapters off): only files without chapters get
+    them; files with chapters are untouched. Available per preset in Re-encode / Custom and in Batch re-encode.
+  - New built-in preset **Add chapters (no re-encode)**: Custom pipeline with stream copy, auto chapters every 5 min,
+    container "same as input" (mp4/mkv/mov/m4v, else mkv), suffix `_chapters`. Existing presets files get it appended
+    once (files remember `known_builtins`, so deleting it later sticks).
+  - Custom pipeline container gained **same** (as input).
+- **FFMETADATA1 output** (per FFmpeg's "Metadata" docs): first line `;FFMETADATA1`, per chapter `[CHAPTER]`,
+  `TIMEBASE=1/1000`, integer `START`/`END` in ms (rounded), `title=`; no spaces around `=`; `=`, `;`, `#`, `\` and
+  newlines escaped with `\` (CR/CRLF in titles become one escaped LF); UTF-8 without BOM; LF line endings (a CRLF
+  writer exists and is tested against real ffmpeg). Only chapters are written: no global keys, so with
+  `-map_chapters N` (never `-map_metadata`) the input's other metadata is untouched.
+- **Validation:** starts strictly increasing, no zero-length or overlapping chapters, all inside `[0, output duration)`,
+  last END = output duration, duplicate manual times are an error (were silently merged), invalid times name the row.
+- **Behaviour changes:** untitled chapters are named "Chapter N" by their *final position* (auto + manual used to number
+  auto chapters separately); no automatic chapter is created in the last second of the output (rounding produced 4 ms
+  tail chapters).
+- **Temp files:** `%TEMP%\ffenc_chapters_<id>.ffmeta` (was `.txt`), written before the job, deleted on success, failure
+  and cancel by the runner; leftovers older than 6 h (crash) are removed at startup.
+- **HandBrake-style preset panel** (left): all presets in your order; one click selects, **double-click or ▶ Run (F5)**
+  loads the current input into that preset and opens the command preview (Add to queue / Start from there);
+  `*` marks unsaved changes; quick buttons **New / Duplicate / Import / Export**; **search** (name, type, folder,
+  description); **favorites** (pin → "Favorites" group at the top); optional **folders** (Set folder…; groups appear only
+  when used; ⬆/⬇ move within a group). The full Presets menu stays (also has Pin, Set folder, Run).
+- **Source panel** (right, View › Source info panel): ffprobe summary of the selected preset's input – container,
+  duration, size, bitrate, video codec/profile, resolution, fps, pixel format, interlace (field order), audio tracks
+  (codec, layout, rate, bitrate, language, title, default), subtitle tracks (language, forced), chapters (list),
+  attachments. It names the ffprobe used ("same folder as ffmpeg"); the FFmpeg folder dialog and Settings say so too.
+- ffprobe parsing also reads fps, profile, pix_fmt, bitrates, channel layout, dispositions; cover-art streams are no
+  longer taken as the main video.
+
 ## 0.2.0
 - Modes became **presets** (named, editable, savable configurations of a preset type). The 9 script modes ship as
   built-in presets; all can be edited, renamed, reordered, duplicated, deleted, reset to factory, exported and imported.

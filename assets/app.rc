@@ -3,8 +3,8 @@
 1 RT_MANIFEST "app.manifest"
 
 1 VERSIONINFO
-FILEVERSION 0,2,0,0
-PRODUCTVERSION 0,2,0,0
+FILEVERSION 0,3,0,0
+PRODUCTVERSION 0,3,0,0
 BEGIN
   BLOCK "StringFileInfo"
   BEGIN
@@ -12,8 +12,8 @@ BEGIN
     BEGIN
       VALUE "FileDescription", "FFmpeg Encoder"
       VALUE "ProductName", "FFmpeg Encoder"
-      VALUE "FileVersion", "0.2.0"
-      VALUE "ProductVersion", "0.2.0"
+      VALUE "FileVersion", "0.3.0"
+      VALUE "ProductVersion", "0.3.0"
       VALUE "OriginalFilename", "FFmpegEncoder.exe"
     END
   END

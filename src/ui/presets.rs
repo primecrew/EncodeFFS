@@ -58,7 +58,13 @@ const PRIMARY_KEYS: &[&str] = &["input", "video", "dest", "image"];
 
 pub fn primary_input(e: &Editor) -> Option<PathBuf> {
     let v = e.mode.save();
-    PRIMARY_KEYS.iter().filter_map(|k| v.get(*k).and_then(|x| x.as_str())).map(|s| s.trim().to_string()).find(|s| !s.is_empty()).map(PathBuf::from)
+    // "input" is always a path; the other keys are paths only in some types
+    // (Custom pipeline uses "video" for its video action, e.g. "Copy").
+    PRIMARY_KEYS
+        .iter()
+        .filter_map(|k| v.get(*k).and_then(|x| x.as_str()).map(|s| (*k, s.trim())))
+        .find(|(k, s)| !s.is_empty() && (*k == "input" || s.contains(['\\', '/'])))
+        .map(|(_, s)| PathBuf::from(s))
 }
 
 #[derive(Clone, PartialEq)]
@@ -67,12 +73,25 @@ pub enum NewFrom {
     Copy(String),
 }
 
+/// What happened in the sidebar (the app reacts: save, run, import/export).
+#[derive(Debug, Clone, PartialEq)]
+pub enum SideEvent {
+    Selected,
+    /// Order, favorites or folders changed: save the presets file.
+    Changed,
+    /// Preview the selected preset's job(s).
+    Run,
+    Import,
+    Export { all: bool },
+}
+
 pub enum Dialog {
     New { name: String, from: NewFrom },
     SaveAs { name: String },
     Rename { id: String, name: String },
     Delete { id: String },
     Reset { id: String },
+    Category { id: String, category: String },
 }
 
 pub enum Action {
@@ -82,6 +101,7 @@ pub enum Action {
     Rename { id: String, name: String },
     Delete { id: String },
     Reset { id: String },
+    SetCategory { id: String, category: String },
 }
 
 pub struct PresetUi {
@@ -89,6 +109,8 @@ pub struct PresetUi {
     pub current: usize,
     pub editors: HashMap<String, Editor>,
     pub dialog: Option<Dialog>,
+    /// Sidebar search text.
+    pub filter: String,
 }
 
 impl PresetUi {
@@ -177,99 +199,265 @@ impl PresetUi {
         }
     }
 
-    pub fn sidebar(&mut self, ui: &mut egui::Ui, cx: &Ctx) -> Option<String> {
-        let mut clicked = None;
-        let mut status = None;
+    /// Group key used for sidebar grouping and moving: favorites first, then folders.
+    fn group_of(p: &Preset) -> String {
+        if p.pinned {
+            "\u{1}fav".into()
+        } else {
+            p.category.trim().to_string()
+        }
+    }
+
+    /// Sidebar sections in display order: (heading, preset indices). Favorites
+    /// first, then folders in order of first appearance, then the rest. Without
+    /// any favorites or folders there is a single section without a heading.
+    /// A non-empty `filter` gives one flat list of matches.
+    pub fn sections(&self, filter: &str) -> Vec<(Option<String>, Vec<usize>)> {
+        let f = filter.trim().to_lowercase();
+        if !f.is_empty() {
+            let kl = kinds();
+            let hits = (0..self.list.len())
+                .filter(|&i| {
+                    let p = &self.list[i];
+                    let kind = kl.iter().find(|k| k.0 == p.kind).map(|k| k.1).unwrap_or("");
+                    [p.name.as_str(), kind, p.category.as_str(), p.description.as_str()].iter().any(|s| s.to_lowercase().contains(&f))
+                })
+                .collect();
+            return vec![(None, hits)];
+        }
+        let fav: Vec<usize> = (0..self.list.len()).filter(|&i| self.list[i].pinned).collect();
+        let mut folders: Vec<(String, Vec<usize>)> = vec![];
+        let mut rest = vec![];
+        for (i, p) in self.list.iter().enumerate().filter(|(_, p)| !p.pinned) {
+            let c = p.category.trim();
+            if c.is_empty() {
+                rest.push(i);
+            } else if let Some(g) = folders.iter_mut().find(|g| g.0.eq_ignore_ascii_case(c)) {
+                g.1.push(i);
+            } else {
+                folders.push((c.to_string(), vec![i]));
+            }
+        }
+        if fav.is_empty() && folders.is_empty() {
+            return vec![(None, rest)];
+        }
+        let mut out = vec![];
+        if !fav.is_empty() {
+            out.push((Some("Favorites".to_string()), fav));
+        }
+        out.extend(folders.into_iter().map(|(n, v)| (Some(n), v)));
+        if !rest.is_empty() {
+            out.push((Some("Presets".to_string()), rest));
+        }
+        out
+    }
+
+    /// Move preset `i` one step up (-1) / down (+1) within its sidebar group.
+    pub fn move_in_group(&mut self, i: usize, dir: isize) -> bool {
+        let g = Self::group_of(&self.list[i]);
+        let j = if dir < 0 { (0..i).rev().find(|&j| Self::group_of(&self.list[j]) == g) } else { (i + 1..self.list.len()).find(|&j| Self::group_of(&self.list[j]) == g) };
+        let Some(j) = j else { return false };
+        let p = self.list.remove(i);
+        self.list.insert(j, p);
+        // keep the selection on the same preset
+        if self.current == i {
+            self.current = j;
+        } else if i < j && self.current > i && self.current <= j {
+            self.current -= 1;
+        } else if j < i && self.current >= j && self.current < i {
+            self.current += 1;
+        }
+        true
+    }
+
+    fn can_move(&self, i: usize, dir: isize) -> bool {
+        let g = Self::group_of(&self.list[i]);
+        if dir < 0 {
+            (0..i).any(|j| Self::group_of(&self.list[j]) == g)
+        } else {
+            (i + 1..self.list.len()).any(|j| Self::group_of(&self.list[j]) == g)
+        }
+    }
+
+    /// The HandBrake-style preset panel. One click selects, double-click (or Run) previews the job.
+    pub fn sidebar(&mut self, ui: &mut egui::Ui, cx: &Ctx) -> Option<SideEvent> {
+        let mut ev: Option<SideEvent> = None;
         ui.horizontal(|ui| {
             ui.label(RichText::new("Presets").strong());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("+ New…").on_hover_text("New preset (blank or copy of another)").clicked() {
-                    self.dialog = Some(Dialog::New { name: String::new(), from: NewFrom::Copy(self.cur().id.clone()) });
+            ui.label(RichText::new(format!("{}", self.list.len())).small().weak());
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if ui.small_button("New…").on_hover_text("New preset (blank of a type, or a copy)").clicked() {
+                self.dialog = Some(Dialog::New { name: String::new(), from: NewFrom::Kind("custom".into()) });
+            }
+            if ui.small_button("Duplicate").on_hover_text("Copy the selected preset").clicked() {
+                self.dialog = Some(Dialog::New { name: String::new(), from: NewFrom::Copy(self.cur().id.clone()) });
+            }
+            if ui.small_button("Import…").on_hover_text("Import presets from a .json file").clicked() {
+                ev = Some(SideEvent::Import);
+            }
+            ui.menu_button(RichText::new("Export").small(), |ui| {
+                if ui.button("Export selected preset…").clicked() {
+                    ev = Some(SideEvent::Export { all: false });
+                    ui.close_menu();
+                }
+                if ui.button("Export all presets…").clicked() {
+                    ev = Some(SideEvent::Export { all: true });
+                    ui.close_menu();
                 }
             });
         });
-        ui.separator();
-        let kind_label = |k: &str| kinds().into_iter().find(|x| x.0 == k).map(|x| x.1).unwrap_or("?");
-        let mut move_req: Option<(usize, isize)> = None;
-        egui::ScrollArea::vertical().id_salt("presets").auto_shrink([false, false]).max_height(ui.available_height() - 34.0).show(ui, |ui| {
-            for i in 0..self.list.len() {
-                let p = &self.list[i];
-                let modified = self.modified(&p.id);
-                let mut text = RichText::new(format!("{}{}", p.name, if modified { "  *" } else { "" }));
-                if modified {
-                    text = text.color(Color32::from_rgb(230, 180, 60));
-                }
-                let r = ui
-                    .add_sized([ui.available_width(), 24.0], egui::SelectableLabel::new(i == self.current, text))
-                    .on_hover_text(format!("Type: {}{}\n{}{}", kind_label(&p.kind), if p.builtin.is_some() { " (built-in)" } else { "" }, p.description, if modified { "\n* unsaved changes" } else { "" }));
-                if r.clicked() {
-                    clicked = Some(i);
-                }
-                let id = p.id.clone();
-                let builtin = p.builtin.is_some();
-                r.context_menu(|ui| {
-                    if ui.button("Duplicate").clicked() {
-                        self.dialog = Some(Dialog::New { name: String::new(), from: NewFrom::Copy(id.clone()) });
-                        ui.close_menu();
-                    }
-                    if ui.button("Rename…").clicked() {
-                        self.dialog = Some(Dialog::Rename { id: id.clone(), name: self.list[i].name.clone() });
-                        ui.close_menu();
-                    }
-                    if ui.add_enabled(i > 0, egui::Button::new("Move up")).clicked() {
-                        move_req = Some((i, -1));
-                        ui.close_menu();
-                    }
-                    if ui.add_enabled(i + 1 < self.list.len(), egui::Button::new("Move down")).clicked() {
-                        move_req = Some((i, 1));
-                        ui.close_menu();
-                    }
-                    if ui.add_enabled(builtin, egui::Button::new("Reset to factory defaults…")).clicked() {
-                        self.dialog = Some(Dialog::Reset { id: id.clone() });
-                        ui.close_menu();
-                    }
-                    ui.separator();
-                    if ui.button("Delete…").clicked() {
-                        self.dialog = Some(Dialog::Delete { id: id.clone() });
-                        ui.close_menu();
-                    }
-                });
+        ui.horizontal(|ui| {
+            let w = (ui.available_width() - 24.0).max(60.0);
+            ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text("Search presets…").desired_width(w));
+            if ui.add_enabled(!self.filter.is_empty(), egui::Button::new("✖").small()).on_hover_text("Clear search").clicked() {
+                self.filter.clear();
             }
+        });
+        ui.separator();
+
+        let kind_label = |k: &str| kinds().into_iter().find(|x| x.0 == k).map(|x| x.1).unwrap_or("?");
+        let sections = self.sections(&self.filter.clone());
+        let mut clicked = None;
+        let mut run = None;
+        let mut move_req: Option<(usize, isize)> = None;
+        let mut pin_toggle = None;
+        let filtering = !self.filter.trim().is_empty();
+        egui::ScrollArea::vertical().id_salt("presets").auto_shrink([false, false]).max_height(ui.available_height() - 84.0).show(ui, |ui| {
+            // full-width rows with left-aligned names
+            ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+            if filtering && sections[0].1.is_empty() {
+                hint(ui, "No preset matches.");
+            }
+            for (heading, idxs) in &sections {
+                let mut draw = |ui: &mut egui::Ui| {
+                    for &i in idxs {
+                        let p = &self.list[i];
+                        let modified = self.modified(&p.id);
+                        let mut label = String::new();
+                        if p.pinned && (filtering || heading.is_none()) {
+                            label.push_str("★ ");
+                        }
+                        label.push_str(&p.name);
+                        if modified {
+                            label.push_str("  *");
+                        }
+                        let mut text = RichText::new(label);
+                        if modified && i != self.current {
+                            text = text.color(Color32::from_rgb(230, 180, 60));
+                        }
+                        let tip = format!(
+                            "Type: {}{}{}\n{}{}\n\nClick: select · Double-click: run · Right-click: more",
+                            kind_label(&p.kind),
+                            if p.builtin.is_some() { " (built-in)" } else { "" },
+                            if p.category.trim().is_empty() { String::new() } else { format!("\nFolder: {}", p.category.trim()) },
+                            p.description,
+                            if modified { "\n* unsaved changes" } else { "" }
+                        );
+                        let r = ui.add(egui::SelectableLabel::new(i == self.current, text)).on_hover_text(tip);
+                        if r.double_clicked() {
+                            run = Some(i);
+                        } else if r.clicked() {
+                            clicked = Some(i);
+                        }
+                        let id = p.id.clone();
+                        let (builtin, pinned, cat) = (p.builtin.is_some(), p.pinned, p.category.clone());
+                        r.context_menu(|ui| {
+                            if ui.button("Run (preview command)").clicked() {
+                                run = Some(i);
+                                ui.close_menu();
+                            }
+                            ui.separator();
+                            if ui.button(if pinned { "Remove from favorites" } else { "Pin to favorites" }).clicked() {
+                                pin_toggle = Some(i);
+                                ui.close_menu();
+                            }
+                            if ui.button("Set folder…").clicked() {
+                                self.dialog = Some(Dialog::Category { id: id.clone(), category: cat.clone() });
+                                ui.close_menu();
+                            }
+                            if ui.button("Duplicate").clicked() {
+                                self.dialog = Some(Dialog::New { name: String::new(), from: NewFrom::Copy(id.clone()) });
+                                ui.close_menu();
+                            }
+                            if ui.button("Rename…").clicked() {
+                                self.dialog = Some(Dialog::Rename { id: id.clone(), name: self.list[i].name.clone() });
+                                ui.close_menu();
+                            }
+                            if ui.add_enabled(self.can_move(i, -1), egui::Button::new("Move up")).clicked() {
+                                move_req = Some((i, -1));
+                                ui.close_menu();
+                            }
+                            if ui.add_enabled(self.can_move(i, 1), egui::Button::new("Move down")).clicked() {
+                                move_req = Some((i, 1));
+                                ui.close_menu();
+                            }
+                            if ui.button("Export…").clicked() {
+                                clicked = Some(i);
+                                ev = Some(SideEvent::Export { all: false });
+                                ui.close_menu();
+                            }
+                            if ui.add_enabled(builtin, egui::Button::new("Reset to factory defaults…")).clicked() {
+                                self.dialog = Some(Dialog::Reset { id: id.clone() });
+                                ui.close_menu();
+                            }
+                            ui.separator();
+                            if ui.button("Delete…").clicked() {
+                                self.dialog = Some(Dialog::Delete { id: id.clone() });
+                                ui.close_menu();
+                            }
+                        });
+                    }
+                };
+                match heading {
+                    Some(h) => {
+                        let title = if h == "Favorites" { format!("★ Favorites ({})", idxs.len()) } else { format!("{h} ({})", idxs.len()) };
+                        egui::CollapsingHeader::new(RichText::new(title).strong()).id_salt(("pgroup", h.as_str())).default_open(true).show(ui, |ui| ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| draw(ui)));
+                    }
+                    None => draw(ui),
+                }
+            }
+            });
         });
         ui.separator();
         ui.horizontal(|ui| {
             let i = self.current;
-            if ui.add_enabled(i > 0, egui::Button::new("⬆").small()).on_hover_text("Move up").clicked() {
+            if ui.add_enabled(self.can_move(i, -1), egui::Button::new("⬆").small()).on_hover_text("Move up (within its group)").clicked() {
                 move_req = Some((i, -1));
             }
-            if ui.add_enabled(i + 1 < self.list.len(), egui::Button::new("⬇").small()).on_hover_text("Move down").clicked() {
+            if ui.add_enabled(self.can_move(i, 1), egui::Button::new("⬇").small()).on_hover_text("Move down (within its group)").clicked() {
                 move_req = Some((i, 1));
             }
-            if ui.small_button("Duplicate").clicked() {
-                self.dialog = Some(Dialog::New { name: String::new(), from: NewFrom::Copy(self.cur().id.clone()) });
-            }
-            if ui.small_button("Rename").clicked() {
-                self.dialog = Some(Dialog::Rename { id: self.cur().id.clone(), name: self.cur().name.clone() });
-            }
-            if ui.small_button("Delete").clicked() {
-                self.dialog = Some(Dialog::Delete { id: self.cur().id.clone() });
+            let pinned = self.list[i].pinned;
+            if ui.small_button(if pinned { "Unpin" } else { "Pin" }).on_hover_text("Favorites are listed at the top").clicked() {
+                pin_toggle = Some(i);
             }
         });
+        let w = ui.available_width();
+        if ui.add_sized([w, 28.0], egui::Button::new(RichText::new("▶  Run selected preset").strong())).on_hover_text("Preview the command for the selected preset with the current input, then add it to the queue (F5)").clicked() {
+            run = Some(self.current);
+        }
+        hint(ui, "Double-click a preset to run it with the current file.");
+
+        if let Some(i) = pin_toggle {
+            self.list[i].pinned = !self.list[i].pinned;
+            ev = ev.or(Some(SideEvent::Changed));
+        }
         if let Some((i, d)) = move_req {
-            let j = (i as isize + d) as usize;
-            self.list.swap(i, j);
-            if self.current == i {
-                self.current = j;
-            } else if self.current == j {
-                self.current = i;
+            if self.move_in_group(i, d) {
+                ev = ev.or(Some(SideEvent::Changed));
             }
-            status = Some("moved".into());
+        }
+        if let Some(i) = run {
+            self.select(i, cx);
+            return Some(SideEvent::Run);
         }
         if let Some(i) = clicked {
             self.select(i, cx);
-            status = Some("selected".into());
+            ev = ev.or(Some(SideEvent::Selected));
         }
-        status
+        ev
     }
 
     /// Draw the open dialog; returns what the user confirmed.
@@ -378,6 +566,40 @@ impl PresetUi {
                     });
                 });
             }
+            Dialog::Category { id, category } => {
+                let n = names.iter().find(|n| &n.0 == id).map(|n| n.1.clone()).unwrap_or_default();
+                let mut folders: Vec<String> = vec![];
+                for p in &self.list {
+                    let c = p.category.trim();
+                    if !c.is_empty() && !folders.iter().any(|f| f.eq_ignore_ascii_case(c)) {
+                        folders.push(c.to_string());
+                    }
+                }
+                egui::Window::new("Preset folder").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]).show(ctx, |ui| {
+                    ui.label(format!("Folder for “{n}” (leave empty for none):"));
+                    let r = ui.add(egui::TextEdit::singleline(category).hint_text("e.g. YouTube, Archive").desired_width(300.0));
+                    let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if !folders.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label("Existing:");
+                            for f in &folders {
+                                if ui.small_button(f).clicked() {
+                                    *category = f.clone();
+                                }
+                            }
+                        });
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new("OK").strong()).clicked() || enter {
+                            act = Action::SetCategory { id: id.clone(), category: category.clone() };
+                            close = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            }
             Dialog::Reset { id } => {
                 let n = names.iter().find(|n| &n.0 == id).map(|n| n.1.clone()).unwrap_or_default();
                 egui::Window::new("Reset preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]).show(ctx, |ui| {
@@ -407,6 +629,10 @@ impl PresetUi {
         match act {
             Action::None => {}
             Action::Create { name, from } => {
+                let category = match &from {
+                    NewFrom::Copy(id) => self.list.iter().find(|p| &p.id == id).map(|p| p.category.clone()).unwrap_or_default(),
+                    NewFrom::Kind(_) => String::new(),
+                };
                 let (kind, values, desc, base_name) = match &from {
                     NewFrom::Kind(k) => {
                         let label = kinds().into_iter().find(|x| x.0 == k.as_str()).map(|x| x.1).unwrap_or("Preset");
@@ -419,7 +645,7 @@ impl PresetUi {
                     }
                 };
                 let name = if name.trim().is_empty() { base_name } else { name.trim().to_string() };
-                let p = Preset { id: presets::new_id(), name: presets::unique_name(&self.list, &name), kind, description: desc, builtin: None, values };
+                let p = Preset { id: presets::new_id(), name: presets::unique_name(&self.list, &name), kind, description: desc, builtin: None, values, pinned: false, category };
                 let at = self.current + 1;
                 self.list.insert(at, p);
                 self.select(at, cx);
@@ -431,7 +657,7 @@ impl PresetUi {
                 let full = e.mode.save();
                 let values = e.values();
                 let name = if name.trim().is_empty() { format!("{} copy", src.name) } else { name.trim().to_string() };
-                let p = Preset { id: presets::new_id(), name: presets::unique_name(&self.list, &name), kind: src.kind.clone(), description: src.description.clone(), builtin: None, values };
+                let p = Preset { id: presets::new_id(), name: presets::unique_name(&self.list, &name), kind: src.kind.clone(), description: src.description.clone(), builtin: None, values, pinned: false, category: src.category.clone() };
                 // original form goes back to its saved values
                 self.revert_current(s);
                 let mut ne = make_editor(&p, s, None).ok_or("Unknown preset type")?;
@@ -465,11 +691,17 @@ impl PresetUi {
                     self.current = self.current.saturating_sub(1).min(self.list.len() - 1);
                 }
             }
+            Action::SetCategory { id, category } => {
+                if let Some(p) = self.list.iter_mut().find(|p| p.id == id) {
+                    p.category = category.trim().to_string();
+                }
+            }
             Action::Reset { id } => {
                 let Some(i) = self.index_of(&id) else { return Ok(()) };
                 let Some(f) = self.list[i].builtin.as_deref().and_then(presets::factory) else { return Err("Only built-in presets have factory defaults.".into()) };
                 let run = self.editors.get(&id).map(|e| e.run_values());
-                self.list[i] = Preset { id: id.clone(), ..f };
+                let (pinned, category) = (self.list[i].pinned, self.list[i].category.clone());
+                self.list[i] = Preset { id: id.clone(), pinned, category, ..f };
                 self.editors.remove(&id);
                 if let Some(e) = make_editor(&self.list[i], s, run.as_ref()) {
                     self.editors.insert(id, e);
@@ -493,7 +725,7 @@ mod tests {
     use serde_json::json;
 
     fn ui_with(list: Vec<Preset>) -> PresetUi {
-        PresetUi { list, current: 0, editors: HashMap::new(), dialog: None }
+        PresetUi { list, current: 0, editors: HashMap::new(), dialog: None, filter: String::new() }
     }
     fn set(e: &mut Editor, key: &str, v: Value, s: &Settings) {
         let mut full = e.mode.save();
@@ -640,6 +872,12 @@ mod tests {
         pu.select(mix, &cx);
         assert_eq!(pu.editor(mix, &s).mode.save()["input"], json!(f.to_string_lossy()));
         assert!(pu.editor(mix, &s).mode.save()["out_name"].as_str().unwrap().ends_with("_mixed.mkv"));
+        // into a Custom-type preset (its "video" key is an action, not a path)
+        let add = pu.index_of("builtin-addchapters").unwrap();
+        assert!(primary_input(pu.editor(add, &s)).is_none());
+        pu.select(add, &cx);
+        assert_eq!(pu.editor(add, &s).mode.save()["input"], json!(f.to_string_lossy()));
+        assert!(pu.editor(add, &s).mode.save()["out_name"].as_str().unwrap().ends_with("_chapters.mkv"));
         std::fs::remove_file(&f).unwrap();
     }
 
@@ -650,5 +888,69 @@ mod tests {
         let p = pu.export_copy(0, &s);
         assert_eq!(p.values["video"]["crf"], json!(19));
         assert!(pu.list[0].values.is_null(), "stored preset untouched");
+    }
+
+    #[test]
+    fn sidebar_sections_filter_and_group_moves() {
+        let mut pu = ui_with(presets::factory_all());
+        let n = pu.list.len();
+        let secs = pu.sections("");
+        assert_eq!(secs.len(), 1);
+        assert!(secs[0].0.is_none() && secs[0].1 == (0..n).collect::<Vec<_>>(), "user order, no headings");
+        // favorites + a folder
+        pu.list[3].pinned = true;
+        pu.list[5].pinned = true;
+        pu.list[1].category = "Audio".into();
+        pu.list[4].category = "audio".into();
+        let secs = pu.sections("");
+        let heads: Vec<_> = secs.iter().map(|s| s.0.clone().unwrap()).collect();
+        assert_eq!(heads, ["Favorites", "Audio", "Presets"]);
+        assert_eq!(secs[0].1, vec![3, 5]);
+        assert_eq!(secs[1].1, vec![1, 4], "folder names match case-insensitively");
+        assert!(!secs[2].1.contains(&3) && secs[2].1.contains(&0));
+        // search: name, type label, folder, description; flat
+        let hit = |q: &str, pu: &PresetUi| pu.sections(q)[0].1.iter().map(|&i| pu.list[i].id.clone()).collect::<Vec<_>>();
+        assert_eq!(hit("REMUX", &pu), ["builtin-remux"]);
+        assert!(hit("audio", &pu).len() >= 3);
+        assert!(hit("custom pipeline", &pu).contains(&"builtin-addchapters".to_string()), "matches the type label");
+        assert!(hit("zzz", &pu).is_empty());
+        // moving inside the favorites group skips the presets between them
+        pu.current = 5;
+        assert!(pu.move_in_group(5, -1));
+        assert_eq!(pu.sections("")[0].1, vec![3, 4]);
+        assert!(pu.list[3].pinned && pu.list[4].pinned);
+        assert_eq!(pu.current, 3, "selection follows the moved preset");
+        assert!(!pu.move_in_group(3, -1), "already first in its group");
+        assert!(!pu.can_move(4, 1));
+    }
+
+    #[test]
+    fn add_chapters_builtin_is_copy_with_auto_chapters() {
+        let s = Settings { output_folder: "/out".into(), ..Settings::default() };
+        let p = presets::factory("builtin-addchapters").unwrap();
+        let e = make_editor(&p, &s, None).unwrap();
+        let v = e.mode.save();
+        assert_eq!((v["video"].as_str(), v["audio"].as_str(), v["container"].as_str(), v["chapter_mode"].as_str()), (Some("Copy"), Some("Copy"), Some("same"), Some("Auto")));
+        assert_eq!(v["out_dir"], json!("/out"), "partial factory values sit on top of the settings defaults");
+        assert_eq!(v["chapter_interval_min"], json!(5.0));
+        assert!(!e.modified());
+    }
+
+    #[test]
+    fn category_action_and_reset_keeps_pin() {
+        let s = Settings::default();
+        let ctx = egui::Context::default();
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx };
+        let mut pu = ui_with(presets::factory_all());
+        pu.apply(Action::SetCategory { id: "builtin-mix".into(), category: "  Audio ".into() }, &cx).unwrap();
+        let i = pu.index_of("builtin-mix").unwrap();
+        assert_eq!(pu.list[i].category, "Audio");
+        pu.list[i].pinned = true;
+        pu.apply(Action::Reset { id: "builtin-mix".into() }, &cx).unwrap();
+        assert!(pu.list[i].pinned && pu.list[i].category == "Audio");
+        // duplicates inherit the folder, not the pin
+        pu.apply(Action::Create { name: "Mix 2".into(), from: NewFrom::Copy("builtin-mix".into()) }, &cx).unwrap();
+        assert_eq!(pu.cur().category, "Audio");
+        assert!(!pu.cur().pinned);
     }
 }

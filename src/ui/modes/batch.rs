@@ -129,7 +129,9 @@ impl Mode for BatchMode {
                             ui.add_enabled(r.info.is_ok(), egui::Checkbox::new(&mut r.include, r.path.file_name().unwrap_or_default().to_string_lossy()));
                             match r.info.as_ref().map_err(|e| e.clone()).and_then(|i| i.video_summary()) {
                                 Ok(v) => {
-                                    ui.label(format!("{} · {}x{} · {} audio", fmt_hms(v.duration_s), v.width, v.height, v.audio_count));
+                                    let ch = r.info.as_ref().map(|i| i.chapters.len()).unwrap_or(0);
+                                    let ch = if ch == 0 { "no chapters".to_string() } else { format!("{ch} chapters") };
+                                    ui.label(format!("{} · {}x{} · {} audio · {ch}", fmt_hms(v.duration_s), v.width, v.height, v.audio_count));
                                     if v.interlaced {
                                         ui.colored_label(egui::Color32::from_rgb(230, 180, 60), format!("interlaced ({})", v.field_order.unwrap_or_default()));
                                     } else {
@@ -148,6 +150,7 @@ impl Mode for BatchMode {
             });
         }
 
+        let without = self.rows.iter().filter(|r| r.include && r.info.as_ref().map(|i| !i.has_chapters()).unwrap_or(false)).count();
         let bs = &mut self.st.bs;
         let any_interlaced = self.rows.iter().any(|r| r.include && r.info.as_ref().ok().and_then(|i| i.video_summary().ok()).map(|v| v.interlaced).unwrap_or(false));
         section(ui, "Shared settings");
@@ -170,6 +173,17 @@ impl Mode for BatchMode {
             });
             ui.end_row();
             passthrough_ui(ui, "m7_pt", &mut bs.passthrough);
+            ui.label("Chapters");
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut bs.auto_chapters_if_none, "Create chapters for files without any, every");
+                    ui.add_enabled_ui(bs.auto_chapters_if_none, |ui| num_f64(ui, &mut bs.chapter_interval_min, 0.1..=600.0, 0.1, " min"));
+                });
+                if !self.rows.is_empty() {
+                    hint(ui, format!("{without} selected file(s) have no chapters; files with chapters keep theirs."));
+                }
+            });
+            ui.end_row();
         });
         if bs.passthrough.encodes_video() {
             section(ui, "Video (libx264)");
@@ -220,6 +234,7 @@ impl Mode for BatchMode {
                 field_order: v.field_order.clone(),
                 subtitle_streams: info.subtitle_refs(),
                 has_attachments: info.has_attachments(),
+                has_chapters: info.has_chapters(),
             });
         }
         let jobs = batch::plan(&inputs, &self.st.bs, &out_dir)?;
