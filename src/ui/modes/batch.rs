@@ -106,7 +106,7 @@ impl Mode for BatchMode {
                     ui.spinner();
                     ui.label("probing files…");
                 } else if self.scanned_dir.starts_with("ERROR") {
-                    ui.colored_label(egui::Color32::LIGHT_RED, &self.scanned_dir);
+                    ui.colored_label(crate::ui::theme::c().err, &self.scanned_dir);
                 } else if !self.rows.is_empty() {
                     ui.label(format!("{} file(s), {} selected", self.rows.len(), self.rows.iter().filter(|r| r.include).count()));
                 }
@@ -133,13 +133,13 @@ impl Mode for BatchMode {
                                     let ch = if ch == 0 { "no chapters".to_string() } else { format!("{ch} chapters") };
                                     ui.label(format!("{} · {}x{} · {} audio · {ch}", fmt_hms(v.duration_s), v.width, v.height, v.audio_count));
                                     if v.interlaced {
-                                        ui.colored_label(egui::Color32::from_rgb(230, 180, 60), format!("interlaced ({})", v.field_order.unwrap_or_default()));
+                                        ui.colored_label(crate::ui::theme::c().warn, format!("interlaced ({})", v.field_order.unwrap_or_default()));
                                     } else {
                                         ui.label("");
                                     }
                                 }
                                 Err(e) => {
-                                    ui.colored_label(egui::Color32::LIGHT_RED, e);
+                                    ui.colored_label(crate::ui::theme::c().err, e);
                                     ui.label("");
                                 }
                             }

@@ -149,7 +149,7 @@ impl Mode for CustomMode {
                         ui.spinner();
                         ui.label("probing files…");
                     } else if self.scanned.starts_with("ERROR") {
-                        ui.colored_label(egui::Color32::LIGHT_RED, &self.scanned);
+                        ui.colored_label(crate::ui::theme::c().err, &self.scanned);
                     } else if !self.rows.is_empty() {
                         ui.label(format!("{} file(s), {} selected", self.rows.len(), self.rows.iter().filter(|r| r.include).count()));
                     }
@@ -200,7 +200,7 @@ impl Mode for CustomMode {
                             match &r.info {
                                 Ok(i) => hint(ui, describe_video(i)),
                                 Err(e) => {
-                                    ui.colored_label(egui::Color32::LIGHT_RED, e);
+                                    ui.colored_label(crate::ui::theme::c().err, e);
                                 }
                             }
                         });
@@ -322,7 +322,7 @@ impl Mode for CustomMode {
             ui.vertical(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut o.input_args).hint_text("e.g. -hwaccel auto").desired_width(f32::INFINITY));
                 if let Err(e) = custom::split_args(&o.input_args) {
-                    ui.colored_label(egui::Color32::LIGHT_RED, e);
+                    ui.colored_label(crate::ui::theme::c().err, e);
                 }
             });
             ui.end_row();
@@ -330,7 +330,7 @@ impl Mode for CustomMode {
             ui.vertical(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut o.output_args).hint_text("e.g. -metadata comment=\"my game\" -af loudnorm").desired_width(f32::INFINITY));
                 if let Err(e) = custom::split_args(&o.output_args) {
-                    ui.colored_label(egui::Color32::LIGHT_RED, e);
+                    ui.colored_label(crate::ui::theme::c().err, e);
                 }
                 hint(ui, "Inserted just before the output file; use quotes for values with spaces. Shown in the preview.");
             });

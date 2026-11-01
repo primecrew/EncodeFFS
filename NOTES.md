@@ -1,5 +1,27 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.3.2 — appearance & accessibility
+- **Before:** no theme setting (followed eframe's default), egui's built-in Ctrl+/- zoom worked but was not saved,
+  no screen-reader support (AccessKit off), ~60 hard-coded colours (some below 4.5:1 on light backgrounds), icon-only
+  buttons without names.
+- **Added:** Settings › Appearance + View menu: theme System / Dark / Light / High contrast; text size 75–300 % with
+  Ctrl+plus/minus/0 and Ctrl+wheel; separate monospace size; bold text. Live, saved in `appearance` in the settings file
+  (old files without it load with defaults; a broken value is ignored instead of discarding the file).
+- One palette per theme (`src/ui/theme.rs`); unit test checks every text colour ≥ 4.5:1 against its background.
+- Visible focus ring (accent, 3 px in high contrast); shortcuts Ctrl+O, Ctrl+F, F1 (help window) added to F5 / Ctrl+S.
+  The confirmation opens with Run focused.
+- AccessKit enabled; icon buttons (copy, ⬆ ⬇ ✖, pin, drag handle) carry names + tooltips.
+- Layout at large sizes: wrapping header, scrolling central form and queue/log panel, panel size limits relative to the
+  window, dialogs capped to the screen, Source panel auto-hides when narrow.
+- **PowerShell:** the app does not run PowerShell. The only PowerShell-related feature is "Command syntax:
+  PowerShell / Command Prompt" in the confirmation, which controls how the Copy buttons quote the ffmpeg command for
+  pasting into a terminal.
+- **Limits (not verified):** tested under Wine only — no real Narrator/NVDA run; Wine has no UI Automation, so screen
+  reader output is untested. Known gaps: the drag-to-reorder list and the queue progress rows are custom-painted and
+  only partly announced; some states are shown by colour plus text but the colour is not announced; egui menus and
+  right-click menus have limited keyboard navigation (all preset actions are also in the Presets menu); Windows
+  system-theme switching and Segoe UI Bold were not verified on real Windows.
+
 ## 0.3.1
 - **Run confirmation shows the full commands with copy buttons.** Before: the popup already showed the commands next to
   Run / Cancel, but as one plain-text block with POSIX-style quoting (`\"`, no PowerShell call operator), and a

@@ -12,6 +12,90 @@ use crate::updater::{UpdateChannel, UpdateSource};
 
 pub const PORTABLE_FILE: &str = "FFmpegEncoder.settings.json";
 
+/// Colour theme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ThemeChoice {
+    /// Follow Windows' app mode (dark/light); dark when it can't be read.
+    #[default]
+    System,
+    Dark,
+    Light,
+    /// Black background, white text, yellow accent, thick focus outlines.
+    HighContrast,
+}
+
+impl ThemeChoice {
+    pub const ALL: [ThemeChoice; 4] = [ThemeChoice::System, ThemeChoice::Dark, ThemeChoice::Light, ThemeChoice::HighContrast];
+    pub fn label(self) -> &'static str {
+        match self {
+            ThemeChoice::System => "System (follow Windows)",
+            ThemeChoice::Dark => "Dark",
+            ThemeChoice::Light => "Light",
+            ThemeChoice::HighContrast => "High contrast",
+        }
+    }
+}
+
+/// Text / UI size steps offered in menus and by Ctrl +/-.
+pub const SCALE_STEPS: [f32; 10] = [0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
+pub const SCALE_MIN: f32 = 0.75;
+pub const SCALE_MAX: f32 = 3.0;
+pub const MONO_MIN: f32 = 0.8;
+pub const MONO_MAX: f32 = 2.0;
+
+/// Look & feel. Applied live; scale applies to everything (text, buttons, icons, rows, popups).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Appearance {
+    pub theme: ThemeChoice,
+    /// Overall UI scale (1.0 = 100 %).
+    pub scale: f32,
+    /// Extra factor for monospace text (commands, logs, chapter text), on top of `scale`.
+    pub mono_scale: f32,
+    /// Bold interface text (Segoe UI Bold when available).
+    pub bold: bool,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Appearance { theme: ThemeChoice::System, scale: 1.0, mono_scale: 1.0, bold: false }
+    }
+}
+
+/// Clamp to the allowed range; NaN/inf become the default.
+pub fn clamp_scale(v: f32, min: f32, max: f32) -> f32 {
+    if v.is_finite() {
+        // keep two decimals so steps compare exactly after a round trip
+        ((v.clamp(min, max)) * 100.0).round() / 100.0
+    } else {
+        1.0
+    }
+}
+
+/// Next / previous entry of [`SCALE_STEPS`] from an arbitrary current value.
+pub fn step_scale(cur: f32, up: bool) -> f32 {
+    let cur = clamp_scale(cur, SCALE_MIN, SCALE_MAX);
+    if up {
+        SCALE_STEPS.iter().copied().find(|s| *s > cur + 0.001).unwrap_or(SCALE_MAX)
+    } else {
+        SCALE_STEPS.iter().rev().copied().find(|s| *s < cur - 0.001).unwrap_or(SCALE_MIN)
+    }
+}
+
+impl Appearance {
+    pub fn sanitized(mut self) -> Self {
+        self.scale = clamp_scale(self.scale, SCALE_MIN, SCALE_MAX);
+        self.mono_scale = clamp_scale(self.mono_scale, MONO_MIN, MONO_MAX);
+        self
+    }
+}
+
+/// A broken "appearance" value must not throw away the rest of the settings file.
+fn lenient<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Appearance, D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(serde_json::from_value::<Appearance>(v).unwrap_or_default().sanitized())
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -45,6 +129,9 @@ pub struct Settings {
     pub show_source_panel: bool,
     /// Terminal syntax for "Copy command" in the run confirmation.
     pub copy_shell: crate::cmdline::Shell,
+    /// Theme, text size, bold (0.3.2; older files get the defaults).
+    #[serde(deserialize_with = "lenient")]
+    pub appearance: Appearance,
     /// Legacy (0.1.x): last-used values per mode; migrated into presets on first start of 0.2.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, serde_json::Value>,
@@ -77,6 +164,7 @@ impl Default for Settings {
             last_preset: String::new(),
             show_source_panel: true,
             copy_shell: crate::cmdline::Shell::PowerShell,
+            appearance: Appearance::default(),
             modes: BTreeMap::new(),
             last_mode: String::new(),
         }
@@ -128,7 +216,11 @@ impl Settings {
     pub fn load_from(path: &Path) -> Settings {
         std::fs::read_to_string(path)
             .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
+            .and_then(|t| serde_json::from_str::<Settings>(&t).ok())
+            .map(|mut s| {
+                s.appearance = s.appearance.sanitized();
+                s
+            })
             .unwrap_or_default()
     }
 
@@ -208,5 +300,47 @@ mod tests {
         assert_eq!(l.crf, 30);
         assert_eq!(l.audio_bitrate_k, 192);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn appearance_migration_and_clamping() {
+        let dir = std::env::temp_dir().join(format!("ffenc_set_{}", crate::util::unique_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("s.json");
+        // a 0.3.1 file: no "appearance" key
+        std::fs::write(&p, r#"{"crf": 20, "copy_shell": "Cmd", "show_source_panel": false}"#).unwrap();
+        let s = Settings::load_from(&p);
+        assert_eq!((s.crf, s.show_source_panel), (20, false));
+        assert_eq!(s.appearance, Appearance::default());
+        // out of range / garbage values are clamped or defaulted, the rest of the file survives
+        std::fs::write(&p, r#"{"crf": 21, "appearance": {"theme": "Light", "scale": 9.0, "mono_scale": 0.1, "bold": true}}"#).unwrap();
+        let s = Settings::load_from(&p);
+        assert_eq!(s.crf, 21);
+        assert_eq!(s.appearance, Appearance { theme: ThemeChoice::Light, scale: 3.0, mono_scale: 0.8, bold: true });
+        std::fs::write(&p, r#"{"crf": 22, "appearance": {"theme": "Neon", "scale": "big"}}"#).unwrap();
+        let s = Settings::load_from(&p);
+        assert_eq!((s.crf, s.appearance.clone()), (22, Appearance::default()));
+        std::fs::write(&p, r#"{"crf": 23, "appearance": "dark"}"#).unwrap();
+        assert_eq!(Settings::load_from(&p).crf, 23);
+        // round trip
+        let mut s = Settings::default();
+        s.appearance = Appearance { theme: ThemeChoice::HighContrast, scale: 2.5, mono_scale: 1.25, bold: true };
+        s.save_to(&p).unwrap();
+        assert_eq!(Settings::load_from(&p).appearance, s.appearance);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn scale_steps() {
+        assert_eq!(clamp_scale(f32::NAN, SCALE_MIN, SCALE_MAX), 1.0);
+        assert_eq!(clamp_scale(0.1, SCALE_MIN, SCALE_MAX), 0.75);
+        assert_eq!(clamp_scale(1.234, SCALE_MIN, SCALE_MAX), 1.23);
+        assert_eq!(step_scale(1.0, true), 1.1);
+        assert_eq!(step_scale(1.0, false), 0.9);
+        assert_eq!(step_scale(1.3, true), 1.5);
+        assert_eq!(step_scale(1.3, false), 1.25);
+        assert_eq!(step_scale(3.0, true), 3.0);
+        assert_eq!(step_scale(0.75, false), 0.75);
+        assert_eq!(step_scale(7.0, false), 2.5);
     }
 }

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use serde::{Deserialize, Serialize};
 
 use super::{default_audio, default_video, restore, Ctx, Mode, Plan};
@@ -89,7 +89,7 @@ fn drag_handle(ui: &mut egui::Ui) -> egui::Response {
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
-    resp.on_hover_text("Drag to reorder")
+    named(resp, egui::WidgetType::DragValue, "Drag handle: drag to reorder (or use the Move up / Move down buttons)")
 }
 
 impl JoinMode {
@@ -231,21 +231,21 @@ impl Mode for JoinMode {
                         let h = drag_handle(ui);
                         h.dnd_set_drag_payload(i);
                         ui.label(RichText::new(format!("{:>2}.", i + 1)).monospace());
-                        if ui.add_enabled(i > 0, egui::Button::new("⬆").small()).on_hover_text("Move up").clicked() {
+                        if icon_button(ui, i > 0, "⬆", &format!("Move file {} up", i + 1)).clicked() {
                             action = Some((i, i - 1));
                         }
-                        if ui.add_enabled(i + 1 < n, egui::Button::new("⬇").small()).on_hover_text("Move down").clicked() {
+                        if icon_button(ui, i + 1 < n, "⬇", &format!("Move file {} down", i + 1)).clicked() {
                             action = Some((i, i + 2));
                         }
-                        if ui.small_button("✖").on_hover_text("Remove from the list").clicked() {
+                        if icon_button(ui, true, "✖", &format!("Remove file {} from the list", i + 1)).clicked() {
                             remove = Some(i);
                         }
                         match self.input(&f) {
                             Some(Ok(j)) => {
-                                ui.label(RichText::new(fmt_hms(j.duration_s)).monospace().color(Color32::from_rgb(120, 180, 120)));
+                                ui.label(RichText::new(fmt_hms(j.duration_s)).monospace().color(crate::ui::theme::c().ok));
                             }
                             Some(Err(e)) => {
-                                ui.label(RichText::new("error").color(Color32::LIGHT_RED)).on_hover_text(e);
+                                ui.label(RichText::new("error").color(crate::ui::theme::c().err)).on_hover_text(e);
                             }
                             None => {
                                 ui.spinner();
@@ -269,7 +269,7 @@ impl Mode for JoinMode {
                     if let (Some(pos), Some(from)) = (ui.ctx().pointer_interact_pos(), r.dnd_hover_payload::<usize>()) {
                         let before = if pos.y < r.rect.center().y { i } else { i + 1 };
                         let y = if before == i { r.rect.top() } else { r.rect.bottom() };
-                        ui.painter().hline(r.rect.x_range(), y, egui::Stroke::new(2.0_f32, ui.visuals().selection.stroke.color));
+                        ui.painter().hline(r.rect.x_range(), y, egui::Stroke::new(2.0_f32, crate::ui::theme::c().accent));
                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
                         if r.dnd_release_payload::<usize>().is_some() {
                             action = Some((*from, before));
@@ -315,7 +315,7 @@ impl Mode for JoinMode {
                 }
             });
         } else if ready.len() >= 2 && ready.len() == self.st.files.len() {
-            ui.label(RichText::new("✔ All files share codecs, resolution, frame rate and audio format – lossless join is safe.").small().color(Color32::from_rgb(120, 180, 120)));
+            ui.label(RichText::new("✔ All files share codecs, resolution, frame rate and audio format – lossless join is safe.").small().color(crate::ui::theme::c().ok));
         }
 
         section(ui, "Method");

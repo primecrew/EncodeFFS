@@ -1,6 +1,6 @@
 [package]
 name = "ffmpeg-encoder"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 description = "Portable Windows GUI for FFmpeg encoding tasks (port of the user's PowerShell script v22.0)"
 build = "build.rs"
@@ -14,7 +14,7 @@ name = "FFmpegEncoder"
 path = "src/main.rs"
 
 [dependencies]
-eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "accesskit"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = { version = "2.12", default-features = false, features = ["tls"] }

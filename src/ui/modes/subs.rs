@@ -106,7 +106,7 @@ impl Mode for SubsMode {
                 } else if let Some(i) = self.sprobe.info() {
                     let subs = i.subtitle_infos();
                     if subs.is_empty() {
-                        ui.colored_label(egui::Color32::LIGHT_RED, "No subtitle streams in the source file.");
+                        ui.colored_label(crate::ui::theme::c().err, "No subtitle streams in the source file.");
                     }
                     for sub in subs {
                         let mut on = self.selected.contains(&sub.index);

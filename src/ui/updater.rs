@@ -38,10 +38,10 @@ pub enum UpdaterEvent {
 
 pub fn verdict_text(v: Verdict) -> (&'static str, Color32) {
     match v {
-        Verdict::UpdateAvailable => ("Update available", Color32::from_rgb(230, 180, 60)),
-        Verdict::UpToDate => ("Up to date", Color32::from_rgb(120, 200, 120)),
-        Verdict::InstalledNewer => ("Installed build is newer", Color32::from_rgb(120, 200, 120)),
-        Verdict::Unknown => ("Can't compare (different channel/build type)", Color32::GRAY),
+        Verdict::UpdateAvailable => ("Update available", crate::ui::theme::c().warn),
+        Verdict::UpToDate => ("Up to date", crate::ui::theme::c().ok),
+        Verdict::InstalledNewer => ("Installed build is newer", crate::ui::theme::c().ok),
+        Verdict::Unknown => ("Can't compare (different channel/build type)", crate::ui::theme::c().muted),
     }
 }
 
@@ -90,7 +90,7 @@ impl UpdaterUi {
             return event;
         }
         let mut open = self.open;
-        egui::Window::new("FFmpeg updates").open(&mut open).collapsible(false).resizable(true).default_width(620.0).show(ctx, |ui| {
+        crate::ui::common::fit(egui::Window::new("FFmpeg updates").open(&mut open).collapsible(false).resizable(true).default_width(620.0), ctx, true).show(ctx, |ui| {
             egui::Grid::new("upd").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                 ui.label("Installed");
                 ui.vertical(|ui| {
@@ -103,7 +103,7 @@ impl UpdaterUi {
                             ui.label(format!("checking… {}", f.bin_dir.display()));
                         }
                         _ => {
-                            ui.colored_label(Color32::LIGHT_RED, "FFmpeg not found");
+                            ui.colored_label(crate::ui::theme::c().err, "FFmpeg not found");
                         }
                     }
                 });
@@ -152,7 +152,7 @@ impl UpdaterUi {
                             });
                         }
                         Some(Err(e)) => {
-                            ui.colored_label(Color32::LIGHT_RED, e);
+                            ui.colored_label(crate::ui::theme::c().err, e);
                         }
                         None => {}
                     }
@@ -232,10 +232,10 @@ impl UpdaterUi {
             hint(ui, "You can switch back with Help › Roll back FFmpeg.");
             match &self.message {
                 Some(Ok(m)) => {
-                    ui.colored_label(Color32::from_rgb(120, 200, 120), m);
+                    ui.colored_label(crate::ui::theme::c().ok, m);
                 }
                 Some(Err(e)) => {
-                    ui.colored_label(Color32::LIGHT_RED, e);
+                    ui.colored_label(crate::ui::theme::c().err, e);
                 }
                 None => {}
             }

@@ -6,11 +6,12 @@ pub mod modes;
 pub mod presets;
 pub mod source;
 pub mod updater;
+pub mod theme;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use ffenc::ffmpeg::locate::{self, FfPaths};
 use ffenc::ffmpeg::runner::{full_args, JobStatus, Queue};
 use ffenc::ffmpeg::version::{self, compare, FfmpegCheck, Verdict};
@@ -31,6 +32,8 @@ struct Preview {
     overwrite: Vec<PathBuf>,
     /// Which copy button was pressed last (None = "Copy all") and when.
     copied: Option<(Option<usize>, std::time::Instant)>,
+    /// Put keyboard focus on Run when the popup opens (Enter/Space runs, Esc cancels).
+    focus_run: bool,
 }
 
 /// The full command of one job as it will run, for the given terminal.
@@ -64,6 +67,14 @@ pub struct App {
     drop_note: Option<(String, bool, std::time::Instant)>,
     started: std::time::Instant,
     sim_drop_done: bool,
+    /// Appearance currently applied to egui (None = not yet).
+    applied: Option<ffenc::settings::Appearance>,
+    bold_available: bool,
+    /// Ctrl+wheel accumulator (ln of zoom).
+    wheel_zoom: f32,
+    /// Text-size slider value while dragging (applied on release).
+    scale_edit: Option<f32>,
+    show_help: bool,
     settings_edit: Option<Settings>,
     updater: UpdaterUi,
     show_about: bool,
@@ -85,12 +96,24 @@ pub fn open_path(p: &Path) {
     let _ = std::process::Command::new("xdg-open").arg(p).spawn();
 }
 
-/// Add Windows system fonts as fallbacks so unicode file names render.
-fn install_fonts(ctx: &egui::Context) {
+const WIN_FONTS: &str = r"C:\Windows\Fonts";
+
+/// Fonts: Segoe UI (Windows' UI font) as the main proportional font when present
+/// – Segoe UI Bold (or Semibold) when bold text is on – then egui's defaults and
+/// system fallbacks so unicode file names render. Returns whether a bold face was found.
+fn install_fonts(ctx: &egui::Context, bold: bool) -> bool {
+    let dir = std::env::var("FFENC_FONTS_DIR").unwrap_or_else(|_| WIN_FONTS.to_string());
+    let read = |f: &str| std::fs::read(Path::new(&dir).join(f)).ok();
     let mut fonts = egui::FontDefinitions::default();
-    let candidates = [r"C:\Windows\Fonts\segoeui.ttf", r"C:\Windows\Fonts\seguisym.ttf", r"C:\Windows\Fonts\msyh.ttc", r"C:\Windows\Fonts\YuGothM.ttc", r"C:\Windows\Fonts\malgun.ttf"];
-    for (i, path) in candidates.iter().enumerate() {
-        if let Ok(bytes) = std::fs::read(path) {
+    let bold_face = read("segoeuib.ttf").or_else(|| read("seguisb.ttf"));
+    let bold_found = bold_face.is_some();
+    let main = if bold { bold_face.or_else(|| read("segoeui.ttf")) } else { read("segoeui.ttf") };
+    if let Some(bytes) = main {
+        fonts.font_data.insert("ui-main".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+        fonts.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "ui-main".into());
+    }
+    for (i, f) in ["seguisym.ttf", "msyh.ttc", "YuGothM.ttc", "malgun.ttf"].iter().enumerate() {
+        if let Some(bytes) = read(f) {
             let name = format!("sys{i}");
             fonts.font_data.insert(name.clone(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
             for fam in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
@@ -99,13 +122,37 @@ fn install_fonts(ctx: &egui::Context) {
         }
     }
     ctx.set_fonts(fonts);
+    bold_found
 }
+
+/// Too narrow (in points, i.e. after text scaling) to show the Source panel next to the form.
+fn source_panel_too_narrow(ctx: &egui::Context) -> bool {
+    ctx.screen_rect().width() < 900.0
+}
+
+/// Keyboard shortcuts (also shown in Help › Keyboard shortcuts).
+const SHORTCUTS: &[(&str, &str)] = &[
+    ("F5", "Run selected preset (opens the confirmation with the full command)"),
+    ("Enter / Space", "In the confirmation: Run (focused first) · elsewhere: press the focused button"),
+    ("Esc", "Close the confirmation / dialog"),
+    ("Ctrl+O", "Open file(s) for the selected preset (folder for folder presets)"),
+    ("Ctrl+S", "Save preset"),
+    ("Ctrl+F", "Search presets"),
+    ("Ctrl + plus / Ctrl + minus", "Larger / smaller text and controls (also Ctrl + mouse wheel)"),
+    ("Ctrl+0", "Text size 100 %"),
+    ("Tab / Shift+Tab", "Next / previous control (focused control has a thick outline)"),
+    ("Arrow keys", "Change sliders and numbers; move in lists and text"),
+    ("F1", "This help"),
+];
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        install_fonts(&cc.egui_ctx);
         let first_run = !settings::settings_path().exists();
         let mut settings = Settings::load();
+        // appearance before the first frame, so panels are laid out at the right scale
+        let bold_available = install_fonts(&cc.egui_ctx, settings.appearance.bold);
+        theme::apply(&cc.egui_ctx, &settings.appearance);
+        let applied = Some(settings.appearance.clone());
         let ctx = cc.egui_ctx.clone();
         let queue = Queue::new(Some(settings::logs_dir().join("FFmpegEncoder.log")), move || ctx.request_repaint());
         queue.log(format!("{} {} started. Settings: {}", ffenc::APP_NAME, ffenc::APP_VERSION, settings::settings_path().display()));
@@ -149,6 +196,11 @@ impl App {
             drop_note: None,
             started: std::time::Instant::now(),
             sim_drop_done: false,
+            applied,
+            bold_available,
+            wheel_zoom: 0.0,
+            scale_edit: None,
+            show_help: false,
             settings_edit: None,
             updater: UpdaterUi::default(),
             show_about: false,
@@ -283,7 +335,7 @@ impl App {
                         }
                     }
                 }
-                self.preview = Some(Preview { plan, program: ff.ffmpeg.clone(), overwrite, copied: None });
+                self.preview = Some(Preview { plan, program: ff.ffmpeg.clone(), overwrite, copied: None, focus_run: true });
             }
             Err(e) => {
                 // double-click / Run right after switching presets: the form probes its input first
@@ -399,8 +451,49 @@ impl App {
                     self.save_settings();
                     ui.close_menu();
                 }
+                if self.settings.show_source_panel && source_panel_too_narrow(ctx) {
+                    hint(ui, "(hidden while the window is too narrow for it at this text size)");
+                }
+                ui.separator();
+                ui.label(RichText::new("Theme").strong());
+                for th in ffenc::settings::ThemeChoice::ALL {
+                    if ui.radio_value(&mut self.settings.appearance.theme, th, th.label()).clicked() {
+                        ui.close_menu();
+                    }
+                }
+                ui.separator();
+                let a = &mut self.settings.appearance;
+                ui.label(RichText::new(format!("Text size: {:.0} %", a.scale * 100.0)).strong());
+                if ui.button("Larger      Ctrl +").clicked() {
+                    a.scale = ffenc::settings::step_scale(a.scale, true);
+                }
+                if ui.button("Smaller     Ctrl −").clicked() {
+                    a.scale = ffenc::settings::step_scale(a.scale, false);
+                }
+                if ui.button("100 %        Ctrl+0").clicked() {
+                    a.scale = 1.0;
+                }
+                ui.menu_button("Choose size", |ui| {
+                    for s in ffenc::settings::SCALE_STEPS {
+                        if ui.radio(a.scale == s, format!("{:.0} %", s * 100.0)).clicked() {
+                            a.scale = s;
+                            ui.close_menu();
+                        }
+                    }
+                });
+                ui.add_enabled(self.bold_available, egui::Checkbox::new(&mut a.bold, "Bold text"));
+                ui.separator();
+                if ui.button("Appearance settings…").clicked() {
+                    self.settings_edit = Some(self.settings.clone());
+                    ui.close_menu();
+                }
             });
             ui.menu_button("Help", |ui| {
+                if ui.button("Keyboard shortcuts & accessibility   (F1)").clicked() {
+                    self.show_help = true;
+                    ui.close_menu();
+                }
+                ui.separator();
                 if ui.button("Locate FFmpeg folder…").clicked() {
                     self.open_locate(false);
                     ui.close_menu();
@@ -439,7 +532,7 @@ impl App {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 match (&self.ff, &self.ff_check) {
                     (None, _) => {
-                        ui.colored_label(Color32::LIGHT_RED, "FFmpeg not found");
+                        ui.colored_label(crate::ui::theme::c().err, "FFmpeg not found");
                     }
                     (Some(_), None) => {
                         ui.spinner();
@@ -448,7 +541,7 @@ impl App {
                         ui.label(RichText::new(format!("FFmpeg {}", c.version)).small()).on_hover_text(format!("{}\n({})", f.bin_dir.display(), f.source.label()));
                     }
                     (Some(_), Some(Err(e))) => {
-                        ui.colored_label(Color32::LIGHT_RED, "FFmpeg error").on_hover_text(e);
+                        ui.colored_label(crate::ui::theme::c().err, "FFmpeg error").on_hover_text(e);
                     }
                 }
             });
@@ -458,13 +551,13 @@ impl App {
     fn banners(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         if let Some(Ok(c)) = &self.ff_check {
             if !c.has_libx264 || !c.has_aac {
-                ui.colored_label(Color32::LIGHT_RED, "⚠ This FFmpeg build lacks libx264 and/or aac. Re-encode modes won't work. Use Help › Check for FFmpeg updates to install a GPL build.");
+                ui.colored_label(crate::ui::theme::c().err, "⚠ This FFmpeg build lacks libx264 and/or aac. Re-encode modes won't work. Use Help › Check for FFmpeg updates to install a GPL build.");
             }
         }
         let mut dismiss = false;
         if let Some(b) = &self.update_banner {
             ui.horizontal(|ui| {
-                ui.colored_label(Color32::from_rgb(230, 180, 60), format!("ℹ {b}"));
+                ui.colored_label(crate::ui::theme::c().warn, format!("ℹ {b}"));
                 if ui.small_button("Open updater").clicked() {
                     self.updater.open_and_check(ctx, &self.settings);
                     dismiss = true;
@@ -493,18 +586,18 @@ impl App {
         });
         {
             let s = shared.lock().unwrap();
-            egui::ScrollArea::vertical().id_salt("queue").max_height(120.0).auto_shrink([false, true]).show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt("queue").max_height(120.0).min_scrolled_height(24.0).auto_shrink([false, true]).show(ui, |ui| {
                 if s.jobs.is_empty() {
                     hint(ui, "No jobs yet. Fill in a mode and press “Preview & run…”.");
                 }
                 egui::Grid::new("jobs").num_columns(4).striped(true).show(ui, |ui| {
                     for j in &s.jobs {
                         let (icon, color) = match &j.status {
-                            JobStatus::Pending => ("⏳ pending", Color32::GRAY),
-                            JobStatus::Running => ("▶ running", Color32::LIGHT_BLUE),
-                            JobStatus::Done => ("✔ done", Color32::from_rgb(120, 200, 120)),
-                            JobStatus::Failed(_) => ("✖ failed", Color32::LIGHT_RED),
-                            JobStatus::Cancelled => ("■ cancelled", Color32::GRAY),
+                            JobStatus::Pending => ("⏳ pending", crate::ui::theme::c().muted),
+                            JobStatus::Running => ("▶ running", crate::ui::theme::c().info),
+                            JobStatus::Done => ("✔ done", crate::ui::theme::c().ok),
+                            JobStatus::Failed(_) => ("✖ failed", crate::ui::theme::c().err),
+                            JobStatus::Cancelled => ("■ cancelled", crate::ui::theme::c().muted),
                         };
                         ui.colored_label(color, icon);
                         let lbl = ui.label(&j.spec.label);
@@ -551,12 +644,12 @@ impl App {
             }
         });
         let s = shared.lock().unwrap();
-        egui::ScrollArea::vertical().id_salt("log").stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("log").stick_to_bottom(true).auto_shrink([false, false]).min_scrolled_height(40.0).show(ui, |ui| {
             for l in &s.log {
                 let color = if l.starts_with("FAILED") || l.contains("Error") || l.contains("error") {
-                    Color32::LIGHT_RED
+                    crate::ui::theme::c().err
                 } else if l.starts_with("Processing complete") || l.starts_with("Queue finished") {
-                    Color32::from_rgb(120, 200, 120)
+                    crate::ui::theme::c().ok
                 } else {
                     ui.visuals().text_color()
                 };
@@ -571,9 +664,9 @@ impl App {
         // error / info
         if let Some(e) = self.error.clone() {
             let mut close = false;
-            egui::Window::new("Problem").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+            common::fit(egui::Window::new("Problem").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
                 ui.set_max_width(520.0);
-                ui.colored_label(Color32::LIGHT_RED, &e);
+                ui.colored_label(crate::ui::theme::c().err, &e);
                 if ui.button("OK").clicked() {
                     close = true;
                 }
@@ -584,7 +677,7 @@ impl App {
         }
         if let Some((t, m)) = self.info.clone() {
             let mut close = false;
-            egui::Window::new(t).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+            common::fit(egui::Window::new(t).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
                 ui.label(m);
                 if ui.button("OK").clicked() {
                     close = true;
@@ -603,13 +696,14 @@ impl App {
             let mut shell_changed = false;
             let last_copy = p.copied;
             let mut new_copy: Option<Option<usize>> = None;
+            let focus_run = std::mem::replace(&mut p.focus_run, false);
             let copied_recently = |which: Option<usize>| last_copy.map(|(w, t)| w == which && t.elapsed() < Duration::from_millis(1500)).unwrap_or(false);
-            egui::Window::new(format!("Confirm – {}", self.pre.list[self.pre.current].name))
+            common::fit(egui::Window::new(format!("Confirm – {}", self.pre.list[self.pre.current].name))
                 .collapsible(false)
                 .resizable(true)
-                .default_size([900.0, 520.0])
+                .default_size([900.0_f32.min(ctx.screen_rect().width() - 40.0), 520.0_f32.min(ctx.screen_rect().height() - 40.0)])
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
+                , ctx, false).show(ctx, |ui| {
                     let n = p.plan.jobs.len();
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(format!("{n} job{} will be queued with these exact commands:", if n == 1 { "" } else { "s" })).strong());
@@ -627,7 +721,7 @@ impl App {
                         hint(ui, note);
                     }
                     for o in &p.overwrite {
-                        ui.colored_label(Color32::from_rgb(230, 180, 60), format!("⚠ Output exists and will be overwritten: {}", o.display()));
+                        ui.colored_label(crate::ui::theme::c().warn, format!("⚠ Output exists and will be overwritten: {}", o.display()));
                     }
                     ui.separator();
                     let bottom = 44.0;
@@ -637,9 +731,10 @@ impl App {
                                 ui.label(RichText::new(format!("[{}] {}", i + 1, j.label)).strong());
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     if copied_recently(Some(i)) {
-                                        ui.colored_label(Color32::from_rgb(120, 200, 120), "Copied");
+                                        ui.colored_label(crate::ui::theme::c().ok, "Copied");
                                     }
-                                    if copy_button(ui, "Copy", "Copy command to clipboard").clicked() {
+                                    let tip = if n == 1 { "Copy command to clipboard".to_string() } else { format!("Copy command {} to clipboard", i + 1) };
+                                    if copy_button(ui, "Copy", &tip).clicked() {
                                         ui.ctx().copy_text(job_command(*shell, &p.program, j));
                                         new_copy = Some(Some(i));
                                     }
@@ -668,7 +763,12 @@ impl App {
                     });
                     ui.separator();
                     ui.horizontal(|ui| {
-                        if ui.add(egui::Button::new(RichText::new(if n == 1 { "▶  Run" } else { "▶  Run all" }).strong()).min_size(egui::vec2(110.0, 28.0))).on_hover_text("Add to the queue and start").clicked() {
+                        let rb = ui.add(egui::Button::new(RichText::new(if n == 1 { "▶  Run" } else { "▶  Run all" }).strong()).min_size(egui::vec2(110.0, 28.0)));
+                        let rb = common::named(rb, egui::WidgetType::Button, if n == 1 { "Run: add to the queue and start" } else { "Run all: add to the queue and start" });
+                        if focus_run {
+                            rb.request_focus();
+                        }
+                        if rb.clicked() {
                             run = true;
                         }
                         if ui.add(egui::Button::new("Cancel").min_size(egui::vec2(80.0, 28.0))).clicked() {
@@ -681,7 +781,7 @@ impl App {
                             new_copy = Some(None);
                         }
                         if copied_recently(None) {
-                            ui.colored_label(Color32::from_rgb(120, 200, 120), "Copied");
+                            ui.colored_label(crate::ui::theme::c().ok, "Copied");
                         }
                     });
                 });
@@ -719,14 +819,14 @@ impl App {
             let mut keep = true;
             let mut use_dir = None;
             let mut download = false;
-            egui::Window::new(if dl.first_run { "Welcome – where is FFmpeg?" } else { "Locate FFmpeg" }).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+            common::fit(egui::Window::new(if dl.first_run { "Welcome – where is FFmpeg?" } else { "Locate FFmpeg" }).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
                 ui.set_max_width(620.0);
                 ui.label("Select the folder that contains ffmpeg.exe and ffprobe.exe.");
                 hint(ui, "ffmpeg does the encoding; ffprobe (from the same folder) reads each input's duration, streams, interlacing and chapters.");
                 if let (Some(f), true) = (&self.ff, !invalid) {
                     hint(ui, format!("Currently using {} ({}).", f.bin_dir.display(), f.source.label()));
                 } else if let Some(Err(e)) = &self.ff_check {
-                    ui.colored_label(Color32::LIGHT_RED, format!("The current FFmpeg doesn't run: {e}"));
+                    ui.colored_label(crate::ui::theme::c().err, format!("The current FFmpeg doesn't run: {e}"));
                 }
                 ui.horizontal(|ui| {
                     ui.add(egui::TextEdit::singleline(&mut dl.path).desired_width(440.0));
@@ -744,10 +844,10 @@ impl App {
                 let check = locate::check_bin_dir(Path::new(dl.path.trim()));
                 match &check {
                     Ok(d) => {
-                        ui.colored_label(Color32::from_rgb(120, 200, 120), format!("✔ Found {} and {} in {}", locate::exe("ffmpeg"), locate::exe("ffprobe"), d.display()));
+                        ui.colored_label(crate::ui::theme::c().ok, format!("✔ Found {} and {} in {}", locate::exe("ffmpeg"), locate::exe("ffprobe"), d.display()));
                     }
                     Err(e) => {
-                        ui.colored_label(Color32::LIGHT_RED, format!("✖ {e}"));
+                        ui.colored_label(crate::ui::theme::c().err, format!("✖ {e}"));
                     }
                 }
                 ui.add_space(6.0);
@@ -799,7 +899,7 @@ impl App {
             let mut go = false;
             let mut no = false;
             let bin = self.ff.as_ref().map(|f| f.bin_dir.clone());
-            egui::Window::new("Roll back FFmpeg").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+            common::fit(egui::Window::new("Roll back FFmpeg").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
                 if let Some(b) = &bin {
                     ui.label(format!("Swap the binaries in\n{}\nwith the previous version in\n{}?", b.display(), install::backup_dir_for(b).display()));
                     hint(ui, "Running it again swaps back.");
@@ -827,7 +927,7 @@ impl App {
         // about
         if self.show_about {
             let mut open = true;
-            egui::Window::new("About").open(&mut open).collapsible(false).resizable(true).default_width(560.0).show(ctx, |ui| {
+            common::fit(egui::Window::new("About").open(&mut open).collapsible(false).resizable(true).default_width(560.0), ctx, true).show(ctx, |ui| {
                 ui.heading(format!("{} {}", ffenc::APP_NAME, ffenc::APP_VERSION));
                 ui.label("GUI port of the FFmpeg processing PowerShell script v22.0.");
                 ui.label(format!("Build: {} {}", std::env::consts::OS, std::env::consts::ARCH));
@@ -869,13 +969,177 @@ impl App {
         self.settings_dialog(ctx);
     }
 
+    /// Theme / size shortcuts, then apply the appearance if it changed (live, saved).
+    fn appearance_frame(&mut self, ctx: &egui::Context) {
+        use ffenc::settings::step_scale;
+        let a = &mut self.settings.appearance;
+        let (up, down, reset) = ctx.input_mut(|i| {
+            let up = i.consume_key(egui::Modifiers::COMMAND, egui::Key::Plus) | i.consume_key(egui::Modifiers::COMMAND, egui::Key::Equals);
+            let down = i.consume_key(egui::Modifiers::COMMAND, egui::Key::Minus);
+            let reset = i.consume_key(egui::Modifiers::COMMAND, egui::Key::Num0);
+            (up, down, reset)
+        });
+        if up {
+            a.scale = step_scale(a.scale, true);
+        }
+        if down {
+            a.scale = step_scale(a.scale, false);
+        }
+        if reset {
+            a.scale = 1.0;
+        }
+        // Ctrl + mouse wheel: one step per notch-ish (trackpads send many small deltas)
+        let zd = ctx.input(|i| i.zoom_delta());
+        if zd != 1.0 && zd.is_finite() && zd > 0.0 {
+            self.wheel_zoom += zd.ln();
+            if self.wheel_zoom.abs() >= 0.09 {
+                a.scale = step_scale(a.scale, self.wheel_zoom > 0.0);
+                self.wheel_zoom = 0.0;
+            }
+        }
+        *a = a.clone().sanitized();
+        let a = a.clone();
+        if self.applied.as_ref() != Some(&a) {
+            let first = self.applied.is_none();
+            if first || self.applied.as_ref().map(|p| p.bold) != Some(a.bold) {
+                self.bold_available = install_fonts(ctx, a.bold);
+            }
+            theme::apply(ctx, &a);
+            self.applied = Some(a.clone());
+            if !first {
+                self.save_settings();
+            }
+        }
+        theme::begin_frame(ctx, &a);
+    }
+
+    /// Files from a drop or Ctrl+O into the selected preset.
+    fn route_paths(&mut self, ctx: &egui::Context, dropped: Vec<PathBuf>) {
+        let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
+        let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+        let idx = self.pre.current;
+        let ed = self.pre.editor(idx, &self.settings);
+        let paths = if ed.mode.wants_folders() { dropped.clone() } else { ffenc::util::expand_dropped(&dropped) };
+        let before = ed.mode.save();
+        ed.mode.on_drop(&paths, &cx);
+        let accepted = ed.mode.save() != before;
+        let name = self.pre.cur().name.clone();
+        self.drop_note = Some((
+            if accepted {
+                format!("Added to “{name}”")
+            } else {
+                format!("Nothing in the selection fits “{name}” – check the file type")
+            },
+            accepted,
+            std::time::Instant::now(),
+        ));
+    }
+
+    /// Ctrl+O: pick file(s) – or a folder for folder presets – for the selected preset.
+    fn open_files(&mut self, ctx: &egui::Context) {
+        let idx = self.pre.current;
+        let folders = self.pre.editor(idx, &self.settings).mode.wants_folders();
+        let mut d = rfd::FileDialog::new().set_title(format!("Open for “{}”", self.pre.cur().name));
+        if Path::new(&self.settings.input_folder).is_dir() {
+            d = d.set_directory(&self.settings.input_folder);
+        }
+        let picked = if folders { d.pick_folder().map(|p| vec![p]) } else { d.pick_files() };
+        if let Some(v) = picked.filter(|v| !v.is_empty()) {
+            self.route_paths(ctx, v);
+        }
+    }
+
+    /// Theme, text size, monospace size, bold – edits `self.settings.appearance` live.
+    fn appearance_ui(&mut self, ui: &mut egui::Ui) {
+        use ffenc::settings::{ThemeChoice, MONO_MAX, MONO_MIN, SCALE_MAX, SCALE_MIN, SCALE_STEPS};
+        let bold_ok = self.bold_available;
+        egui::Grid::new("set_look").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+            let a = &mut self.settings.appearance;
+            ui.label("Theme");
+            ui.horizontal_wrapped(|ui| {
+                for th in ThemeChoice::ALL {
+                    ui.radio_value(&mut a.theme, th, th.label());
+                }
+            });
+            ui.end_row();
+            ui.label("Text size");
+            ui.vertical(|ui| {
+                let mut v = self.scale_edit.unwrap_or(a.scale) * 100.0;
+                let r = ui.add(egui::Slider::new(&mut v, SCALE_MIN * 100.0..=SCALE_MAX * 100.0).step_by(5.0).suffix(" %").text("whole interface"));
+                let r = common::named(r, egui::WidgetType::Slider, "Text and interface size in percent");
+                if r.dragged() {
+                    // applied on release: rescaling under the mouse would move the slider
+                    self.scale_edit = Some(v / 100.0);
+                } else if r.changed() || r.drag_stopped() {
+                    a.scale = v / 100.0;
+                    self.scale_edit = None;
+                }
+                ui.horizontal_wrapped(|ui| {
+                    for s in SCALE_STEPS {
+                        if ui.selectable_label((a.scale - s).abs() < 0.001, format!("{:.0} %", s * 100.0)).clicked() {
+                            a.scale = s;
+                        }
+                    }
+                });
+                hint(ui, "Scales all text, buttons, icons, lists and dialogs. Shortcuts: Ctrl + plus / minus, Ctrl+0, Ctrl + mouse wheel.");
+            });
+            ui.end_row();
+            ui.label("Code / log text");
+            ui.vertical(|ui| {
+                let mut m = a.mono_scale * 100.0;
+                let r = ui.add(egui::Slider::new(&mut m, MONO_MIN * 100.0..=MONO_MAX * 100.0).step_by(5.0).suffix(" %").text("of the text size"));
+                if common::named(r, egui::WidgetType::Slider, "Monospace text size for commands and logs, in percent").changed() {
+                    a.mono_scale = m / 100.0;
+                }
+                ui.label(RichText::new("ffmpeg -i \"input.mkv\" -c:v libx264 -crf 22 output.mp4").monospace());
+            });
+            ui.end_row();
+            ui.label("Bold text");
+            ui.vertical(|ui| {
+                ui.add_enabled(bold_ok, egui::Checkbox::new(&mut a.bold, "Use a bold font for the interface"));
+                if !bold_ok {
+                    hint(ui, "Needs Segoe UI Bold (C:\\Windows\\Fonts\\segoeuib.ttf), which this system doesn't have.");
+                }
+            });
+            ui.end_row();
+        });
+    }
+
+    fn help_window(&mut self, ctx: &egui::Context) {
+        if !self.show_help {
+            return;
+        }
+        let mut open = true;
+        common::fit(egui::Window::new("Keyboard shortcuts & accessibility").open(&mut open).collapsible(false).resizable(true).default_width(620.0), ctx, true).show(ctx, |ui| {
+            egui::Grid::new("keys").num_columns(2).striped(true).spacing([16.0, 6.0]).show(ui, |ui| {
+                for (k, what) in SHORTCUTS {
+                    ui.label(RichText::new(*k).strong());
+                    ui.label(*what);
+                    ui.end_row();
+                }
+            });
+            common::section(ui, "Accessibility");
+            ui.label("• View › Theme: System, Dark, Light or High contrast. View › Text size or Ctrl + plus/minus: 75–300 %.");
+            ui.label("• File › Settings › Appearance: text size slider, separate size for commands/logs, bold text.");
+            ui.label("• Everything in the menus and forms can be reached with Tab; the focused control has a thick outline.");
+            ui.label("• Screen readers (Narrator, NVDA) can read buttons, labels, check boxes and text fields through UI Automation. Some parts (the queue list, the drag-and-drop file list order, colours) are only partly announced.");
+            ui.label("• Every action in a preset's right-click menu is also in the Presets menu.");
+        });
+        if !open || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.show_help = false;
+        }
+    }
+
     fn settings_dialog(&mut self, ctx: &egui::Context) {
         let Some(mut ed) = self.settings_edit.take() else { return };
         let mut keep = true;
         let mut save = false;
         let mut err = None;
-        egui::Window::new("Settings").collapsible(false).resizable(true).default_width(640.0).show(ctx, |ui| {
-            egui::ScrollArea::vertical().max_height(560.0).show(ui, |ui| {
+        common::fit(egui::Window::new("Settings").collapsible(false).resizable(true).default_width(640.0), ctx, false).show(ctx, |ui| {
+            egui::ScrollArea::vertical().max_height((ctx.screen_rect().height() - 150.0).max(120.0)).show(ui, |ui| {
+                common::section(ui, "Appearance");
+                hint(ui, "Applied and saved immediately (Save/Cancel below don't affect it).");
+                self.appearance_ui(ui);
                 common::section(ui, "Folders");
                 egui::Grid::new("set_f").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                     let d = ed.input_folder.clone();
@@ -962,6 +1226,8 @@ impl App {
         }
         if save {
             let ff_changed = ed.ffmpeg_bin_path != self.settings.ffmpeg_bin_path;
+            // appearance is edited live on self.settings, not on the dialog copy
+            ed.appearance = self.settings.appearance.clone();
             self.settings = ed;
             self.pre.rebase(&self.settings);
             self.save_settings();
@@ -1040,27 +1306,12 @@ impl eframe::App for App {
         }
         self.poll_background();
 
+        self.appearance_frame(ctx);
+
         // drag & drop
         let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
         if !dropped.is_empty() {
-            let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
-            let idx = self.pre.current;
-            let ed = self.pre.editor(idx, &self.settings);
-            let paths = if ed.mode.wants_folders() { dropped.clone() } else { ffenc::util::expand_dropped(&dropped) };
-            let before = ed.mode.save();
-            ed.mode.on_drop(&paths, &cx);
-            let accepted = ed.mode.save() != before;
-            let name = self.pre.cur().name.clone();
-            self.drop_note = Some((
-                if accepted {
-                    format!("Added to “{name}”")
-                } else {
-                    format!("Nothing in the drop fits “{name}” – check the file type")
-                },
-                accepted,
-                std::time::Instant::now(),
-            ));
+            self.route_paths(ctx, dropped);
         }
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
@@ -1072,13 +1323,24 @@ impl eframe::App for App {
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F5)) && self.preview.is_none() {
             self.start_preview(ctx);
         }
+        // Ctrl+O open file(s), Ctrl+F search presets, F1 help
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::O)) && self.preview.is_none() {
+            self.open_files(ctx);
+        }
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
+            ctx.memory_mut(|m| m.request_focus(egui::Id::new(presets::SEARCH_ID)));
+        }
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F1)) {
+            self.show_help = !self.show_help;
+        }
         // Ctrl+S saves the current preset
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) && self.pre.modified(&self.pre.cur().id.clone()) {
             self.pre.save_current(&self.settings);
             self.save_presets();
         }
 
-        egui::SidePanel::left("presets").resizable(true).default_width(240.0).width_range(180.0..=420.0).show(ctx, |ui| {
+        let screen = ctx.screen_rect().size();
+        egui::SidePanel::left("presets").resizable(true).default_width(240.0).width_range(150.0..=(screen.x * 0.45).max(200.0)).show(ctx, |ui| {
             ui.add_space(4.0);
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
             let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
@@ -1098,8 +1360,9 @@ impl eframe::App for App {
             }
         });
 
-        if self.settings.show_source_panel {
-            egui::SidePanel::right("source").resizable(true).default_width(300.0).width_range(220.0..=520.0).show(ctx, |ui| {
+        // at large text sizes the window has few points of width: the form comes first
+        if self.settings.show_source_panel && !source_panel_too_narrow(ctx) {
+            egui::SidePanel::right("source").resizable(true).default_width(300.0).width_range(180.0..=(screen.x * 0.4).max(220.0)).show(ctx, |ui| {
                 ui.add_space(4.0);
                 let idx = self.pre.current;
                 let input = presets::primary_input(self.pre.editor(idx, &self.settings));
@@ -1108,8 +1371,11 @@ impl eframe::App for App {
             });
         }
 
-        egui::TopBottomPanel::bottom("queue").resizable(true).default_height(270.0).min_height(120.0).show(ctx, |ui| {
-            self.queue_panel(ui);
+        egui::TopBottomPanel::bottom("queue").resizable(true).default_height(270.0_f32.min(screen.y * 0.3)).height_range(60.0..=(screen.y * 0.4).max(80.0)).show(ctx, |ui| {
+            // never let the panel's content force it taller than its cap (large text sizes)
+            egui::ScrollArea::vertical().id_salt("queue_panel_scroll").auto_shrink([false, false]).show(ui, |ui| {
+                self.queue_panel(ui);
+            });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -1123,17 +1389,18 @@ impl eframe::App for App {
             let mut save = false;
             let mut save_as = false;
             let mut revert = false;
-            ui.horizontal(|ui| {
+            // wrapping rows: nothing overlaps at large text sizes / narrow windows
+            ui.horizontal_wrapped(|ui| {
                 ui.heading(&name);
                 ui.label(RichText::new(format!("[{kind_label}]")).small().weak());
                 if modified {
-                    ui.label(RichText::new("(unsaved changes)").small().color(Color32::from_rgb(230, 180, 60)));
+                    ui.label(RichText::new("(unsaved changes)").small().color(crate::ui::theme::c().unsaved));
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    save_as = ui.small_button("Save as new…").on_hover_text("Save the form as a new preset").clicked();
-                    revert = ui.add_enabled(modified, egui::Button::new("Revert").small()).on_hover_text("Back to the saved values (keeps the chosen files)").clicked();
-                    save = ui.add_enabled(modified, egui::Button::new(RichText::new("Save preset").strong()).small()).on_hover_text("Store the current values in this preset (Ctrl+S)").clicked();
-                });
+            });
+            ui.horizontal_wrapped(|ui| {
+                save = ui.add_enabled(modified, egui::Button::new(RichText::new("Save preset").strong()).small()).on_hover_text("Store the current values in this preset (Ctrl+S)").clicked();
+                revert = ui.add_enabled(modified, egui::Button::new("Revert").small()).on_hover_text("Back to the saved values (keeps the chosen files)").clicked();
+                save_as = ui.small_button("Save as new…").on_hover_text("Save the form as a new preset").clicked();
             });
             if !desc.is_empty() {
                 hint(ui, &desc);
@@ -1149,7 +1416,7 @@ impl eframe::App for App {
             if save_as {
                 self.pre.dialog = Some(Dialog::SaveAs { name: format!("{name} copy") });
             }
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                 let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
                 let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
                 self.pre.editor(idx, &self.settings).mode.ui(ui, &cx);
@@ -1172,25 +1439,32 @@ impl eframe::App for App {
         if hovering || note.is_some() {
             let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("drop")));
             let rect = ctx.screen_rect();
-            let accent = ctx.style().visuals.selection.stroke.color;
+            let pal = crate::ui::theme::c();
+            let accent = pal.accent;
             let (text, color) = if hovering {
                 painter.rect_stroke(rect.shrink(2.0), 6.0, egui::Stroke::new(4.0_f32, accent), egui::StrokeKind::Inside);
                 let n = ctx.input(|i| i.raw.hovered_files.len());
-                (format!("Drop {} for “{}” – highlighted fields accept files", if n > 1 { format!("{n} items") } else { "here".into() }, self.pre.cur().name), accent)
+                (format!("Drop {} for “{}” – highlighted fields accept files", if n > 1 { format!("{n} items") } else { "here".into() }, self.pre.cur().name), pal.pill_accent)
             } else {
                 let (t, ok) = note.unwrap();
-                (t, if ok { Color32::from_rgb(90, 170, 90) } else { Color32::from_rgb(200, 120, 60) })
+                (t, if ok { pal.pill_ok } else { pal.pill_warn })
             };
-            let galley = painter.layout_no_wrap(text, egui::FontId::proportional(17.0), Color32::WHITE);
-            let pill = egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.top() + 44.0), galley.size() + egui::vec2(28.0, 14.0));
-            painter.rect_filled(pill, 14.0, color.gamma_multiply(0.95));
-            painter.galley(pill.center() - galley.size() / 2.0, galley, Color32::WHITE);
+            // wraps at large text sizes instead of running off the window
+            let galley = painter.layout(text, egui::FontId::proportional(17.0), pal.on_pill, (rect.width() - 80.0).max(100.0));
+            let pill = egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.top() + 30.0 + galley.size().y / 2.0), galley.size() + egui::vec2(28.0, 14.0));
+            painter.rect_filled(pill, 14.0, color);
+            if pal.high_contrast {
+                painter.rect_stroke(pill, 14.0, egui::Stroke::new(2.0_f32, pal.accent), egui::StrokeKind::Inside);
+            }
+            painter.galley(pill.center() - galley.size() / 2.0, galley, pal.on_pill);
             ctx.request_repaint_after(Duration::from_millis(200));
         } else if self.drop_note.is_some() {
             self.drop_note = None;
         }
 
         self.dialogs(ctx);
+        self.help_window(ctx);
+        theme::focus_ring(ctx);
 
         // keep progress bars moving while jobs run
         if self.queue.is_busy() || self.updater.busy() {

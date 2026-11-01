@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 
-use eframe::egui::{self, Color32, RichText, Ui};
+use eframe::egui::{self, RichText, Ui};
 use ffenc::cmd::common::*;
 use ffenc::ffmpeg::probe::{self, MediaInfo};
 use ffenc::util::fmt_hms;
@@ -89,10 +89,10 @@ impl ProbeSlot {
         } else if let Some(r) = &self.result {
             match r {
                 Ok(i) => {
-                    ui.label(RichText::new(describe(i)).small().color(Color32::from_rgb(120, 180, 120)));
+                    ui.label(RichText::new(describe(i)).small().color(crate::ui::theme::c().ok));
                 }
                 Err(e) => {
-                    ui.label(RichText::new(e).small().color(Color32::LIGHT_RED));
+                    ui.label(RichText::new(e).small().color(crate::ui::theme::c().err));
                 }
             }
         }
@@ -141,6 +141,33 @@ fn start_dir(current: &str, fallback: &str) -> Option<PathBuf> {
     d.or_else(|| Some(PathBuf::from(fallback)).filter(|p| p.is_dir()))
 }
 
+/// Keep a window inside the screen at any text size (large UI scales leave few
+/// points of screen): capped to the screen with a margin. `scroll` adds a
+/// vertical scrollbar for dialogs that have no scroll area of their own.
+pub fn fit<'a>(w: egui::Window<'a>, ctx: &egui::Context, scroll: bool) -> egui::Window<'a> {
+    let s = ctx.screen_rect().size();
+    let w = w.max_width((s.x - 24.0).max(200.0)).max_height((s.y - 24.0).max(150.0)).constrain(true);
+    if scroll {
+        w.vscroll(true)
+    } else {
+        w
+    }
+}
+
+/// Give a widget an accessible name (read by Narrator / NVDA through AccessKit) and
+/// the same text as tooltip. Use for anything whose visible text is only a symbol.
+pub fn named(resp: egui::Response, kind: egui::WidgetType, name: &str) -> egui::Response {
+    let (n, en) = (name.to_string(), resp.enabled());
+    resp.widget_info(|| egui::WidgetInfo::labeled(kind, en, &n));
+    resp.on_hover_text(name)
+}
+
+/// Small icon-only button (⬆ ⬇ ✖ …) with an accessible name and tooltip.
+pub fn icon_button(ui: &mut Ui, enabled: bool, icon: &str, name: &str) -> egui::Response {
+    let r = ui.add_enabled(enabled, egui::Button::new(icon).small());
+    named(r, egui::WidgetType::Button, name)
+}
+
 /// True while the OS is dragging files over the window.
 pub fn files_hovering(ctx: &egui::Context) -> bool {
     ctx.input(|i| !i.raw.hovered_files.is_empty())
@@ -148,11 +175,9 @@ pub fn files_hovering(ctx: &egui::Context) -> bool {
 
 /// Highlight a drop target (accent border + faint fill) while files hover the window.
 pub fn paint_drop_target(ui: &Ui, rect: egui::Rect) {
-    let c = ui.visuals().selection.stroke.color;
-    let t = ui.ctx().input(|i| i.time) as f32;
-    let a = 0.75 + 0.25 * (t * 5.0).sin();
-    ui.painter().rect(rect.expand(2.0), 4.0, c.gamma_multiply(0.12), egui::Stroke::new(2.0_f32, c.gamma_multiply(a)), egui::StrokeKind::Outside);
-    ui.ctx().request_repaint();
+    // solid (no pulsing animation), 3 px, accent colour (≥ 3:1 in every theme)
+    let c = crate::ui::theme::c().accent;
+    ui.painter().rect(rect.expand(2.0), 4.0, c.gamma_multiply(0.10), egui::Stroke::new(3.0_f32, c), egui::StrokeKind::Outside);
 }
 
 /// Label + text field + Browse button. The field is a drop target: it is
@@ -233,7 +258,7 @@ pub fn auto_name(name: &mut String, last_auto: &mut String, new_auto: String) {
 }
 
 pub fn warn(ui: &mut Ui, text: impl Into<String>) {
-    ui.label(RichText::new(format!("⚠ {}", text.into())).color(Color32::from_rgb(230, 180, 60)));
+    ui.label(RichText::new(format!("⚠ {}", text.into())).color(crate::ui::theme::c().warn));
 }
 
 pub fn hint(ui: &mut Ui, text: impl Into<String>) {
@@ -331,7 +356,7 @@ pub fn audio_encode_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode) {
         }
         if let Some(c) = CompressorParams::for_preset(a.compressor, &a.advanced) {
             if let Err(e) = c.validate() {
-                ui.colored_label(Color32::LIGHT_RED, e);
+                ui.colored_label(crate::ui::theme::c().err, e);
             }
         }
     });
@@ -452,5 +477,5 @@ pub fn copy_button(ui: &mut Ui, label: &str, tooltip: &str) -> egui::Response {
         let text_pos = egui::pos2(rect.left() + pad.x + icon + gap, rect.center().y - galley.size().y / 2.0);
         p.galley(text_pos, galley, vis.text_color());
     }
-    resp.on_hover_text(tooltip)
+    named(resp, egui::WidgetType::Button, tooltip)
 }

@@ -129,7 +129,7 @@ impl Mode for RemuxMode {
             ui.label(format!("{} of {} selected", self.files.iter().filter(|f| f.1).count(), self.files.len()));
         });
         if let Some(e) = &self.list_error {
-            ui.colored_label(egui::Color32::LIGHT_RED, e);
+            ui.colored_label(crate::ui::theme::c().err, e);
         } else if self.files.is_empty() && !self.st.src_dir.trim().is_empty() {
             warn(ui, format!("No MKV files found in: {}", self.st.src_dir));
         }
@@ -146,7 +146,7 @@ impl Mode for RemuxMode {
             }
         });
         ui.add_space(6.0);
-        ui.checkbox(&mut self.st.delete_sources, egui::RichText::new("Delete successfully converted source MKVs").color(egui::Color32::from_rgb(230, 120, 100)));
+        ui.checkbox(&mut self.st.delete_sources, egui::RichText::new("Delete successfully converted source MKVs").color(crate::ui::theme::c().err));
         hint(ui, "All tracks are copied. If a track is incompatible with MP4 that job fails and its MKV is kept.");
     }
     fn build(&mut self, _cx: &Ctx) -> Result<Plan, String> {

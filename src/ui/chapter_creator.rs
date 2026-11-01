@@ -8,7 +8,7 @@ use ffenc::cmd::chapters::{self, ChapterMode, ManualChapter};
 use ffenc::ffmpeg::probe::MediaInfo;
 use ffenc::util::fmt_hms;
 
-use super::common::{hint, num_f64};
+use super::common::{hint, icon_button, num_f64};
 
 /// The preset fields the creator edits.
 pub struct Spec<'a> {
@@ -40,22 +40,19 @@ pub struct ChapterCreator {
     show_meta: bool,
 }
 
-const OK: Color32 = Color32::from_rgb(120, 180, 120);
-const BAD: Color32 = Color32::LIGHT_RED;
-const WARN: Color32 = Color32::from_rgb(230, 180, 80);
 
 /// One-line detection text + whether the input lacks chapters.
 pub fn detection(src: &Source) -> (String, Color32, bool) {
     if let Some(n) = &src.batch_note {
-        return (n.clone(), Color32::GRAY, false);
+        return (n.clone(), crate::ui::theme::c().muted, false);
     }
     if src.probing {
-        return ("checking with ffprobe…".into(), Color32::GRAY, false);
+        return ("checking with ffprobe…".into(), crate::ui::theme::c().muted, false);
     }
     match src.info {
-        None => ("choose an input to check for chapters".into(), Color32::GRAY, false),
-        Some(i) if i.chapters.is_empty() => ("No chapters found in this file".into(), WARN, true),
-        Some(i) => (format!("{} chapter(s) found in this file", i.chapters.len()), OK, false),
+        None => ("choose an input to check for chapters".into(), crate::ui::theme::c().muted, false),
+        Some(i) if i.chapters.is_empty() => ("No chapters found in this file".into(), crate::ui::theme::c().warn, true),
+        Some(i) => (format!("{} chapter(s) found in this file", i.chapters.len()), crate::ui::theme::c().ok, false),
     }
 }
 
@@ -68,12 +65,12 @@ pub fn status(spec: &Spec, src: &Source) -> Option<(String, Color32)> {
     }
     let d = src.out_dur?;
     if d <= 0.0 {
-        return Some(("Trim is longer than the input".into(), BAD));
+        return Some(("Trim is longer than the input".into(), crate::ui::theme::c().err));
     }
     match chapters::build_chapters(d, mode, *spec.interval_min * 60.0, spec.manual).and_then(|l| chapters::validate(&l, d).map(|_| l)) {
-        Ok(l) if l.is_empty() => Some(("No chapters would be generated".into(), WARN)),
-        Ok(l) => Some((format!("OK: {} chapter(s), last one ends at {}", l.len(), fmt_hms(d)), OK)),
-        Err(e) => Some((e, BAD)),
+        Ok(l) if l.is_empty() => Some(("No chapters would be generated".into(), crate::ui::theme::c().warn)),
+        Ok(l) => Some((format!("OK: {} chapter(s), last one ends at {}", l.len(), fmt_hms(d)), crate::ui::theme::c().ok)),
+        Err(e) => Some((e, crate::ui::theme::c().err)),
     }
 }
 
@@ -120,7 +117,7 @@ impl ChapterCreator {
                 let bad = spec.manual.iter().filter(|m| chapters::parse_hms(&m.time).is_err()).count();
                 ui.label(format!("{} entr{}", spec.manual.len(), if spec.manual.len() == 1 { "y" } else { "ies" }));
                 if bad > 0 {
-                    ui.colored_label(BAD, format!("({bad} invalid time{})", if bad == 1 { "" } else { "s" }));
+                    ui.colored_label(crate::ui::theme::c().err, format!("({bad} invalid time{})", if bad == 1 { "" } else { "s" }));
                 }
                 if ui.small_button("Edit…").clicked() {
                     self.open = true;
@@ -142,13 +139,13 @@ impl ChapterCreator {
             return;
         }
         let mut open = true;
-        egui::Window::new("Chapter creator")
+        crate::ui::common::fit(egui::Window::new("Chapter creator")
             .id(egui::Id::new(("chapter_creator", id)))
             .open(&mut open)
             .default_size([680.0, 600.0])
             .resizable(true)
             .collapsible(false)
-            .show(ctx, |ui| {
+            , ctx, false).show(ctx, |ui| {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| self.body(ui, id, spec, src));
             });
         self.open = open;
@@ -207,24 +204,24 @@ impl ChapterCreator {
                 let bad = !c.time.trim().is_empty() && chapters::parse_hms(&c.time).is_err();
                 let mut te = egui::TextEdit::singleline(&mut c.time).hint_text("00:15:30");
                 if bad {
-                    te = te.text_color(BAD);
+                    te = te.text_color(crate::ui::theme::c().err);
                 }
                 // fixed sizes: a Grid cell is otherwise limited to last frame's column width
                 ui.add_sized([120.0, 20.0], te).on_hover_text("hh:mm:ss or hh:mm:ss.mmm");
                 ui.add_sized([300.0, 20.0], egui::TextEdit::singleline(&mut c.title).hint_text("Chapter N"));
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(i > 0, egui::Button::new("⬆").small()).clicked() {
+                    if icon_button(ui, i > 0, "⬆", &format!("Move chapter {} up", i + 1)).clicked() {
                         swap = Some(i - 1);
                     }
-                    if ui.add_enabled(i + 1 < n, egui::Button::new("⬇").small()).clicked() {
+                    if icon_button(ui, i + 1 < n, "⬇", &format!("Move chapter {} down", i + 1)).clicked() {
                         swap = Some(i);
                     }
-                    if ui.small_button("✖").on_hover_text("Delete").clicked() {
+                    if icon_button(ui, true, "✖", &format!("Delete chapter {}", i + 1)).clicked() {
                         remove = Some(i);
                     }
                 });
                 if bad {
-                    ui.colored_label(BAD, "invalid time");
+                    ui.colored_label(crate::ui::theme::c().err, "invalid time");
                 } else {
                     ui.label("");
                 }
@@ -333,7 +330,7 @@ impl ChapterCreator {
         });
 
         if let Some((ok, m)) = &self.msg {
-            ui.colored_label(if *ok { OK } else { BAD }, m);
+            ui.colored_label(if *ok { crate::ui::theme::c().ok } else { crate::ui::theme::c().err }, m);
         }
 
         ui.separator();
@@ -350,10 +347,10 @@ impl ChapterCreator {
         };
         match chapters::build_chapters(d, mode, *spec.interval_min * 60.0, spec.manual).and_then(|l| chapters::validate(&l, d).map(|_| l)) {
             Err(e) => {
-                ui.colored_label(BAD, e);
+                ui.colored_label(crate::ui::theme::c().err, e);
             }
             Ok(list) => {
-                ui.colored_label(OK, format!("{} chapter(s) – valid: increasing, no zero-length, last ends at {}", list.len(), fmt_hms(d)));
+                ui.colored_label(crate::ui::theme::c().ok, format!("{} chapter(s) – valid: increasing, no zero-length, last ends at {}", list.len(), fmt_hms(d)));
                 egui::Grid::new(format!("{id}_cc_prev")).num_columns(5).striped(true).spacing([12.0, 2.0]).show(ui, |ui| {
                     for h in ["#", "Start", "End", "Length", "Title"] {
                         ui.label(RichText::new(h).strong());
@@ -418,6 +415,6 @@ mod tests {
         assert!(status(&spec, &src2).is_none(), "has chapters -> auto-if-none does nothing");
         *spec.mode = ChapterMode::Manual;
         spec.manual.push(ManualChapter { time: "00:05:00".into(), title: String::new() });
-        assert_eq!(status(&spec, &src).unwrap().1, BAD, "manual chapter beyond the output");
+        assert_eq!(status(&spec, &src).unwrap().1, crate::ui::theme::c().err, "manual chapter beyond the output");
     }
 }

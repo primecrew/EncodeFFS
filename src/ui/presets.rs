@@ -4,12 +4,12 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use ffenc::presets::{self, Preset};
 use ffenc::settings::Settings;
 use serde_json::Value;
 
-use super::common::hint;
+use super::common::{hint, icon_button, named};
 use super::modes::{kinds, new_mode, Ctx, Mode};
 
 pub struct Editor {
@@ -52,6 +52,9 @@ pub fn make_editor(p: &Preset, s: &Settings, draft: Option<&Value>) -> Option<Ed
     }
     Some(Editor { mode, baseline })
 }
+
+/// egui id of the sidebar search box (Ctrl+F focuses it).
+pub const SEARCH_ID: &str = "preset_search";
 
 /// Keys that hold "the" input of a form, used to carry a file across presets.
 const PRIMARY_KEYS: &[&str] = &["input", "video", "dest", "image"];
@@ -310,12 +313,14 @@ impl PresetUi {
                 }
             });
         });
-        ui.horizontal(|ui| {
-            let w = (ui.available_width() - 24.0).max(60.0);
-            ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text("Search presets…").desired_width(w));
-            if ui.add_enabled(!self.filter.is_empty(), egui::Button::new("✖").small()).on_hover_text("Clear search").clicked() {
+        // button first (right to left), the field takes exactly what is left – never widens the panel
+        let row = egui::vec2(ui.available_width(), ui.spacing().interact_size.y.max(ui.text_style_height(&egui::TextStyle::Body) + 6.0));
+        ui.allocate_ui_with_layout(row, egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if icon_button(ui, !self.filter.is_empty(), "✖", "Clear search").clicked() {
                 self.filter.clear();
             }
+            let r = ui.add(egui::TextEdit::singleline(&mut self.filter).id(egui::Id::new(SEARCH_ID)).hint_text("Search presets… (Ctrl+F)").desired_width(ui.available_width()));
+            named(r, egui::WidgetType::TextEdit, "Search presets");
         });
         ui.separator();
 
@@ -326,7 +331,7 @@ impl PresetUi {
         let mut move_req: Option<(usize, isize)> = None;
         let mut pin_toggle = None;
         let filtering = !self.filter.trim().is_empty();
-        egui::ScrollArea::vertical().id_salt("presets").auto_shrink([false, false]).max_height(ui.available_height() - 84.0).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("presets").auto_shrink([false, false]).max_height((ui.available_height() - 100.0).max(60.0)).show(ui, |ui| {
             // full-width rows with left-aligned names
             ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
             if filtering && sections[0].1.is_empty() {
@@ -347,7 +352,7 @@ impl PresetUi {
                         }
                         let mut text = RichText::new(label);
                         if modified && i != self.current {
-                            text = text.color(Color32::from_rgb(230, 180, 60));
+                            text = text.color(crate::ui::theme::c().unsaved);
                         }
                         let tip = format!(
                             "Type: {}{}{}\n{}{}\n\nClick: select · Double-click: run · Right-click: more",
@@ -425,14 +430,14 @@ impl PresetUi {
         ui.separator();
         ui.horizontal(|ui| {
             let i = self.current;
-            if ui.add_enabled(self.can_move(i, -1), egui::Button::new("⬆").small()).on_hover_text("Move up (within its group)").clicked() {
+            if icon_button(ui, self.can_move(i, -1), "⬆", "Move selected preset up (within its group)").clicked() {
                 move_req = Some((i, -1));
             }
-            if ui.add_enabled(self.can_move(i, 1), egui::Button::new("⬇").small()).on_hover_text("Move down (within its group)").clicked() {
+            if icon_button(ui, self.can_move(i, 1), "⬇", "Move selected preset down (within its group)").clicked() {
                 move_req = Some((i, 1));
             }
             let pinned = self.list[i].pinned;
-            if ui.small_button(if pinned { "Unpin" } else { "Pin" }).on_hover_text("Favorites are listed at the top").clicked() {
+            if named(ui.small_button(if pinned { "Unpin" } else { "Pin" }), egui::WidgetType::Button, if pinned { "Unpin selected preset (remove from Favorites)" } else { "Pin selected preset to Favorites (listed at the top)" }).clicked() {
                 pin_toggle = Some(i);
             }
         });
@@ -471,7 +476,7 @@ impl PresetUi {
         let center = egui::Align2::CENTER_CENTER;
         match d {
             Dialog::New { name, from } => {
-                egui::Window::new("New preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]).show(ctx, |ui| {
+                crate::ui::common::fit(egui::Window::new("New preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
                     egui::Grid::new("np").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
                         ui.label("Start from");
                         ui.vertical(|ui| {
@@ -519,7 +524,7 @@ impl PresetUi {
                 });
             }
             Dialog::SaveAs { name } => {
-                egui::Window::new("Save as new preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]).show(ctx, |ui| {
+                crate::ui::common::fit(egui::Window::new("Save as new preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
                     ui.label("Saves the current form as a new preset. The original preset keeps its saved values.");
                     let r = ui.add(egui::TextEdit::singleline(name).desired_width(300.0));
                     // read before re-focusing: lost_focus() is evaluated live
@@ -539,7 +544,7 @@ impl PresetUi {
                 });
             }
             Dialog::Rename { id, name } => {
-                egui::Window::new("Rename preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]).show(ctx, |ui| {
+                crate::ui::common::fit(egui::Window::new("Rename preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
                     ui.add(egui::TextEdit::singleline(name).desired_width(300.0));
                     ui.horizontal(|ui| {
                         if ui.button(RichText::new("Rename").strong()).clicked() {
@@ -554,11 +559,11 @@ impl PresetUi {
             }
             Dialog::Delete { id } => {
                 let n = names.iter().find(|n| &n.0 == id).map(|n| n.1.clone()).unwrap_or_default();
-                egui::Window::new("Delete preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]).show(ctx, |ui| {
+                crate::ui::common::fit(egui::Window::new("Delete preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
                     ui.label(format!("Delete the preset “{n}”?"));
                     hint(ui, "Built-ins can be brought back with Presets › Restore missing built-in presets. Export first if you want a copy.");
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Delete").color(Color32::LIGHT_RED)).clicked() {
+                        if ui.button(RichText::new("Delete").color(crate::ui::theme::c().err)).clicked() {
                             act = Action::Delete { id: id.clone() };
                             close = true;
                         }
@@ -577,7 +582,7 @@ impl PresetUi {
                         folders.push(c.to_string());
                     }
                 }
-                egui::Window::new("Preset folder").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]).show(ctx, |ui| {
+                crate::ui::common::fit(egui::Window::new("Preset folder").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
                     ui.label(format!("Folder for “{n}” (leave empty for none):"));
                     let r = ui.add(egui::TextEdit::singleline(category).hint_text("e.g. YouTube, Archive").desired_width(300.0));
                     let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -604,7 +609,7 @@ impl PresetUi {
             }
             Dialog::Reset { id } => {
                 let n = names.iter().find(|n| &n.0 == id).map(|n| n.1.clone()).unwrap_or_default();
-                egui::Window::new("Reset preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]).show(ctx, |ui| {
+                crate::ui::common::fit(egui::Window::new("Reset preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
                     ui.label(format!("Reset “{n}” to its factory name and values?"));
                     hint(ui, "Factory values follow File › Settings defaults (CRF, preset, bitrate, …).");
                     ui.horizontal(|ui| {

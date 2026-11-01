@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use eframe::egui::{self, Color32, RichText, Ui};
+use eframe::egui::{self, RichText, Ui};
 use ffenc::cmd::chapters::fmt_ms;
 use ffenc::ffmpeg::probe::{MediaInfo, StreamInfo};
 
@@ -157,7 +157,7 @@ impl SourcePanel {
                 hint(ui, format!("Read with ffprobe (same folder as ffmpeg):\n{}", fp.display()));
             }
             None => {
-                ui.colored_label(Color32::LIGHT_RED, "ffprobe not found – it must be in the same folder as ffmpeg (Help › Locate FFmpeg folder).");
+                ui.colored_label(crate::ui::theme::c().err, "ffprobe not found – it must be in the same folder as ffmpeg (Help › Locate FFmpeg folder).");
             }
         }
         ui.separator();
@@ -183,7 +183,7 @@ impl SourcePanel {
         let info = match &self.slot.result {
             Some(Ok(i)) => i.clone(),
             Some(Err(e)) => {
-                ui.colored_label(Color32::LIGHT_RED, format!("ffprobe error: {e}"));
+                ui.colored_label(crate::ui::theme::c().err, format!("ffprobe error: {e}"));
                 return;
             }
             None => return,
@@ -201,7 +201,7 @@ impl SourcePanel {
             list(ui, &s.subtitles, "none");
             head(ui, &format!("Chapters ({})", s.chapters.len()));
             if s.chapters.is_empty() {
-                ui.label(RichText::new("No chapters – use the chapter creator in Re-encode / Custom presets or the \"Add chapters\" preset.").small().color(Color32::from_rgb(230, 180, 60)));
+                ui.label(RichText::new("No chapters – use the chapter creator in Re-encode / Custom presets or the \"Add chapters\" preset.").small().color(crate::ui::theme::c().warn));
             } else {
                 egui::CollapsingHeader::new(format!("show {} chapter(s)", s.chapters.len())).id_salt("src_ch").default_open(s.chapters.len() <= 12).show(ui, |ui| {
                     for c in &s.chapters {

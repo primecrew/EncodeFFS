@@ -156,7 +156,7 @@ impl Mode for ReencodeMode {
                     if out > 0.0 {
                         hint(ui, format!("output {}", fmt_hms(out)));
                     } else {
-                        ui.colored_label(egui::Color32::LIGHT_RED, "trim exceeds duration");
+                        ui.colored_label(crate::ui::theme::c().err, "trim exceeds duration");
                     }
                 }
             });
@@ -197,7 +197,7 @@ impl Mode for ReencodeMode {
                             match resize_dims(s.width, s.height, st.resize_height) {
                                 Ok((w, h)) => hint(ui, format!("-> {w}x{h}")),
                                 Err(e) => {
-                                    ui.colored_label(egui::Color32::LIGHT_RED, e);
+                                    ui.colored_label(crate::ui::theme::c().err, e);
                                 }
                             }
                         }

@@ -23,6 +23,22 @@ FFmpeg lookup order: Settings folder (default `C:\ffmpeg\bin`) → `ffmpeg\` or 
 the exe → app-managed copy `%LOCALAPPDATA%\FFmpegEncoder\ffmpeg\bin` → `PATH`.
 On start the app checks the build has `libx264` and `aac`.
 
+## Appearance, text size & keyboard
+- **Theme** (View menu, or File › Settings… › Appearance): **System** (default — follows Windows' light/dark app mode,
+  dark if unknown), **Dark**, **Light**, **High contrast** (black background, white text, yellow accent, thick outlines).
+  Applies immediately and is remembered. All status colours (ok / warning / error / info) meet WCAG AA 4.5:1 in every theme.
+- **Text size** 75–300 % (steps 100, 110, 125, 150, 175, 200, 250, 300 %): **Ctrl + plus / Ctrl + minus**, **Ctrl + 0** = 100 %,
+  **Ctrl + mouse wheel**, View › Text size, or the slider in Settings › Appearance. Scales all text, buttons, lists,
+  dialogs and icons; remembered. Separate **command/log (monospace) size** (80–200 % on top of the text size) and a
+  **Bold text** option (uses Segoe UI Bold). At large sizes panels wrap and scroll; the Source panel hides itself when the
+  window is too narrow and comes back when there is room (View › Source info panel).
+- **Keyboard:** Tab / Shift+Tab move between controls (the focused one has a thick outline), Enter / Space press it,
+  arrow keys change sliders and lists, Esc closes dialogs. Shortcuts: **F5** run selected preset (the confirmation opens
+  with **Run** focused), **Ctrl+O** open file(s)/folder for the selected preset, **Ctrl+S** save preset, **Ctrl+F** search
+  presets, **F1** list of shortcuts.
+- **Screen readers:** buttons, labels, check boxes and text fields are exposed through UI Automation (AccessKit), and
+  icon-only buttons have names (e.g. "Move chapter 2 up", "Copy command for job 1"). See NOTES for known gaps.
+
 ## Drag and drop
 Drop files or folders anywhere on the window; they go to the selected preset. While you drag, the window gets an accent
 frame, a banner names the preset, and every field that accepts a drop (input file / folder fields, the Join list) is
