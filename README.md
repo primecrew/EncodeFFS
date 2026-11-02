@@ -100,6 +100,38 @@ Built-in preset (type "Join / stitch files", editable like any other) that joins
 - The confirmation shows the full command plus the temp list and chapter file contents. The copied PowerShell command
   writes both files first, so it runs on its own.
 
+## Audio & subtitles
+Built-in preset (type "Audio & subtitles") for everything about a video's sound and subtitle tracks. The picture is
+never re-encoded. Pick a video and its tracks are listed; then use the sections below. Everything goes into one new file
+in one pass, and the confirmation shows a plain summary ("Output will have: 1 video, 3 audio (…), 2 subtitles (…)")
+plus the full command with a Copy button.
+- **Tracks in the new file:** one box per audio or subtitle track. Untick a track to remove it, and edit the title and
+  language (players show these). **Default** marks the track a player picks first (one per type), **Forced** marks
+  subtitles that should always show. Move tracks with the ⬆ / ⬇ buttons.
+- **Add audio track:** a commentary or second-language track from an audio file or from another video (pick which
+  track). Optional title and language, volume (dB), compressor and delay in milliseconds ("+" = later; use it if the
+  track is out of sync). **Also add a track that mixes this into the main audio** adds one more track that mixes the main audio and the new track
+  ("Game + Commentary Track").
+- **Replace audio:** swaps one audio track, or all of them, for a file. The new track takes the old one's place, title,
+  language and default flag. To drop all the original audio, untick those tracks.
+- **Add subtitles:** .srt, .ass, .ssa, .vtt, .sub, .sup files or another video's subtitles. Language, title,
+  default/forced flags, delay and text encoding. **Auto** reads UTF-8 and otherwise assumes Windows Western (CP1252);
+  pick another encoding if accents show up wrong.
+- **Extract audio to separate files:** saves one track or every track as WAV, FLAC, MP3, AAC (.m4a), Opus or the original format
+  (no re-encode). Files are named `Movie - audio 2 (eng, Commentary).ext`. **Extract subtitles to separate files** saves text subtitles
+  as .srt or .ass (or the original format).
+- **Lengths:** an added track rarely matches the video exactly, and that is fine. Each added track shows how it compares
+  ("1.4 s longer – close enough"). Above the **Length tolerance** (Settings, default 1.5 s) you get a warning, but the
+  job still runs. Longer audio: **Trim audio to the video length** (default) or **Keep the full audio**. Shorter audio:
+  **Leave as is** (default; the track just ends early) or **Pad with silence**. The video is never cut short and no black frames are added.
+- **MKV or MP4:** MKV holds any audio and subtitle type and is the safest choice. MP4 plays everywhere but only takes
+  AAC/MP3/AC-3 audio (others are converted to AAC) and only text subtitles (converted to MP4's own format; styling from
+  .ass is lost). Picture-based subtitles (.sup, .sub, DVD/Blu-ray) are left out of MP4, with a warning.
+- Audio that fits the container is copied without re-encoding. Audio that needs changing (volume, compressor, delay
+  filter, trim, pad, mix) or doesn't fit becomes AAC (MP4) or FLAC/AAC (MKV, FLAC if the source was lossless).
+  Chapters, metadata and attachments (fonts, MKV) are kept. Overwrite protection and partial files work as in every
+  other preset.
+
 ## Main window (HandBrake-style)
 - **Left – presets:** every preset, built-in and yours, in your order. One click selects; **double-click** (or **▶ Run**,
   F5) loads the current input into that preset and opens the command preview, from where it goes to the queue.
@@ -144,6 +176,7 @@ Everything in the preset panel is a **preset**: a named, saved set of options fo
 | Copy subtitle tracks | Re-mux or re-encode with chosen subtitle tracks from a second file; MP4 converts text subs to mov_text (or try copy). |
 | Remux MKV → MP4 | Stream copy, never overwrites, optional delete of source only after the MP4 verifies; summary in the script's wording. |
 | **Join / stitch files** | Concatenate several videos: lossless concat demuxer or re-encode with the concat filter, chapter per file (see above). |
+| **Audio & subtitles** | Keep/remove/rename/reorder tracks, add commentary or second-language audio, replace audio, add/remove subtitles, extract audio or subtitles (see above). |
 | **Custom pipeline** | Build your own from independent choices (below). |
 | **Add chapters (no re-encode)** | Custom pipeline preset: copies every stream, adds chapters every 5 min (or your list), same container as the input, suffix `_chapters`. |
 
@@ -198,6 +231,8 @@ output `D:\Videos\Out`). Built-in presets you haven't customised follow these de
 
 Per-job ffmpeg stderr goes to `ffmpeg_error_<name>.log` in the output folder; it is deleted on success unless
 “keep logs on success” is ticked.
+**Length tolerance** (seconds, default 1.5): how far an added audio track's length may differ from the video's before
+the Audio & subtitles tool warns. It never blocks a job.
 **Keep temporary files for debugging** (Settings, off by default) keeps the temporary chapter files, Join list files
 and unfinished partial outputs, writes their paths to the log, and skips the startup clean-up.
 
@@ -231,6 +266,7 @@ Live network tests: `cargo test --lib live -- --ignored` (`FFENC_LIVE=btbn-stabl
 - `src/ffmpeg/` – locate, probe (ffprobe JSON), version/encoder check, progress parsing, job queue/runner.
 - `src/updater/` – source lookup (BtbN/gyan), download+verify, extract, install/rollback.
 - `src/presets.rs` – preset file format, built-in list, import/export rules.
+- `src/cmd/tracks.rs` – Audio & subtitles: track mapping, codecs per container, delays/trim/pad/mix, extract commands.
 - `src/cmd/join.rs` – join/stitch: concat list writer, compatibility check, chapter-per-file math, both command builders.
 - `src/cmdline.rs` – Windows cmd / PowerShell quoting for the copied commands.
 - `assets/` – `icon-source.png` (app artwork), `make_icon.py` → `app.ico` (16–256 px), `app.rc`, manifest.

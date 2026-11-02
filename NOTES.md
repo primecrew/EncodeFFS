@@ -1,5 +1,39 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.4.0 — audio & subtitles
+- **Before:** separate single-purpose presets (Add commentary, Extract audio to WAV, Replace primary audio, Copy
+  subtitle tracks), one track at a time, no subtitle removal or file import, no length handling. They all still work.
+- **Now:** a built-in "Audio & subtitles" preset (`src/cmd/tracks.rs` builder, `src/ui/modes/tracks.rs` form):
+  a track list (keep/remove, title, language, default, forced, reorder) plus Add audio, Replace audio, Add subtitles,
+  Extract audio (WAV/FLAC/MP3/M4A/Opus/original, one or all tracks) and Extract subtitles (srt/ass/original).
+  One output, one pass, `-c:v copy`; chapters, metadata and MKV attachments kept.
+- Design:
+  - Copy audio when the container accepts it (MP4: aac/mp3/ac3/eac3/alac); otherwise, or when a filter is needed,
+    encode AAC (MKV: FLAC for lossless sources).
+  - MP4 track names are written as both `title` and `handler_name`.
+  - Only the first ticked Default per type gets `default`.
+  - Delays: `-itsoffset` for copied tracks, `adelay=…:all=1` for filtered ones, input `-ss` for negative delays.
+  - Trim: input `-t (video − delay)`. Pad: `apad=whole_dur=<video>`.
+  - Mix: `amix=inputs=2:duration=first:normalize=0`.
+  - Subtitle files get `-sub_charenc` (auto: UTF-8, otherwise CP1252). MKV: srt/ass are copied, others converted.
+    MP4: text becomes mov_text, picture subtitles are skipped with a warning.
+- Length check: a note per added track; a warning (never a block) above the `duration_tolerance_s` setting
+  (default 1.5 s). Auto: trim longer audio, leave shorter audio. Pad with silence and Keep full are optional.
+  The video is never shortened or extended.
+- Tests:
+  - 7 builder unit tests.
+  - `tests/integration_tracks.rs` with real ffmpeg on synthetic media: MKV commentary + subs + charset + attachment;
+    MP4 replace + pad + mov_text + handler_name; shorter audio doesn't cut the video; m4a delay; mix; every extract
+    format; subtitle extract.
+  - Wine run end to end: 4 audio tracks incl. the mix, and a CP1252 subtitle decoded to "Grüße".
+- Limits:
+  - MP3/Opus extract needs an FFmpeg with libmp3lame/libopus (standard Windows builds have them).
+  - No picture subtitles in MP4; ASS styling is lost in MP4.
+  - The mix uses `normalize=0`, so loud tracks can clip (lower the volume).
+  - Charset auto-detect only tells UTF-8 from CP1252.
+  - Delay/volume only apply to added tracks, not the video's own tracks.
+  - Not tested with a real screen reader.
+
 ## 0.3.3 — overwrite protection
 - **Before:** every builder passed `-y`, so an existing output was replaced silently (the confirmation only showed a
   warning line); a failed/cancelled encode deleted or truncated the existing file; two jobs could write the same file;

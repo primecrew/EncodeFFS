@@ -17,6 +17,7 @@ pub mod subs;       // mode 8
 pub mod remux;      // mode 9
 pub mod custom;     // composable "custom" preset type
 pub mod join;       // join / stitch files
+pub mod tracks;     // audio & subtitles tool (0.4)
 
 use std::path::PathBuf;
 

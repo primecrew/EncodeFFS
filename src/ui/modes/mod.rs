@@ -19,6 +19,7 @@ pub mod remux;
 pub mod replace_audio;
 pub mod still;
 pub mod subs;
+pub mod tracks;
 
 /// What a mode can see while drawing / building.
 pub struct Ctx<'a> {
@@ -79,6 +80,7 @@ pub fn restore<T: serde::de::DeserializeOwned>(v: &serde_json::Value, default: T
 pub fn all_modes() -> Vec<Box<dyn Mode>> {
     vec![
         Box::new(reencode::ReencodeMode::default()),
+        Box::new(tracks::TracksMode::default()),
         Box::new(still::StillMode::default()),
         Box::new(commentary::CommentaryMode::default()),
         Box::new(extract::ExtractMode::default()),

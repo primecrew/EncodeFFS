@@ -803,13 +803,14 @@ mod tests {
         let s = Settings::default();
         let mut pu = ui_with(presets::factory_all());
         let _ = pu.editor(0, &s);
-        set(pu.editor(1, &s), "custom_duration", json!(99.0), &s);
+        let still = pu.list.iter().position(|p| p.id == "builtin-still").unwrap();
+        set(pu.editor(still, &s), "custom_duration", json!(99.0), &s);
         let s2 = Settings { crf: 30, audio_bitrate_k: 128, ..Settings::default() };
         pu.rebase(&s2);
         assert_eq!(pu.editor(0, &s2).mode.save()["video"]["crf"], json!(30));
         assert!(!pu.modified("builtin-reencode"));
         assert!(pu.modified("builtin-still"), "edits survive");
-        assert_eq!(pu.editor(1, &s2).mode.save()["custom_duration"], json!(99.0));
+        assert_eq!(pu.editor(still, &s2).mode.save()["custom_duration"], json!(99.0));
     }
 
     #[test]

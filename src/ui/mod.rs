@@ -1372,6 +1372,12 @@ impl App {
                     ui.label("Chapter interval");
                     common::num_f64(ui, &mut ed.chapter_interval_min, 0.1..=600.0, 0.1, " min");
                     ui.end_row();
+                    ui.label("Length tolerance");
+                    ui.horizontal_wrapped(|ui| {
+                        common::num_f64(ui, &mut ed.duration_tolerance_s, 0.0..=60.0, 0.1, " s");
+                        common::hint(ui, "Audio & subtitles: added tracks this close to the video's length count as matching (no warning).");
+                    });
+                    ui.end_row();
                     ui.label("Commentary name");
                     ui.text_edit_singleline(&mut ed.commentary_name);
                     ui.end_row();

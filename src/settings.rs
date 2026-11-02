@@ -143,6 +143,8 @@ pub struct Settings {
     pub when_exists: crate::output_guard::WhenExists,
     /// Keep chapter/list files and partial outputs and log their paths (debugging, 0.3.3).
     pub keep_temp_files: bool,
+    /// Audio & subtitles: added tracks may differ from the video by this many seconds before a warning (0.4).
+    pub duration_tolerance_s: f64,
     /// Legacy (0.1.x): last-used values per mode; migrated into presets on first start of 0.2.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, serde_json::Value>,
@@ -178,6 +180,7 @@ impl Default for Settings {
             appearance: Appearance::default(),
             when_exists: crate::output_guard::WhenExists::Ask,
             keep_temp_files: false,
+            duration_tolerance_s: 1.5,
             modes: BTreeMap::new(),
             last_mode: String::new(),
         }
