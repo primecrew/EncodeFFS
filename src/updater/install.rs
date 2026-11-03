@@ -18,7 +18,7 @@ pub fn http_agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(20))
         .timeout_read(Duration::from_secs(120))
-        .user_agent(&format!("FFmpegEncoder/{}", crate::APP_VERSION))
+        .user_agent(&format!("{}/{}", crate::FILE_STEM, crate::APP_VERSION))
         .build()
 }
 

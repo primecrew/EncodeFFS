@@ -1116,7 +1116,7 @@ dependencies = [
 
 [[package]]
 name = "ffmpeg-encoder"
-version = "0.5.1"
+version = "0.6.0-dev.1"
 dependencies = [
  "chrono",
  "eframe",

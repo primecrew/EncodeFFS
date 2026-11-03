@@ -1,5 +1,5 @@
 //! Persisted settings (JSON next to the exe for portability, falling back to
-//! %APPDATA%\FFmpegEncoder when the exe folder is not writable).
+//! %APPDATA%\FFmpegEncoder-Experimental when the exe folder is not writable).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -10,7 +10,10 @@ use crate::cmd::common::CompressorParams;
 use crate::ffmpeg::locate::exe_dir;
 use crate::updater::{UpdateChannel, UpdateSource};
 
-pub const PORTABLE_FILE: &str = "FFmpegEncoder.settings.json";
+/// This edition's portable settings file next to the exe (`<FILE_STEM>.settings.json`).
+pub const PORTABLE_FILE: &str = "FFmpegEncoder-Experimental.settings.json";
+/// Stable version's portable settings file (read only, for importing).
+pub const STABLE_PORTABLE_FILE: &str = "FFmpegEncoder.settings.json";
 
 /// Colour theme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -150,6 +153,8 @@ pub struct Settings {
     pub keep_temp_files: bool,
     /// Audio & subtitles: added tracks may differ from the video by this many seconds before a warning (0.4).
     pub duration_tolerance_s: f64,
+    /// Show the splash screen for a moment at startup (0.6; on by default).
+    pub show_splash: bool,
     /// Legacy (0.1.x): last-used values per mode; migrated into presets on first start of 0.2.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, serde_json::Value>,
@@ -187,6 +192,7 @@ impl Default for Settings {
             when_exists: crate::output_guard::WhenExists::Ask,
             keep_temp_files: false,
             duration_tolerance_s: 1.5,
+            show_splash: true,
             modes: BTreeMap::new(),
             last_mode: String::new(),
         }
@@ -204,29 +210,59 @@ fn dir_writable(dir: &Path) -> bool {
     }
 }
 
-/// %APPDATA%\FFmpegEncoder (Linux: ~/.config/FFmpegEncoder)
-pub fn roaming_dir() -> PathBuf {
+/// `%APPDATA%\<name>` (Linux: ~/.config/<name>).
+pub fn roaming_dir_named(name: &str) -> PathBuf {
+    if let Some(d) = std::env::var_os("FFENC_ROAMING_BASE") {
+        return PathBuf::from(d).join(name); // override for tests
+    }
     if let Some(d) = std::env::var_os("APPDATA") {
-        return PathBuf::from(d).join("FFmpegEncoder");
+        return PathBuf::from(d).join(name);
     }
     if let Some(d) = std::env::var_os("XDG_CONFIG_HOME") {
-        return PathBuf::from(d).join("FFmpegEncoder");
+        return PathBuf::from(d).join(name);
     }
     if let Some(h) = std::env::var_os("HOME") {
-        return PathBuf::from(h).join(".config/FFmpegEncoder");
+        return PathBuf::from(h).join(".config").join(name);
     }
-    std::env::temp_dir().join("FFmpegEncoder")
+    std::env::temp_dir().join(name)
 }
 
+/// This edition's %APPDATA% folder (`FFmpegEncoder-Experimental`).
+pub fn roaming_dir() -> PathBuf {
+    roaming_dir_named(crate::DATA_DIR_NAME)
+}
+
+/// Where the stable version may keep its settings (portable next to this exe, then %APPDATA%\FFmpegEncoder).
+/// Only ever read, for "Import settings from stable version".
+pub fn stable_settings_candidates() -> Vec<PathBuf> {
+    vec![exe_dir().join(STABLE_PORTABLE_FILE), roaming_dir_named(crate::STABLE_DATA_DIR_NAME).join("settings.json")]
+}
+
+/// Written next to the exe by the installer: an installed copy keeps its settings in %APPDATA%
+/// (so uninstalling/upgrading never touches them), even when the install folder is writable.
+pub const INSTALLED_MARKER: &str = "FFmpegEncoder-Experimental.installed";
+
 /// Where settings live: next to the exe if that folder is writable (portable),
-/// otherwise %APPDATA%\FFmpegEncoder\settings.json.
+/// otherwise %APPDATA%\FFmpegEncoder-Experimental\settings.json. Installed copies
+/// (marker file next to the exe) always use %APPDATA%.
 pub fn settings_path() -> PathBuf {
-    let ed = exe_dir();
-    let portable = ed.join(PORTABLE_FILE);
-    if (portable.exists() && std::fs::OpenOptions::new().append(true).open(&portable).is_ok()) || dir_writable(&ed) {
+    settings_path_in(&exe_dir(), &roaming_dir())
+}
+
+pub fn settings_path_in(exe_dir: &Path, roaming: &Path) -> PathBuf {
+    if exe_dir.join(INSTALLED_MARKER).exists() {
+        return roaming.join("settings.json");
+    }
+    let portable = exe_dir.join(PORTABLE_FILE);
+    if (portable.exists() && std::fs::OpenOptions::new().append(true).open(&portable).is_ok()) || dir_writable(exe_dir) {
         return portable;
     }
-    roaming_dir().join("settings.json")
+    roaming.join("settings.json")
+}
+
+/// Is this an installed copy (vs. portable)?
+pub fn is_installed() -> bool {
+    exe_dir().join(INSTALLED_MARKER).exists()
 }
 
 /// Folder for the app log (next to the settings file).
@@ -497,5 +533,31 @@ mod tests {
         assert!(Settings::update_check_option_applies(AppManaged));
         assert!(Settings::update_check_option_applies(NotFound));
         assert!(!Settings::update_check_option_applies(OwnFolder));
+    }
+
+    #[test]
+    fn splash_setting_default_on_and_saved() {
+        assert!(Settings::default().show_splash);
+        // files from before 0.6 have no key: on
+        assert!(Settings::from_json(r#"{"crf": 20}"#).unwrap().show_splash);
+        let off = Settings::from_json(r#"{"show_splash": false}"#).unwrap();
+        assert!(!off.show_splash);
+        let dir = std::env::temp_dir().join(format!("ffenc_spl_{}", crate::util::unique_id()));
+        let p = dir.join("s.json");
+        off.save_to(&p).unwrap();
+        assert!(!Settings::load_from(&p).show_splash);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn portable_vs_installed_settings_location() {
+        let root = std::env::temp_dir().join(format!("ffenc_inst_{}", crate::util::unique_id()));
+        let (exe, roam) = (root.join("app"), root.join("roaming").join(crate::DATA_DIR_NAME));
+        std::fs::create_dir_all(&exe).unwrap();
+        assert_eq!(settings_path_in(&exe, &roam), exe.join(PORTABLE_FILE), "portable: next to the exe");
+        std::fs::write(exe.join(INSTALLED_MARKER), "installed").unwrap();
+        assert_eq!(settings_path_in(&exe, &roam), roam.join("settings.json"), "installed: %APPDATA%");
+        assert!(INSTALLED_MARKER.starts_with(crate::FILE_STEM));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

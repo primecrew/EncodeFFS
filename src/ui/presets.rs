@@ -351,21 +351,21 @@ impl PresetUi {
     pub fn sidebar(&mut self, ui: &mut egui::Ui, cx: &Ctx) -> Option<SideEvent> {
         let mut ev: Option<SideEvent> = None;
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Presets").strong());
+            ui.label(RichText::new("Presets").strong().size(ui.text_style_height(&egui::TextStyle::Body) * 1.08));
             ui.label(RichText::new(format!("{}", self.list.len())).small().weak());
         });
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            if ui.small_button("New…").on_hover_text("New preset (blank of a type, or a copy)").clicked() {
+            if ui.button("New…").on_hover_text("New preset (blank of a type, or a copy)").clicked() {
                 self.dialog = Some(Dialog::New { name: String::new(), from: NewFrom::Kind("custom".into()) });
             }
-            if ui.small_button("Duplicate").on_hover_text("Copy the selected preset").clicked() {
+            if ui.button("Duplicate").on_hover_text("Copy the selected preset").clicked() {
                 self.dialog = Some(Dialog::New { name: String::new(), from: NewFrom::Copy(self.cur().id.clone()) });
             }
-            if ui.small_button("Import…").on_hover_text("Import presets from a .json file").clicked() {
+            if ui.button("Import…").on_hover_text("Import presets from a .json file").clicked() {
                 ev = Some(SideEvent::Import);
             }
-            ui.menu_button(RichText::new("Export").small(), |ui| {
+            ui.menu_button("Export", |ui| {
                 if ui.button("Export selected preset…").clicked() {
                     ev = Some(SideEvent::Export { all: false });
                     ui.close_menu();
@@ -512,7 +512,7 @@ impl PresetUi {
             }
         });
         let w = ui.available_width();
-        if ui.add_sized([w, 28.0], egui::Button::new(RichText::new("▶  Run selected preset").strong())).on_hover_text("Preview the command for the selected preset with the current input, then add it to the queue (F5)").clicked() {
+        if ui.add_sized([w, 28.0], egui::Button::new("▶  Run selected preset")).on_hover_text("Preview the command for the selected preset with the current input, then add it to the queue (F5)").clicked() {
             run = Some(self.current);
         }
         hint(ui, "Double-click a preset to run it with the current file.");
@@ -574,7 +574,7 @@ impl PresetUi {
                         r.request_focus();
                     }
                     ui.horizontal_wrapped(|ui| {
-                        if ui.button(RichText::new("Save as new preset").strong()).clicked() || enter {
+                        if ui.add(crate::ui::common::primary_button("Save as new preset")).clicked() || enter {
                             act = Action::Leave { to_id: to_id.clone(), run: *run, choice: LeaveChoice::SaveAs(name.clone()) };
                             close = true;
                         }
@@ -600,7 +600,7 @@ impl PresetUi {
                     ui.label(format!("Show every built-in preset again ({hidden} hidden) and throw away unsaved changes in built-ins ({edited})?"));
                     hint(ui, "Built-in presets always have the values that ship with the app. Your own presets are not touched.");
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Restore").strong()).clicked() {
+                        if ui.add(crate::ui::common::primary_button("Restore")).clicked() {
                             act = Action::RestoreBuiltins;
                             close = true;
                         }
@@ -648,7 +648,7 @@ impl PresetUi {
                         ui.end_row();
                     });
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Create").strong()).clicked() {
+                        if ui.add(crate::ui::common::primary_button("Create")).clicked() {
                             act = Action::Create { name: name.clone(), from: from.clone() };
                             close = true;
                         }
@@ -674,7 +674,7 @@ impl PresetUi {
                         r.request_focus();
                     }
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Save").strong()).clicked() || enter {
+                        if ui.add(crate::ui::common::primary_button("Save")).clicked() || enter {
                             act = Action::SaveAs { name: name.clone() };
                             close = true;
                         }
@@ -688,7 +688,7 @@ impl PresetUi {
                 crate::ui::common::fit(egui::Window::new("Rename preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
                     ui.add(egui::TextEdit::singleline(name).desired_width(300.0));
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Rename").strong()).clicked() {
+                        if ui.add(crate::ui::common::primary_button("Rename")).clicked() {
                             act = Action::Rename { id: id.clone(), name: name.clone() };
                             close = true;
                         }
@@ -704,7 +704,7 @@ impl PresetUi {
                     ui.label(format!("Hide the built-in preset “{n}” from the list?"));
                     hint(ui, "Built-in presets can't be deleted. Bring it back any time with Presets › Restore built-in presets.");
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Hide").strong()).clicked() {
+                        if ui.add(crate::ui::common::primary_button("Hide")).clicked() {
                             act = Action::Delete { id: id.clone() };
                             close = true;
                         }
@@ -754,7 +754,7 @@ impl PresetUi {
                         });
                     }
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("OK").strong()).clicked() || enter {
+                        if ui.add(crate::ui::common::primary_button("OK")).clicked() || enter {
                             act = Action::SetCategory { id: id.clone(), category: category.clone() };
                             close = true;
                         }
@@ -770,7 +770,7 @@ impl PresetUi {
                     ui.label(format!("Throw away your unsaved changes to “{n}” and go back to the built-in values?"));
                     hint(ui, "Built-in values follow File › Settings defaults (CRF, preset, bitrate, …). The chosen files are kept.");
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Discard changes").strong()).clicked() {
+                        if ui.add(crate::ui::common::primary_button("Discard changes")).clicked() {
                             act = Action::Reset { id: id.clone() };
                             close = true;
                         }

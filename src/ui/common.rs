@@ -144,13 +144,40 @@ fn start_dir(current: &str, fallback: &str) -> Option<PathBuf> {
 /// Keep a window inside the screen at any text size (large UI scales leave few
 /// points of screen): capped to the screen with a margin. `scroll` adds a
 /// vertical scrollbar for dialogs that have no scroll area of their own.
-pub fn fit<'a>(w: egui::Window<'a>, ctx: &egui::Context, scroll: bool) -> egui::Window<'a> {
+pub fn fit<'a>(w: egui::Window<'a>, ctx: &egui::Context, scroll: bool) -> Fitted<'a> {
     let s = ctx.screen_rect().size();
-    let w = w.max_width((s.x - 24.0).max(200.0)).max_height((s.y - 24.0).max(150.0)).constrain(true);
-    if scroll {
-        w.vscroll(true)
-    } else {
-        w
+    let max_h = (s.y - 24.0).max(150.0);
+    let w = w.max_width((s.x - 24.0).max(200.0)).max_height(max_h).constrain(true);
+    Fitted { w, scroll: scroll.then_some(max_h - 60.0) }
+}
+
+/// A window from [`fit`]. Its scroll area (when asked for) shrinks to the content, so short
+/// dialogs don't get an empty block below their buttons (egui's own window scrolling fills
+/// the whole maximum height).
+pub struct Fitted<'a> {
+    w: egui::Window<'a>,
+    scroll: Option<f32>,
+}
+
+impl<'a> Fitted<'a> {
+    pub fn show<R>(self, ctx: &egui::Context, add: impl FnOnce(&mut Ui) -> R) -> Option<egui::InnerResponse<Option<R>>> {
+        match self.scroll {
+            None => self.w.show(ctx, add),
+            Some(h) => {
+                // a readable minimum width (text would otherwise wrap very narrowly), capped to the screen
+                let min_w = 420.0_f32.min(ctx.screen_rect().width() - 60.0).max(160.0);
+                self.w.show(ctx, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([true, true])
+                        .max_height(h.max(80.0))
+                        .show(ui, |ui| {
+                            ui.set_min_width(min_w);
+                            add(ui)
+                        })
+                        .inner
+                })
+            }
+        }
     }
 }
 
@@ -265,10 +292,50 @@ pub fn hint(ui: &mut Ui, text: impl Into<String>) {
     ui.label(RichText::new(text.into()).small().weak());
 }
 
+/// Section heading inside a form or dialog: a bit larger, bold, with a thin rule under it.
 pub fn section(ui: &mut Ui, title: &str) {
-    ui.add_space(6.0);
-    ui.label(RichText::new(title).strong());
+    ui.add_space(10.0);
+    let size = ui.text_style_height(&egui::TextStyle::Body) * 1.08;
+    ui.label(RichText::new(title).strong().size(size).color(ui.visuals().strong_text_color()));
+    ui.add_space(-2.0);
     ui.separator();
+}
+
+/// The emphasised button for a screen's main action (Preview & run, Save, Import…).
+/// Same label for screen readers; only the look differs.
+pub fn primary_button(text: impl Into<String>) -> egui::Button<'static> {
+    let p = crate::ui::theme::c();
+    egui::Button::new(RichText::new(text.into()).strong().color(p.on_primary))
+        .fill(p.primary_fill)
+        .stroke(egui::Stroke::new(if p.high_contrast { 2.0_f32 } else { 1.0 }, p.primary_stroke))
+}
+
+/// A rounded card around a group of controls.
+pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let p = crate::ui::theme::c();
+    egui::Frame::new()
+        .fill(p.card_fill)
+        .stroke(egui::Stroke::new(if p.high_contrast { 1.5_f32 } else { 1.0 }, p.card_stroke))
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            add(ui)
+        })
+        .inner
+}
+
+/// Small rounded tag ("Re-encode video", "Built-in, read-only").
+pub fn tag(ui: &mut Ui, text: &str, tooltip: &str) -> egui::Response {
+    let p = crate::ui::theme::c();
+    let r = egui::Frame::new()
+        .fill(p.card_fill)
+        .stroke(egui::Stroke::new(1.0_f32, p.card_stroke))
+        .corner_radius(egui::CornerRadius::same(10))
+        .inner_margin(egui::Margin::symmetric(8, 1))
+        .show(ui, |ui| ui.add(egui::Label::new(RichText::new(text).small()).wrap_mode(egui::TextWrapMode::Extend)))
+        .inner;
+    r.on_hover_text(tooltip)
 }
 
 pub fn num_f64(ui: &mut Ui, v: &mut f64, range: std::ops::RangeInclusive<f64>, speed: f64, suffix: &str) -> egui::Response {

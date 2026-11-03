@@ -1,7 +1,7 @@
 //! Find ffmpeg/ffprobe. Resolution order:
 //! 1. the configured bin folder (settings)
 //! 2. an `ffmpeg` folder next to the app exe (`ffmpeg\` or `ffmpeg\bin\`)
-//! 3. the app-managed copy in %LOCALAPPDATA%\FFmpegEncoder\ffmpeg\bin
+//! 3. the app-managed copy in %LOCALAPPDATA%\FFmpegEncoder-Experimental\ffmpeg\bin
 //! 4. PATH
 
 use std::path::{Path, PathBuf};
@@ -74,29 +74,39 @@ pub fn exe_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// %LOCALAPPDATA%\FFmpegEncoder (Linux: $XDG_DATA_HOME or ~/.local/share/FFmpegEncoder).
+/// %LOCALAPPDATA%\FFmpegEncoder-Experimental (Linux: $XDG_DATA_HOME or ~/.local/share/FFmpegEncoder).
 pub fn local_app_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("FFENC_LOCAL_DIR") {
         return PathBuf::from(d); // override for tests
     }
-    if let Some(d) = std::env::var_os("LOCALAPPDATA") {
-        return PathBuf::from(d).join("FFmpegEncoder");
-    }
-    if let Some(d) = std::env::var_os("XDG_DATA_HOME") {
-        return PathBuf::from(d).join("FFmpegEncoder");
-    }
-    if let Some(h) = std::env::var_os("HOME") {
-        return PathBuf::from(h).join(".local/share/FFmpegEncoder");
-    }
-    std::env::temp_dir().join("FFmpegEncoder")
+    local_app_dir_named(crate::DATA_DIR_NAME)
 }
 
-/// Root of the app-managed FFmpeg (`...\FFmpegEncoder\ffmpeg`).
+/// `%LOCALAPPDATA%\<name>` (Linux: $XDG_DATA_HOME/<name> or ~/.local/share/<name>).
+pub fn local_app_dir_named(name: &str) -> PathBuf {
+    if let Some(d) = std::env::var_os("LOCALAPPDATA") {
+        return PathBuf::from(d).join(name);
+    }
+    if let Some(d) = std::env::var_os("XDG_DATA_HOME") {
+        return PathBuf::from(d).join(name);
+    }
+    if let Some(h) = std::env::var_os("HOME") {
+        return PathBuf::from(h).join(".local/share").join(name);
+    }
+    std::env::temp_dir().join(name)
+}
+
+/// The stable version's app-managed FFmpeg folder (never written by this edition).
+pub fn stable_managed_bin() -> PathBuf {
+    local_app_dir_named(crate::STABLE_DATA_DIR_NAME).join("ffmpeg").join("bin")
+}
+
+/// Root of the app-managed FFmpeg (`...\FFmpegEncoder-Experimental\ffmpeg`).
 pub fn managed_root() -> PathBuf {
     local_app_dir().join("ffmpeg")
 }
 
-/// `...\FFmpegEncoder\ffmpeg\bin`
+/// `...\FFmpegEncoder-Experimental\ffmpeg\bin`
 pub fn managed_bin() -> PathBuf {
     managed_root().join("bin")
 }

@@ -27,12 +27,12 @@ mod icon_tests {
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title(format!("{} {}", ffenc::APP_NAME, ffenc::APP_VERSION))
+            .with_title(ffenc::full_title())
             .with_inner_size([1380.0, 900.0])
             .with_min_inner_size([820.0, 600.0])
             .with_drag_and_drop(true)
             .with_icon(std::sync::Arc::new(icon())),
         ..Default::default()
     };
-    eframe::run_native(ffenc::APP_NAME, options, Box::new(|cc| Ok(Box::new(ui::App::new(cc)))))
+    eframe::run_native(ffenc::DATA_DIR_NAME, options, Box::new(|cc| Ok(Box::new(ui::App::new(cc)))))
 }

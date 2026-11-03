@@ -6,6 +6,7 @@ pub mod modes;
 pub mod presets;
 pub mod source;
 pub mod updater;
+pub mod splash;
 pub mod theme;
 
 use std::path::{Path, PathBuf};
@@ -218,6 +219,13 @@ impl Preview {
     }
 }
 
+/// "Import settings from stable version" dialog state.
+struct ImportOffer {
+    found: ffenc::import_stable::StableFound,
+    /// Offered automatically on the first run (vs. from the File menu, which replaces current settings).
+    first_run: bool,
+}
+
 /// First-run / "FFmpeg not found" dialog state.
 struct LocateDlg {
     path: String,
@@ -258,6 +266,10 @@ pub struct App {
     source: source::SourcePanel,
     /// Run requested while the form was still probing: retry until this deadline.
     pending_run: Option<std::time::Instant>,
+    /// Startup splash (None when turned off in Settings).
+    splash: Option<splash::Splash>,
+    /// "Import settings from stable version" dialog.
+    import_offer: Option<ImportOffer>,
 }
 
 /// Open a file or folder with the OS (Explorer on Windows).
@@ -330,7 +342,7 @@ impl App {
         let applied = Some(settings.appearance.clone());
         let ctx = cc.egui_ctx.clone();
         let queue = Queue::new(Some(settings::logs_dir().join("FFmpegEncoder.log")), move || ctx.request_repaint());
-        queue.log(format!("{} {} started. Settings: {}", ffenc::APP_NAME, ffenc::APP_VERSION, settings::settings_path().display()));
+        queue.log(format!("{} started. Settings: {}", ffenc::full_title(), settings::settings_path().display()));
         queue.set_keep_temp(settings.keep_temp_files);
         let registry = settings::logs_dir().join("partial-outputs.txt");
         queue.set_partials_registry(Some(registry.clone()));
@@ -352,34 +364,7 @@ impl App {
                 }
             });
         }
-        let presets_path = pstore::presets_path();
-        let had_file = presets_path.exists();
-        // a stored built-in "differs" when its resolved form values differ from the factory ones
-        let differs = |p: &Preset| -> bool { presets::builtin_differs(p, &settings) };
-        let (mut list, notes) = pstore::load_from_with(&presets_path, &differs);
-        let migrated = !notes.is_empty();
-        for n in notes {
-            queue.log(n);
-        }
-        let known: Vec<&str> = kinds().into_iter().map(|k| k.0).collect();
-        list.retain(|p| {
-            let ok = known.contains(&p.kind.as_str());
-            if !ok {
-                queue.log(format!("Preset “{}” has an unknown type “{}” and was ignored.", p.name, p.kind));
-            }
-            ok
-        });
-        if list.is_empty() {
-            list = pstore::factory_all();
-        }
-        if !had_file {
-            migrate_legacy(&mut list, &mut settings);
-            let differs = |p: &Preset| -> bool { pstore::differs_raw(p) };
-            let all: Vec<String> = pstore::BUILTINS.iter().map(|b| b.0.to_string()).collect();
-            for n in pstore::enforce_builtins(&mut list, &all, &differs) {
-                queue.log(n);
-            }
-        }
+        let (list, presets_path, had_file, migrated) = load_presets(&mut settings, &queue);
         let current = list.iter().position(|p| p.id == settings.last_preset && !p.hidden).unwrap_or(0);
         let mut app = App {
             settings,
@@ -410,12 +395,26 @@ impl App {
             rollback_confirm: false,
             source: Default::default(),
             pending_run: None,
+            splash: None,
+            import_offer: None,
         };
+        if app.settings.show_splash && std::env::var_os("FFENC_NO_SPLASH").is_none() {
+            let s = splash::Splash::new();
+            for n in &s.sources {
+                app.queue.log(n.clone());
+            }
+            app.splash = Some(s);
+        }
         app.refresh_ffmpeg(&cc.egui_ctx);
         if !had_file || migrated {
             app.save_presets();
         }
-        if first_run || app.ff.is_none() {
+        // first run of this edition: offer the stable version's settings first (copy only)
+        let stable = if first_run { ffenc::import_stable::find() } else { None };
+        if let Some(found) = stable {
+            app.queue.log(format!("Found the stable version's settings at {}.", found.settings.display()));
+            app.import_offer = Some(ImportOffer { found, first_run: true });
+        } else if first_run || app.ff.is_none() {
             app.open_locate(first_run);
         }
         // Non-intrusive daily update check (never when "Turn off Update Check for FFMPEG" is checked).
@@ -465,6 +464,79 @@ impl App {
     fn save_presets(&mut self) {
         if let Err(e) = pstore::save_to(&self.presets_path, &self.pre.list) {
             self.error = Some(e);
+        }
+    }
+
+    /// Copy the stable version's settings/presets into this edition, then reload everything.
+    fn import_from_stable(&mut self, ctx: &egui::Context, found: &ffenc::import_stable::StableFound) {
+        match ffenc::import_stable::import_into(found, &settings::settings_path(), &locate::stable_managed_bin()) {
+            Ok(r) => {
+                for n in &r.notes {
+                    self.queue.log(n.clone());
+                }
+                self.settings = Settings::load();
+                let (list, path, _, migrated) = load_presets(&mut self.settings, &self.queue);
+                let current = list.iter().position(|p| p.id == self.settings.last_preset && !p.hidden).unwrap_or(0);
+                self.pre = PresetUi::new(list, current);
+                self.presets_path = path;
+                if migrated {
+                    self.save_presets();
+                }
+                self.applied = None; // re-apply the imported theme / text size
+                self.refresh_ffmpeg(ctx);
+                if self.ff.is_some() {
+                    self.locate = None;
+                }
+                self.info = Some(("Imported from the stable version".into(), format!("{}\n\nThe stable version's files were only read, not changed.", r.notes.join("\n"))));
+            }
+            Err(e) => self.error = Some(e),
+        }
+    }
+
+    fn import_dialog(&mut self, ctx: &egui::Context) {
+        let Some(offer) = self.import_offer.take() else { return };
+        let mut keep = true;
+        let mut import = false;
+        let title = if offer.first_run { "Welcome to the experimental version" } else { "Import settings from stable version" };
+        common::fit(egui::Window::new(title).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
+            ui.set_max_width(620.0);
+            ui.label(format!("{} keeps its own settings, presets and downloaded FFmpeg, separate from the stable FFmpeg Encoder. Nothing you do here changes the stable version.", ffenc::full_title()));
+            ui.add_space(4.0);
+            common::card(ui, |ui| {
+                ui.label(RichText::new("Stable version found").strong());
+                hint(ui, format!("Settings: {}", offer.found.settings.display()));
+                match &offer.found.presets {
+                    Some(p) => hint(ui, format!("Presets: {}", p.display())),
+                    None => hint(ui, "Presets: none (built-in presets will be used)"),
+                }
+            });
+            ui.add_space(4.0);
+            if offer.first_run {
+                ui.label("Import copies the stable settings and presets into this version. The stable files are only read, never changed.");
+            } else {
+                ui.colored_label(crate::ui::theme::c().warn, "This replaces this version's current settings and presets with copies of the stable ones. The stable files are only read, never changed.");
+            }
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                let r = ui.add(common::primary_button("Import settings from stable version"));
+                if offer.first_run && ui.memory(|m| m.focused().is_none()) {
+                    r.request_focus();
+                }
+                import = r.clicked();
+                let skip = if offer.first_run { "Start fresh" } else { "Cancel" };
+                if ui.button(skip).on_hover_text("Keep this version's own settings").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    keep = false;
+                }
+            });
+        });
+        if import {
+            self.import_from_stable(ctx, &offer.found);
+            keep = false;
+        }
+        if keep {
+            self.import_offer = Some(offer);
+        } else if offer.first_run && self.ff.is_none() {
+            self.open_locate(true);
         }
     }
 
@@ -558,6 +630,13 @@ impl App {
     fn menu(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("File", |ui| {
+                if ui.button("Import settings from stable version…").on_hover_text("Copy the stable FFmpeg Encoder's settings and presets into this experimental version. The stable files are not changed.").clicked() {
+                    match ffenc::import_stable::find() {
+                        Some(found) => self.import_offer = Some(ImportOffer { found, first_run: false }),
+                        None => self.info = Some(("Import settings from stable version".into(), "No settings of the stable FFmpeg Encoder were found (looked next to this app and in %APPDATA%\\FFmpegEncoder).".into())),
+                    }
+                    ui.close_menu();
+                }
                 if ui.button("Settings…").clicked() {
                     self.settings_edit = Some(self.settings.clone());
                     ui.close_menu();
@@ -716,7 +795,7 @@ impl App {
                     ui.close_menu();
                 }
                 if ui.button("Check for app updates…").clicked() {
-                    self.info = Some(("App updates".into(), format!("Automatic app updates are not implemented yet.\nYou are running {} {}.", ffenc::APP_NAME, ffenc::APP_VERSION)));
+                    self.info = Some(("App updates".into(), format!("Automatic app updates are not implemented yet.\nYou are running {}.", ffenc::full_title())));
                     ui.close_menu();
                 }
                 ui.separator();
@@ -726,21 +805,64 @@ impl App {
                 }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                match (&self.ff, &self.ff_check) {
-                    (None, _) => {
-                        ui.colored_label(crate::ui::theme::c().err, "FFmpeg not found");
-                    }
-                    (Some(_), None) => {
-                        ui.spinner();
-                    }
-                    (Some(f), Some(Ok(c))) => {
-                        ui.label(RichText::new(format!("FFmpeg {}", c.version)).small()).on_hover_text(format!("{}\n({})", f.bin_dir.display(), f.source.label()));
-                    }
-                    (Some(_), Some(Err(e))) => {
-                        ui.colored_label(crate::ui::theme::c().err, "FFmpeg error").on_hover_text(e);
-                    }
+                if !ffenc::EDITION.is_empty() {
+                    common::tag(ui, &format!("{} build", ffenc::EDITION), "A separate test version with its own settings and presets; the stable FFmpeg Encoder is not affected.");
                 }
             });
+        });
+    }
+
+    /// Bottom status bar: FFmpeg in use, queue summary, version.
+    fn status_bar(&mut self, ui: &mut egui::Ui) {
+        let pal = crate::ui::theme::c();
+        // narrow window (large text sizes): only the essentials, on one line where possible
+        let wide = ui.available_width() > 900.0;
+        ui.horizontal_wrapped(|ui| {
+            match (&self.ff, &self.ff_check) {
+                (None, _) => {
+                    ui.colored_label(pal.err, "✖ FFmpeg not found").on_hover_text("Help › Locate FFmpeg folder or Help › Check for FFmpeg updates");
+                }
+                (Some(_), None) => {
+                    ui.spinner();
+                    ui.label("Checking FFmpeg…");
+                }
+                (Some(f), Some(Ok(c))) => {
+                    ui.colored_label(pal.ok, "✔").on_hover_text("FFmpeg works");
+                    ui.label(format!("FFmpeg {}", c.version)).on_hover_text(format!("{}\n({})", f.bin_dir.display(), f.source.label()));
+                    if wide {
+                        ui.label(RichText::new(format!("({})", f.source.label())).small().weak());
+                    }
+                }
+                (Some(_), Some(Err(e))) => {
+                    ui.colored_label(pal.err, "✖ FFmpeg error").on_hover_text(e);
+                }
+            }
+            ui.separator();
+            let (run, pend, done, failed) = {
+                let s = self.queue.shared.lock().unwrap();
+                let mut c = (0, 0, 0, 0);
+                for j in &s.jobs {
+                    match j.status {
+                        JobStatus::Running => c.0 += 1,
+                        JobStatus::Pending => c.1 += 1,
+                        JobStatus::Done => c.2 += 1,
+                        JobStatus::Failed(_) => c.3 += 1,
+                        JobStatus::Cancelled => {}
+                    }
+                }
+                c
+            };
+            let q = if run + pend == 0 {
+                if done + failed == 0 { "Queue: idle".to_string() } else { format!("Queue: idle ({done} done{})", if failed > 0 { format!(", {failed} failed") } else { String::new() }) }
+            } else {
+                format!("Queue: {run} running, {pend} waiting")
+            };
+            ui.label(q);
+            if wide {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(RichText::new(ffenc::full_title()).small().weak());
+                });
+            }
         });
     }
 
@@ -772,7 +894,7 @@ impl App {
         let shared = self.queue.shared.clone();
         let mut cancel_ids = vec![];
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Queue").strong());
+            ui.label(RichText::new("Queue").strong().size(ui.text_style_height(&egui::TextStyle::Body) * 1.08));
             if ui.button("Cancel all").clicked() {
                 self.queue.cancel_all();
             }
@@ -830,7 +952,7 @@ impl App {
         }
         ui.separator();
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Log").strong());
+            ui.label(RichText::new("Log").strong().size(ui.text_style_height(&egui::TextStyle::Body) * 1.08));
             if ui.small_button("Copy").clicked() {
                 let text: Vec<String> = shared.lock().unwrap().log.iter().cloned().collect();
                 ui.ctx().copy_text(text.join("\n"));
@@ -982,7 +1104,7 @@ impl App {
                     ui.horizontal_wrapped(|ui| {
                         let (kb, ow, sk) = p.counts();
                         let summary = if p.conflicts.is_empty() { String::new() } else { format!(" – {kb} kept both, {ow} overwritten, {sk} skipped") };
-                        let rb = ui.add_enabled(n > 0, egui::Button::new(RichText::new(if n == 1 { "▶  Run" } else { "▶  Run all" }).strong()).min_size(egui::vec2(110.0, 28.0)));
+                        let rb = ui.add_enabled(n > 0, common::primary_button(if n == 1 { "▶  Run" } else { "▶  Run all" }).min_size(egui::vec2(110.0, 28.0)));
                         let rb = common::named(rb, egui::WidgetType::Button, &if n == 1 { format!("Run: add to the queue and start{summary}") } else { format!("Run all {n} jobs: add to the queue and start{summary}") });
                         if focus_run {
                             rb.request_focus();
@@ -1035,7 +1157,7 @@ impl App {
 
         // first run / FFmpeg not found
         let invalid = self.ff.is_none() || matches!(self.ff_check, Some(Err(_)));
-        if self.locate.is_none() && invalid && !self.first_run_dismissed && !self.updater.open {
+        if self.locate.is_none() && invalid && !self.first_run_dismissed && !self.updater.open && self.import_offer.is_none() {
             self.open_locate(false);
         }
         if self.updater.open {
@@ -1077,7 +1199,7 @@ impl App {
                 }
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(check.is_ok(), egui::Button::new(RichText::new("Use this folder").strong())).clicked() {
+                    if ui.add_enabled(check.is_ok(), common::primary_button("Use this folder")).clicked() {
                         use_dir = check.clone().ok();
                     }
                     ui.separator();
@@ -1153,7 +1275,7 @@ impl App {
         if self.show_about {
             let mut open = true;
             common::fit(egui::Window::new("About").open(&mut open).collapsible(false).resizable(true).default_width(560.0), ctx, true).show(ctx, |ui| {
-                ui.heading(format!("{} {}", ffenc::APP_NAME, ffenc::APP_VERSION));
+                ui.heading(ffenc::full_title());
                 ui.label("GUI port of the FFmpeg processing PowerShell script v22.0.");
                 ui.label(format!("Build: {} {}", std::env::consts::OS, std::env::consts::ARCH));
                 ui.separator();
@@ -1369,6 +1491,9 @@ impl App {
                 common::section(ui, "Appearance");
                 hint(ui, "Applied and saved immediately (Save/Cancel below don't affect it).");
                 self.appearance_ui(ui);
+                common::section(ui, "Startup");
+                ui.checkbox(&mut ed.show_splash, "Show splash screen at startup").on_hover_text("A short welcome screen with the name and version (about 2 seconds; any key or click closes it).");
+                hint(ui, format!("To change its text or picture, put {} and/or {} next to the app or in the settings folder.", ffenc::splash::TEXT_FILE, ffenc::splash::IMAGE_FILE));
                 common::section(ui, "Folders");
                 egui::Grid::new("set_f").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                     let d = ed.input_folder.clone();
@@ -1411,8 +1536,10 @@ impl App {
                     ui.label("Fallback sample rate");
                     common::num_u32(ui, &mut ed.fallback_sample_rate, 8000..=384000, " Hz");
                     ui.end_row();
-                    ui.label("Advanced compressor");
-                    common::compressor_params_ui(ui, "set_comp", &mut ed.compressor);
+                    ui.label("Compressor");
+                    egui::CollapsingHeader::new("Advanced compressor settings").id_salt("set_comp_adv").default_open(false).show(ui, |ui| {
+                        common::compressor_params_ui(ui, "set_comp", &mut ed.compressor);
+                    });
                     ui.end_row();
                 });
                 common::section(ui, "FFmpeg updates & logs");
@@ -1466,7 +1593,7 @@ impl App {
             });
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("Save").strong()).clicked() {
+                if ui.add(common::primary_button("Save")).clicked() {
                     match ed.validate() {
                         Ok(()) => save = true,
                         Err(e) => err = Some(e),
@@ -1578,9 +1705,13 @@ impl eframe::App for App {
             self.route_paths(ctx, dropped);
         }
 
-        egui::TopBottomPanel::top("menu").show(ctx, |ui| {
+        let bar_fill = crate::ui::theme::c().bar_fill;
+        egui::TopBottomPanel::top("menu").frame(egui::Frame::side_top_panel(&ctx.style()).fill(bar_fill).inner_margin(egui::Margin::symmetric(8, 4))).show(ctx, |ui| {
             self.menu(ctx, ui);
             self.banners(ctx, ui);
+        });
+        egui::TopBottomPanel::bottom("status").frame(egui::Frame::side_top_panel(&ctx.style()).fill(bar_fill).inner_margin(egui::Margin::symmetric(8, 3))).show(ctx, |ui| {
+            self.status_bar(ui);
         });
 
         // F5 runs (previews) the selected preset
@@ -1634,7 +1765,7 @@ impl eframe::App for App {
             });
         }
 
-        egui::TopBottomPanel::bottom("queue").resizable(true).default_height(270.0_f32.min(screen.y * 0.3)).height_range(60.0..=(screen.y * 0.4).max(80.0)).show(ctx, |ui| {
+        egui::TopBottomPanel::bottom("queue").resizable(true).default_height(220.0_f32.min(screen.y * 0.26)).height_range(60.0..=(screen.y * 0.4).max(80.0)).show(ctx, |ui| {
             // never let the panel's content force it taller than its cap (large text sizes)
             egui::ScrollArea::vertical().id_salt("queue_panel_scroll").auto_shrink([false, false]).show(ui, |ui| {
                 self.queue_panel(ui);
@@ -1653,35 +1784,68 @@ impl eframe::App for App {
             let mut save = false;
             let mut save_as = false;
             let mut revert = false;
-            // wrapping rows: nothing overlaps at large text sizes / narrow windows
-            ui.horizontal_wrapped(|ui| {
-                ui.heading(&name);
-                ui.label(RichText::new(format!("[{kind_label}]")).small().weak());
-                if builtin {
-                    ui.label(RichText::new("🔒 Built-in, read-only").small().strong()).on_hover_text("Shipped with the app. Changes can't overwrite it – save them as a new preset.");
-                }
-                if modified {
-                    ui.label(RichText::new("(unsaved changes)").small().color(crate::ui::theme::c().unsaved));
+            // action bar pinned to the bottom of the form: the main action is always visible
+            // (on very short screens – large text sizes – it goes at the end of the form instead)
+            let mut run = false;
+            let pinned = ui.available_height() > 300.0;
+            let action_row = |ui: &mut egui::Ui, run: &mut bool| {
+                ui.horizontal_wrapped(|ui| {
+                    let h = ui.text_style_height(&egui::TextStyle::Button) + 14.0;
+                    let r = ui.add(common::primary_button("▶  Preview & run…").min_size(egui::vec2(170.0, h)));
+                    *run |= common::named(r, egui::WidgetType::Button, "Preview and run (F5): shows the exact FFmpeg commands first").clicked();
+                    hint(ui, "F5 · shows the exact commands before anything runs");
+                });
+            };
+            if pinned {
+                egui::TopBottomPanel::bottom("actions").frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 6))).show_inside(ui, |ui| action_row(ui, &mut run));
+            }
+            if run {
+                self.start_preview(ctx);
+            }
+            egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+                // header card; wrapping rows, so nothing overlaps at large text sizes / narrow windows
+                common::card(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.heading(&name);
+                        if kind_label != name {
+                            common::tag(ui, kind_label, "Preset type");
+                        }
+                        if builtin {
+                            common::tag(ui, "🔒 Built-in, read-only", "Shipped with the app. Changes can't overwrite it – save them as a new preset.");
+                        }
+                        if modified {
+                            ui.label(RichText::new("● Unsaved changes").small().color(crate::ui::theme::c().unsaved));
+                        }
+                    });
+                    if !desc.is_empty() {
+                        hint(ui, &desc);
+                    }
+                    if builtin && modified {
+                        ui.label(RichText::new("Built-in preset: changes can't overwrite it. Use “Save as new preset…” to keep them.").color(crate::ui::theme::c().unsaved));
+                    }
+                    ui.horizontal_wrapped(|ui| {
+                        if builtin {
+                            let b = if modified { common::primary_button("Save as new preset…") } else { egui::Button::new("Save as new preset…") };
+                            save_as = common::named(ui.add(b), egui::WidgetType::Button, "Save as new preset (Ctrl+S): built-ins are read-only, so changes go into a new preset").clicked();
+                            revert = ui.add_enabled(modified, egui::Button::new("Discard changes")).on_hover_text("Back to the built-in values (keeps the chosen files)").clicked();
+                        } else {
+                            let b = if modified { common::primary_button("Save preset") } else { egui::Button::new("Save preset") };
+                            save = ui.add_enabled(modified, b).on_hover_text("Store the current values in this preset (Ctrl+S)").clicked();
+                            revert = ui.add_enabled(modified, egui::Button::new("Revert")).on_hover_text("Back to the saved values (keeps the chosen files)").clicked();
+                            save_as = ui.button("Save as new…").on_hover_text("Save the form as a new preset").clicked();
+                        }
+                    });
+                });
+                ui.add_space(4.0);
+                let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
+                let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+                self.pre.editor(idx, &self.settings).mode.ui(ui, &cx);
+                ui.add_space(10.0);
+                if !pinned {
+                    action_row(ui, &mut run);
+                    ui.add_space(10.0);
                 }
             });
-            ui.horizontal_wrapped(|ui| {
-                if builtin {
-                    let r = ui.add(egui::Button::new(RichText::new("Save as new preset…").strong()).small());
-                    save_as = common::named(r, egui::WidgetType::Button, "Save as new preset (Ctrl+S): built-ins are read-only, so changes go into a new preset").clicked();
-                    revert = ui.add_enabled(modified, egui::Button::new("Discard changes").small()).on_hover_text("Back to the built-in values (keeps the chosen files)").clicked();
-                } else {
-                    save = ui.add_enabled(modified, egui::Button::new(RichText::new("Save preset").strong()).small()).on_hover_text("Store the current values in this preset (Ctrl+S)").clicked();
-                    revert = ui.add_enabled(modified, egui::Button::new("Revert").small()).on_hover_text("Back to the saved values (keeps the chosen files)").clicked();
-                    save_as = ui.small_button("Save as new…").on_hover_text("Save the form as a new preset").clicked();
-                }
-            });
-            if builtin && modified {
-                ui.label(RichText::new("Built-in preset: changes can't overwrite it. Use “Save as new preset…” to keep them.").color(crate::ui::theme::c().unsaved));
-            }
-            if !desc.is_empty() {
-                hint(ui, &desc);
-            }
-            ui.separator();
             if save {
                 self.pre.save_current(&self.settings);
                 self.save_presets();
@@ -1693,16 +1857,7 @@ impl eframe::App for App {
                 let _ = &name;
                 self.pre.dialog = Some(Dialog::SaveAs { name: self.pre.suggest_name(idx) });
             }
-            egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-                let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-                let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
-                self.pre.editor(idx, &self.settings).mode.ui(ui, &cx);
-                ui.add_space(10.0);
-                if ui.add_sized([180.0, 32.0], egui::Button::new(RichText::new("Preview & run…").strong())).clicked() {
-                    self.start_preview(ctx);
-                }
-                ui.add_space(10.0);
-            });
+
         });
 
         if self.pending_run.is_some() && self.preview.is_none() && self.error.is_none() {
@@ -1740,7 +1895,14 @@ impl eframe::App for App {
         }
 
         self.dialogs(ctx);
+        self.import_dialog(ctx);
         self.help_window(ctx);
+        if let Some(s) = &mut self.splash {
+            s.show(ctx);
+            if s.done {
+                self.splash = None;
+            }
+        }
         theme::focus_ring(ctx);
 
         // keep progress bars moving while jobs run
@@ -1760,6 +1922,42 @@ impl eframe::App for App {
             std::thread::sleep(Duration::from_millis(100));
         }
     }
+}
+
+
+/// Load (and migrate) the presets next to the settings file.
+/// Returns (list, path, a presets file existed, something was migrated).
+fn load_presets(settings: &mut Settings, queue: &Queue) -> (Vec<Preset>, PathBuf, bool, bool) {
+        let presets_path = pstore::presets_path();
+        let had_file = presets_path.exists();
+        // a stored built-in "differs" when its resolved form values differ from the factory ones
+        let snapshot = settings.clone();
+        let differs = |p: &Preset| -> bool { presets::builtin_differs(p, &snapshot) };
+        let (mut list, notes) = pstore::load_from_with(&presets_path, &differs);
+        let migrated = !notes.is_empty();
+        for n in notes {
+            queue.log(n);
+        }
+        let known: Vec<&str> = kinds().into_iter().map(|k| k.0).collect();
+        list.retain(|p| {
+            let ok = known.contains(&p.kind.as_str());
+            if !ok {
+                queue.log(format!("Preset “{}” has an unknown type “{}” and was ignored.", p.name, p.kind));
+            }
+            ok
+        });
+        if list.is_empty() {
+            list = pstore::factory_all();
+        }
+        if !had_file {
+            migrate_legacy(&mut list, settings);
+            let differs = |p: &Preset| -> bool { pstore::differs_raw(p) };
+            let all: Vec<String> = pstore::BUILTINS.iter().map(|b| b.0.to_string()).collect();
+            for n in pstore::enforce_builtins(&mut list, &all, &differs) {
+                queue.log(n);
+            }
+        }
+        (list, presets_path, had_file, migrated)
 }
 
 /// 0.1.x stored the last-used values per mode in settings.modes. Turn those into

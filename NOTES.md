@@ -1,5 +1,70 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.6.0-dev.1 — experimental edition (branch `ui-experimental`; master / 0.5.x untouched)
+- **Separate identity:**
+  - **Names:** version `0.6.0-dev.1`, bin `FFmpegEncoder-Experimental.exe`, title “FFmpeg Encoder 0.6.0-dev.1
+    (Experimental)”, eframe app id `FFmpegEncoder-Experimental`.
+  - **Data folders:** `%APPDATA%` and `%LOCALAPPDATA%\FFmpegEncoder-Experimental` (settings, presets, logs, partial-output
+    registry, downloaded FFmpeg).
+  - **Portable files:** `FFmpegEncoder-Experimental.settings.json` / `.presets.json`.
+  - **Constants:** `ffenc::{EDITION, DATA_DIR_NAME, FILE_STEM, STABLE_*}` are the single place for these.
+  - **Updater** user agent `FFmpegEncoder-Experimental/<version>`.
+- **Import from stable** (`import_stable.rs`):
+  - **Where it looks:** stable portable `FFmpegEncoder.settings.json` next to the exe, then
+    `%APPDATA%\FFmpegEncoder\settings.json`, plus the presets file beside it.
+  - **When:** offered on the first run (Import / Start fresh) and in File › Import settings from stable version…
+    (warns that it replaces the current settings).
+  - **How:** stable files are read, parsed and validated before anything is written, then copied. Same-file
+    imports are refused.
+  - **FFmpeg folder:** the downloaded FFmpeg isn't copied. If the imported FFmpeg folder is the stable app's
+    downloaded copy, it is treated as "your own folder": no automatic update checks, and in-place updates still
+    need their confirmation tick.
+- **UI cleanup:**
+  - Theme spacing and corner radius; palette `primary_*`, `card_*` and `bar_*` (contrast-tested).
+  - `common::{primary_button, card, tag}`; `section` gets a larger heading.
+  - Preset header card; pinned action bar, or inline when the central area is under 300 pt tall.
+  - Status bar (compact under 900 pt width); edition tag in the top bar.
+  - Sidebar uses regular-size buttons, and its Run button is no longer bold (one emphasised action per screen).
+  - Primary buttons in the run confirmation, Settings, the updater, the locate dialog and the preset dialogs.
+  - Collapsed advanced compressor in Settings; queue default height 220 pt / 26 %.
+  - `common::fit` now wraps dialogs in a shrink-to-fit scroll area with a 420 pt minimum width. egui's window
+    scrolling filled the whole maximum height and left an empty block below the buttons.
+- **Splash:**
+  - **Look:** an in-app overlay (not a separate window, so it follows theme and text size), static, about 1.8 s
+    from the first frame. Any key or click closes it and the input is consumed.
+  - **Content:** labels for screen readers, image alt text.
+  - **Setting:** `show_splash` (default on).
+  - **Overrides:** `splash.txt` / `splash.png` in the exe folder, then the settings folder. A bad PNG falls back
+    and is logged.
+  - **Test hooks:** `FFENC_SPLASH_MS`, `FFENC_NO_SPLASH`.
+- **Installer** (`installer/installer.nsi`, `scripts/build-release.sh`):
+  - NSIS 3.11 cross-built, `Target amd64-unicode` (the app is x64 only; a 32-bit stub also wouldn't run in a
+    64-bit-only Wine prefix).
+  - `RequestExecutionLevel user`; per-user by default. "For everyone" relaunches elevated (`runas … /ALLUSERS`).
+  - Uninstall key `…\Uninstall\FFmpegEncoderExperimental` (HKCU or HKLM) with DisplayIcon/Version/Size and
+    Quiet/UninstallString.
+  - Install marker → the app uses %APPDATA% (`settings_path_in`), so uninstall/upgrade never touches settings.
+  - The uninstall option "Remove my settings and presets" is off by default.
+- **Tests (new):**
+  - Splash setting default and round trip.
+  - Splash text parsing and override order.
+  - Data-folder separation: names, portable files, folders, managed FFmpeg, never a stable path.
+  - Import copies and leaves the stable files byte- and time-identical; edge cases (missing, portable pair, same
+    file, broken file leaves nothing written, stable-managed FFmpeg note).
+  - Installed vs portable settings location.
+  - Primary/card contrast in all themes.
+- **Verified in Wine:**
+  - **Screenshots:** Dark/Light/High contrast/System at 75–300 %; Settings; splash (default, override, key dismiss);
+    first-run import (stable files unchanged).
+  - **Installer:** silent per-user install, launch, uninstall that keeps settings, reinstall with a desktop
+    shortcut, uninstall with settings removal; silent all-users install and uninstall; GUI installer pages and
+    uninstaller options page.
+  - The stable `%LOCALAPPDATA%\FFmpegEncoder` was unchanged throughout.
+- **Not verified:**
+  - Real Windows (UAC prompt for "For everyone", SmartScreen on an unsigned setup, Start Menu search).
+  - A screen reader on the new controls.
+  - The non-admin → elevate path (the Wine user is an administrator).
+
 ## 0.5.1 — "Turn off Update Check for FFMPEG"
 - **New option:** File › Settings › FFmpeg updates & logs › **Turn off Update Check for FFMPEG** (`never_check_updates`).
   - **Unchecked by default** for new users and on first run, so the once-a-day check at startup stays on.

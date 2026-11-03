@@ -19,7 +19,7 @@ use serde_json::Value;
 
 use crate::settings::{settings_path, PORTABLE_FILE};
 
-pub const PORTABLE_PRESETS_FILE: &str = "FFmpegEncoder.presets.json";
+pub const PORTABLE_PRESETS_FILE: &str = "FFmpegEncoder-Experimental.presets.json";
 pub const FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -126,8 +126,12 @@ pub fn presets_path() -> PathBuf {
 
 pub fn presets_path_for(settings: &Path) -> PathBuf {
     let dir = settings.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-    if settings.file_name().map(|n| n == PORTABLE_FILE).unwrap_or(false) {
+    let name = settings.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    if name == PORTABLE_FILE {
         dir.join(PORTABLE_PRESETS_FILE)
+    } else if let Some(stem) = name.strip_suffix(".settings.json") {
+        // another edition's portable file (e.g. the stable "FFmpegEncoder.settings.json")
+        dir.join(format!("{stem}.presets.json"))
     } else {
         dir.join("presets.json")
     }
@@ -513,6 +517,8 @@ mod tests {
 
     #[test]
     fn paths() {
+        assert_eq!(presets_path_for(Path::new("/x/FFmpegEncoder-Experimental.settings.json")), PathBuf::from("/x/FFmpegEncoder-Experimental.presets.json"));
+        // the stable edition's portable pair (import reads it)
         assert_eq!(presets_path_for(Path::new("/x/FFmpegEncoder.settings.json")), PathBuf::from("/x/FFmpegEncoder.presets.json"));
         assert_eq!(presets_path_for(Path::new("/r/FFmpegEncoder/settings.json")), PathBuf::from("/r/FFmpegEncoder/presets.json"));
     }

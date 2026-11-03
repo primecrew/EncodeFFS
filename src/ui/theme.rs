@@ -27,6 +27,15 @@ pub struct Palette {
     pub pill_warn: Color32,
     pub on_pill: Color32,
     pub high_contrast: bool,
+    /// Primary action buttons (Preview & run, Save, Import…): fill / text / outline.
+    pub primary_fill: Color32,
+    pub on_primary: Color32,
+    pub primary_stroke: Color32,
+    /// Section cards in forms and dialogs.
+    pub card_fill: Color32,
+    pub card_stroke: Color32,
+    /// Top/status bar background.
+    pub bar_fill: Color32,
 }
 
 const DARK: Palette = Palette {
@@ -43,6 +52,12 @@ const DARK: Palette = Palette {
     pill_warn: Color32::from_rgb(150, 80, 0),
     on_pill: Color32::WHITE,
     high_contrast: false,
+    primary_fill: Color32::from_rgb(0, 92, 184),
+    on_primary: Color32::WHITE,
+    primary_stroke: Color32::from_rgb(110, 180, 255),
+    card_fill: Color32::from_gray(33),
+    card_stroke: Color32::from_gray(60),
+    bar_fill: Color32::from_gray(22),
 };
 
 const LIGHT: Palette = Palette {
@@ -54,6 +69,12 @@ const LIGHT: Palette = Palette {
     unsaved: Color32::from_rgb(160, 72, 0),
     accent: Color32::from_rgb(0, 95, 190),
     focus_width: 2.0,
+    primary_fill: Color32::from_rgb(0, 88, 176),
+    on_primary: Color32::WHITE,
+    primary_stroke: Color32::from_rgb(0, 60, 120),
+    card_fill: Color32::WHITE,
+    card_stroke: Color32::from_gray(200),
+    bar_fill: Color32::from_gray(236),
     ..DARK
 };
 
@@ -71,6 +92,12 @@ const HIGH_CONTRAST: Palette = Palette {
     pill_warn: Color32::from_rgb(0, 0, 0),
     on_pill: Color32::from_rgb(255, 255, 0),
     high_contrast: true,
+    primary_fill: Color32::BLACK,
+    on_primary: Color32::from_rgb(255, 255, 0),
+    primary_stroke: Color32::from_rgb(255, 255, 0),
+    card_fill: Color32::BLACK,
+    card_stroke: Color32::WHITE,
+    bar_fill: Color32::BLACK,
 };
 
 thread_local! {
@@ -177,8 +204,24 @@ pub fn style(k: Kind, a: &Appearance) -> egui::Style {
         (TextStyle::Monospace, FontId::new(13.0 * a.mono_scale, FontFamily::Monospace)),
     ]
     .into();
-    if k == Kind::HighContrast {
-        s.spacing.button_padding = egui::vec2(6.0, 3.0);
+    // consistent, roomier spacing and rounded corners (all in points, so they scale with the text size)
+    let sp = &mut s.spacing;
+    sp.item_spacing = egui::vec2(8.0, 6.0);
+    sp.button_padding = egui::vec2(8.0, 3.5);
+    sp.window_margin = egui::Margin::same(12);
+    sp.menu_margin = egui::Margin::same(6);
+    sp.indent = 16.0;
+    sp.interact_size.y = 22.0;
+    let v = &mut s.visuals;
+    for w in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
+        w.corner_radius = egui::CornerRadius::same(4);
+    }
+    v.window_corner_radius = egui::CornerRadius::same(8);
+    v.menu_corner_radius = egui::CornerRadius::same(6);
+    if k != Kind::HighContrast {
+        // softer separators; high contrast keeps its strong white lines
+        let p = palette(k);
+        v.widgets.noninteractive.bg_stroke.color = p.card_stroke;
     }
     s
 }
@@ -254,7 +297,7 @@ mod tests {
         for k in [Kind::Dark, Kind::Light, Kind::HighContrast] {
             let v = visuals(k);
             let p = palette(k);
-            let bgs = [("panel", v.panel_fill), ("window", v.window_fill), ("text field", v.extreme_bg_color), ("button", v.widgets.inactive.weak_bg_fill)];
+            let bgs = [("panel", v.panel_fill), ("window", v.window_fill), ("text field", v.extreme_bg_color), ("button", v.widgets.inactive.weak_bg_fill), ("card", p.card_fill), ("bar", p.bar_fill)];
             let texts = [
                 ("text", v.text_color()),
                 ("weak text", v.weak_text_color()),
@@ -297,5 +340,17 @@ mod tests {
     fn contrast_formula() {
         assert!((contrast(Color32::BLACK, Color32::WHITE) - 21.0).abs() < 0.01);
         assert!((contrast(Color32::from_gray(118), Color32::WHITE) - 4.54).abs() < 0.02);
+    }
+
+    #[test]
+    fn primary_button_and_cards_readable() {
+        for k in [Kind::Dark, Kind::Light, Kind::HighContrast] {
+            let p = palette(k);
+            assert!(contrast(p.on_primary, p.primary_fill) >= 4.5, "{k:?} primary text");
+            let v = visuals(k);
+            // the primary button stands out from the panel (fill or outline)
+            assert!(contrast(p.primary_fill, v.panel_fill) >= 3.0 || contrast(p.primary_stroke, v.panel_fill) >= 3.0, "{k:?} primary visible");
+            assert!(contrast(p.accent, p.card_fill) >= 3.0, "{k:?} focus ring on cards");
+        }
     }
 }

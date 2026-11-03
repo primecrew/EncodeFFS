@@ -204,7 +204,7 @@ impl UpdaterUi {
             }
             ui.horizontal(|ui| {
                 let can = matches!(self.result, Some(Ok(_))) && self.install.is_none() && !queue_busy && (!self.in_place || self.confirm_in_place);
-                if ui.add_enabled(can, egui::Button::new(RichText::new("⬇ Download & install").strong())).clicked() {
+                if ui.add_enabled(can, crate::ui::common::primary_button("⬇ Download & install")).clicked() {
                     if let Some(Ok(b)) = &self.result {
                         if self.in_place && !install::can_write(&target) {
                             self.message = Some(Err(format!("{} is not writable. Use the app-managed copy instead.", target.display())));

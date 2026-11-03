@@ -1,5 +1,15 @@
 # FFmpeg Encoder
 
+> **Experimental edition (branch `ui-experimental`, version 0.6.0-dev.x).** This is a test version, separate from
+> the stable 0.5.x line on `master`, and safe to install next to it:
+> - It is `FFmpegEncoder-Experimental.exe`, and the window title ends in “(Experimental)”.
+> - It keeps its own settings, presets, logs and downloaded FFmpeg (`%APPDATA%` / `%LOCALAPPDATA%\FFmpegEncoder-Experimental`;
+>   portable: `FFmpegEncoder-Experimental.settings.json` / `.presets.json` next to the exe).
+> - It never reads or writes the stable version's files, except when you choose **File › Import settings from
+>   stable version…** (also offered on the first start). That copies them; the stable files are only read.
+> - The installer has its own Add/Remove Programs entry (`FFmpegEncoderExperimental`).
+> See “Experimental edition” below.
+
 Portable Windows GUI (Rust + egui) that replaces the PowerShell script v22.0.
 One `FFmpegEncoder.exe`, no installer, no runtime. Needs `ffmpeg.exe` + `ffprobe.exe`
 (the app can download them for you).
@@ -330,6 +340,52 @@ and unfinished partial outputs, writes their paths to the log, and skips the sta
     folder, and can download an app-managed copy. The dialog then says automatic checks are off.
 - **Check for app updates…** is a stub for now.
 
+## Experimental edition: look, splash screen, installer
+- **Look:**
+  - Tidier spacing and rounded corners.
+  - A header card for each preset (name, type and “Built-in, read-only” tags, description, Save / Revert buttons).
+  - Section headings with a thin rule.
+  - The main action in each place is emphasised: **Preview & run…** sits in an action bar pinned under the form
+    (at the end of the form on very short screens), and Run / Save / Import are emphasised in dialogs.
+  - A **status bar** at the bottom shows the FFmpeg in use, the queue state and the version.
+  - The top bar shows an “Experimental build” tag.
+  - Settings › Encoding defaults has a collapsed **Advanced compressor settings** section.
+  - Short dialogs fit their content (no empty block under the buttons).
+- **Accessibility:** all themes (including High contrast), 75–300 % text size, keyboard use and screen-reader names
+  work as before, and every colour pair is contrast-tested.
+- **Splash screen** (File › Settings › Startup › **Show splash screen at startup**, on by default):
+  - Shows for about 2 seconds. Any key or click closes it, and nothing moves.
+  - **To change it** without rebuilding, put files named `splash.txt` and/or `splash.png` next to the exe (or in the
+    settings folder):
+    - `splash.txt`: a `title:` line, a `tagline:` line, then any other lines as body text. Lines starting with `#`
+      are ignored.
+    - `splash.png`: any PNG, shown at most 360 × 200.
+  - The built-in defaults are `assets/splash.txt` and the app icon.
+- **Portable or installed:**
+  - **Portable zip:** unzip anywhere and run; settings are stored next to the exe.
+  - **Installer** (`…-setup.exe`, NSIS, 64-bit):
+    - **Just for me** by default (no administrator rights, `%LOCALAPPDATA%\Programs\FFmpeg Encoder Experimental`), or
+      **For everyone** (Program Files; asks for permission).
+    - A Start Menu shortcut, with a desktop shortcut optional.
+    - An Add/Remove Programs entry and an uninstaller.
+    - An installed copy keeps its settings in `%APPDATA%\FFmpegEncoder-Experimental`. A marker file
+      `FFmpegEncoder-Experimental.installed` next to the exe tells the app it was installed.
+    - Uninstalling keeps your settings unless you tick **Remove my settings and presets**. That also deletes the
+      FFmpeg this edition downloaded, never the stable version's.
+    - FFmpeg is not bundled.
+  - **Silent install:** `setup.exe /S [/ALLUSERS] [/DESKTOP] [/D=C:\path]`.
+  - **Silent uninstall:** `uninstall.exe /CURRENTUSER|/ALLUSERS /S [/REMOVESETTINGS]`.
+
+### Building a release (portable zip + installer)
+```
+sudo apt install gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 nsis
+rustup target add x86_64-pc-windows-gnu
+scripts/build-release.sh        # -> dist-experimental/: …-win64.zip, …-setup.exe, SHA256SUMS
+```
+- The script builds the exe, zips the exe with README and NOTES, and runs `makensis installer/installer.nsi`.
+- All names, IDs and folders are `-D` values set at the top of the script, so the stable line can get an installer
+  later just by using its own values.
+
 ## Build
 ```
 # Linux cross-compile (what produced dist/):
@@ -348,6 +404,7 @@ Live network tests: `cargo test --lib live -- --ignored` (`FFENC_LIVE=btbn-stabl
 - `src/updater/` – source lookup (BtbN/gyan), download+verify, extract, install/rollback.
 - `src/presets.rs` – preset file format, built-in list, import/export rules.
 - `src/cmd/tracks.rs` – Audio & subtitles: track mapping, codecs per container, delays/trim/pad/mix, extract commands.
+- `src/import_stable.rs` – read-only import of the stable version's settings/presets; `src/splash.rs` + `src/ui/splash.rs` – splash text/picture (overridable) and overlay; `installer/installer.nsi` + `scripts/build-release.sh` – portable zip + NSIS installer.
 - `src/cmd/frameserve.rs` – AviSynth script generator (quoting, colour/matrix/bit depth/trim/fps/audio) and the encode command; `src/ffmpeg/avisynth.rs` – avisynth demuxer and avisynth.dll (32/64-bit) checks.
 - `src/cmd/join.rs` – join/stitch: concat list writer, compatibility check, chapter-per-file math, both command builders.
 - `src/cmdline.rs` – Windows cmd / PowerShell quoting for the copied commands.

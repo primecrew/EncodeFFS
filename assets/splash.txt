@@ -1,0 +1,10 @@
+# Splash screen text (built-in default).
+# To change it without rebuilding, put a file named splash.txt next to the exe
+# (or in the settings folder). Lines:
+#   title: <big name>        (default: the app name)
+#   tagline: <one line under the version>
+#   any other line           shown as a paragraph under the tagline
+# Lines starting with # are ignored. An image named splash.png next to it
+# replaces the built-in picture (PNG, shown at most 360 x 200 points).
+title: FFmpeg Encoder
+tagline: Placeholder tagline – the final text and picture come later.
