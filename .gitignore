@@ -1,3 +1,16 @@
 /target
 /dist/logs
 /dist/*.settings.json
+
+# secrets / local environment (never commit)
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+credentials*.json
+.venv/
+venv/
+__pycache__/
+node_modules/
