@@ -308,7 +308,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Enter / Space", "In the confirmation: Run (focused first) · elsewhere: press the focused button"),
     ("Esc", "Close the confirmation / dialog"),
     ("Ctrl+O", "Open file(s) for the selected preset (folder for folder presets)"),
-    ("Ctrl+S", "Save preset"),
+    ("Ctrl+S", "Save preset (built-in presets: Save as new preset)"),
     ("Ctrl+F", "Search presets"),
     ("Ctrl + plus / Ctrl + minus", "Larger / smaller text and controls (also Ctrl + mouse wheel)"),
     ("Ctrl+0", "Text size 100 %"),
@@ -351,9 +351,12 @@ impl App {
         }
         let presets_path = pstore::presets_path();
         let had_file = presets_path.exists();
-        let (mut list, warning) = pstore::load_from(&presets_path);
-        if let Some(w) = warning {
-            queue.log(w);
+        // a stored built-in "differs" when its resolved form values differ from the factory ones
+        let differs = |p: &Preset| -> bool { presets::builtin_differs(p, &settings) };
+        let (mut list, notes) = pstore::load_from_with(&presets_path, &differs);
+        let migrated = !notes.is_empty();
+        for n in notes {
+            queue.log(n);
         }
         let known: Vec<&str> = kinds().into_iter().map(|k| k.0).collect();
         list.retain(|p| {
@@ -368,11 +371,16 @@ impl App {
         }
         if !had_file {
             migrate_legacy(&mut list, &mut settings);
+            let differs = |p: &Preset| -> bool { pstore::differs_raw(p) };
+            let all: Vec<String> = pstore::BUILTINS.iter().map(|b| b.0.to_string()).collect();
+            for n in pstore::enforce_builtins(&mut list, &all, &differs) {
+                queue.log(n);
+            }
         }
-        let current = list.iter().position(|p| p.id == settings.last_preset).unwrap_or(0);
+        let current = list.iter().position(|p| p.id == settings.last_preset && !p.hidden).unwrap_or(0);
         let mut app = App {
             settings,
-            pre: PresetUi { list, current, editors: Default::default(), dialog: None, filter: String::new() },
+            pre: PresetUi::new(list, current),
             presets_path,
             queue,
             ff: None,
@@ -401,7 +409,7 @@ impl App {
             pending_run: None,
         };
         app.refresh_ffmpeg(&cc.egui_ctx);
-        if !had_file {
+        if !had_file || migrated {
             app.save_presets();
         }
         if first_run || app.ff.is_none() {
@@ -553,20 +561,21 @@ impl App {
             });
             ui.menu_button("Presets", |ui| {
                 let modified = self.pre.modified(&self.pre.cur().id.clone());
+                let builtin = self.pre.is_builtin(self.pre.current);
                 if ui.button("New preset…").clicked() {
                     self.pre.dialog = Some(Dialog::New { name: String::new(), from: presets::NewFrom::Copy(self.pre.cur().id.clone()) });
                     ui.close_menu();
                 }
-                if ui.add_enabled(modified, egui::Button::new("Save preset   (Ctrl+S)")).clicked() {
+                if !builtin && ui.add_enabled(modified, egui::Button::new("Save preset   (Ctrl+S)")).clicked() {
                     self.pre.save_current(&self.settings);
                     self.save_presets();
                     ui.close_menu();
                 }
-                if ui.button("Save as new preset…").clicked() {
-                    self.pre.dialog = Some(Dialog::SaveAs { name: format!("{} copy", self.pre.cur().name) });
+                if ui.button(if builtin { "Save as new preset…   (Ctrl+S)" } else { "Save as new preset…" }).clicked() {
+                    self.pre.dialog = Some(Dialog::SaveAs { name: self.pre.suggest_name(self.pre.current) });
                     ui.close_menu();
                 }
-                if ui.add_enabled(modified, egui::Button::new("Revert unsaved changes")).clicked() {
+                if ui.add_enabled(modified, egui::Button::new(if builtin { "Discard unsaved changes" } else { "Revert unsaved changes" })).clicked() {
                     self.pre.revert_current(&self.settings);
                     ui.close_menu();
                 }
@@ -575,7 +584,7 @@ impl App {
                     self.pre.dialog = Some(Dialog::New { name: String::new(), from: presets::NewFrom::Copy(self.pre.cur().id.clone()) });
                     ui.close_menu();
                 }
-                if ui.button("Rename…").clicked() {
+                if ui.add_enabled(!builtin, egui::Button::new("Rename…")).on_disabled_hover_text("Built-in presets can't be renamed – duplicate it instead.").clicked() {
                     self.pre.dialog = Some(Dialog::Rename { id: self.pre.cur().id.clone(), name: self.pre.cur().name.clone() });
                     ui.close_menu();
                 }
@@ -594,11 +603,7 @@ impl App {
                     ui.close_menu();
                     self.start_preview(ctx);
                 }
-                if ui.add_enabled(self.pre.cur().builtin.is_some(), egui::Button::new("Reset to factory defaults…")).clicked() {
-                    self.pre.dialog = Some(Dialog::Reset { id: self.pre.cur().id.clone() });
-                    ui.close_menu();
-                }
-                if ui.button("Delete…").clicked() {
+                if ui.button(if builtin { "Hide this built-in preset…" } else { "Delete…" }).clicked() {
                     self.pre.dialog = Some(Dialog::Delete { id: self.pre.cur().id.clone() });
                     ui.close_menu();
                 }
@@ -615,10 +620,8 @@ impl App {
                     ui.close_menu();
                     self.export_presets(true);
                 }
-                let missing = pstore::missing_builtins(&self.pre.list);
-                if ui.add_enabled(!missing.is_empty(), egui::Button::new(format!("Restore missing built-in presets ({})", missing.len()))).clicked() {
-                    self.pre.list.extend(missing);
-                    self.save_presets();
+                if ui.button(format!("Restore built-in presets… ({} hidden)", self.pre.hidden_count())).on_hover_text("Show hidden built-ins again and throw away unsaved changes in built-ins").clicked() {
+                    self.pre.dialog = Some(Dialog::RestoreBuiltins);
                     ui.close_menu();
                 }
                 if ui.button("Open presets file").clicked() {
@@ -939,10 +942,18 @@ impl App {
                                 ));
                             }
                             for (path, text) in &j.side_files {
-                                let kind = if path.file_name().map(|f| f.to_string_lossy().starts_with(ffenc::cmd::join::LIST_PREFIX)).unwrap_or(false) { "concat list" } else { "chapter file" };
-                                egui::CollapsingHeader::new(format!("Temporary {kind}: {}", path.display())).id_salt(("side", i, path.to_string_lossy().to_string())).default_open(n == 1).show(ui, |ui| {
+                                let kind = if path.file_name().map(|f| f.to_string_lossy().starts_with(ffenc::cmd::join::LIST_PREFIX)).unwrap_or(false) {
+                                    "concat list"
+                                } else if ffenc::util::ext_lower(path) == "avs" {
+                                    "AviSynth script"
+                                } else {
+                                    "chapter file"
+                                };
+                                let head = if j.keep_side_files { format!("Saved {kind} (kept): {}", path.display()) } else { format!("Temporary {kind}: {}", path.display()) };
+                                egui::CollapsingHeader::new(head).id_salt(("side", i, path.to_string_lossy().to_string())).default_open(n == 1).show(ui, |ui| {
                                     ui.add(egui::TextEdit::multiline(&mut text.as_str()).font(egui::TextStyle::Monospace).desired_width(f32::INFINITY).desired_rows(2));
                                     hint(ui, match *shell {
+                                        _ if j.keep_side_files => "Written by the app before the job and kept afterwards.",
                                         Shell::PowerShell => "Written by the app before the job and deleted afterwards. The copied PowerShell command writes it first, so it can be run on its own.",
                                         Shell::Cmd => "Written by the app before the job and deleted afterwards. To run the copied cmd command yourself, save this text (UTF-8) to that path first, or copy as PowerShell.",
                                     });
@@ -1166,6 +1177,9 @@ impl App {
             }
             self.save_presets();
             self.save_settings();
+            if std::mem::take(&mut self.pre.run_after) {
+                self.start_preview(ctx);
+            }
         }
 
         self.settings_dialog(ctx);
@@ -1556,8 +1570,7 @@ impl eframe::App for App {
             self.show_help = !self.show_help;
         }
         // Ctrl+S saves the current preset
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) && self.pre.modified(&self.pre.cur().id.clone()) {
-            self.pre.save_current(&self.settings);
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) && self.pre.dialog.is_none() && self.pre.modified(&self.pre.cur().id.clone()) && self.pre.save_or_prompt(&self.settings) {
             self.save_presets();
         }
 
@@ -1607,6 +1620,7 @@ impl eframe::App for App {
                 (p.name.clone(), p.description.clone(), p.kind.clone())
             };
             let modified = self.pre.modified(&self.pre.cur().id.clone());
+            let builtin = self.pre.is_builtin(idx);
             let kind_label = kinds().into_iter().find(|k| k.0 == kind).map(|k| k.1).unwrap_or("?");
             let mut save = false;
             let mut save_as = false;
@@ -1615,15 +1629,27 @@ impl eframe::App for App {
             ui.horizontal_wrapped(|ui| {
                 ui.heading(&name);
                 ui.label(RichText::new(format!("[{kind_label}]")).small().weak());
+                if builtin {
+                    ui.label(RichText::new("🔒 Built-in, read-only").small().strong()).on_hover_text("Shipped with the app. Changes can't overwrite it – save them as a new preset.");
+                }
                 if modified {
                     ui.label(RichText::new("(unsaved changes)").small().color(crate::ui::theme::c().unsaved));
                 }
             });
             ui.horizontal_wrapped(|ui| {
-                save = ui.add_enabled(modified, egui::Button::new(RichText::new("Save preset").strong()).small()).on_hover_text("Store the current values in this preset (Ctrl+S)").clicked();
-                revert = ui.add_enabled(modified, egui::Button::new("Revert").small()).on_hover_text("Back to the saved values (keeps the chosen files)").clicked();
-                save_as = ui.small_button("Save as new…").on_hover_text("Save the form as a new preset").clicked();
+                if builtin {
+                    let r = ui.add(egui::Button::new(RichText::new("Save as new preset…").strong()).small());
+                    save_as = common::named(r, egui::WidgetType::Button, "Save as new preset (Ctrl+S): built-ins are read-only, so changes go into a new preset").clicked();
+                    revert = ui.add_enabled(modified, egui::Button::new("Discard changes").small()).on_hover_text("Back to the built-in values (keeps the chosen files)").clicked();
+                } else {
+                    save = ui.add_enabled(modified, egui::Button::new(RichText::new("Save preset").strong()).small()).on_hover_text("Store the current values in this preset (Ctrl+S)").clicked();
+                    revert = ui.add_enabled(modified, egui::Button::new("Revert").small()).on_hover_text("Back to the saved values (keeps the chosen files)").clicked();
+                    save_as = ui.small_button("Save as new…").on_hover_text("Save the form as a new preset").clicked();
+                }
             });
+            if builtin && modified {
+                ui.label(RichText::new("Built-in preset: changes can't overwrite it. Use “Save as new preset…” to keep them.").color(crate::ui::theme::c().unsaved));
+            }
             if !desc.is_empty() {
                 hint(ui, &desc);
             }
@@ -1636,7 +1662,8 @@ impl eframe::App for App {
                 self.pre.revert_current(&self.settings);
             }
             if save_as {
-                self.pre.dialog = Some(Dialog::SaveAs { name: format!("{name} copy") });
+                let _ = &name;
+                self.pre.dialog = Some(Dialog::SaveAs { name: self.pre.suggest_name(idx) });
             }
             egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                 let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());

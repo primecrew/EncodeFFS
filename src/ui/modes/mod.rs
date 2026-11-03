@@ -12,6 +12,7 @@ pub mod batch;
 pub mod commentary;
 pub mod custom;
 pub mod extract;
+pub mod frameserve;
 pub mod join;
 pub mod mix;
 pub mod reencode;
@@ -90,6 +91,7 @@ pub fn all_modes() -> Vec<Box<dyn Mode>> {
         Box::new(subs::SubsMode::default()),
         Box::new(remux::RemuxMode::default()),
         Box::new(join::JoinMode::default()),
+        Box::new(frameserve::FrameserveMode::default()),
         Box::new(custom::CustomMode::default()),
     ]
 }

@@ -132,6 +132,62 @@ plus the full command with a Copy button.
   Chapters, metadata and attachments (fonts, MKV) are kept. Overwrite protection and partial files work as in every
   other preset.
 
+## Frameserving (DebugMode FrameServer)
+Built-in preset **Frameserver (AviSynth script)**. Your editor (Premiere, Vegas, After Effects…) serves the finished
+timeline through DebugMode FrameServer, which writes a small "signpost" .avi. You pick that file. The app writes an
+AviSynth script (.avs) that opens it and encodes the script with FFmpeg (`-i script.avs`), using the same choices as
+Re-encode.
+- **You need:**
+  - DebugMode FrameServer, with the project open and **serving until the encode has finished**. The signpost only
+    works while the editor serves frames.
+  - AviSynth+, in the **same bitness as FFmpeg**. The app's FFmpeg is 64-bit, so it needs 64-bit AviSynth+; the
+    AviSynth+ installer puts both versions in Windows.
+  - An FFmpeg with the avisynth demuxer. Standard BtbN and gyan.dev Windows builds have it (`--enable-avisynth`; they
+    load `avisynth.dll` when needed).
+- **Checks:** the preset shows plain-language checks at the top:
+  - whether the FFmpeg has the avisynth demuxer;
+  - whether `avisynth.dll` is found in `Windows\System32`, `SysWOW64` or next to FFmpeg, and whether it is 32- or
+    64-bit.
+  - Missing pieces are explained, with what to install.
+  - **How frameserving works…** opens a short help text.
+- **Script options** (all optional; the defaults suit most HD projects):
+  - **Colour format** (default **YUV 4:2:0, `ConvertToYUV420()`**). **Which one? (help)** explains each choice:
+    - **YUV420:** the normal choice for H.264/H.265 in MP4/MKV; plays everywhere.
+    - **YV12 (`ConvertToYV12()`):** the older 8-bit name for the same layout; for old filters or plugins.
+    - **YUV422 / YUV444 (`ConvertToYUV422()` / `ConvertToYUV444()`):** more colour detail for editing or archiving,
+      but bigger files and fewer players.
+    - **RGB32 (`ConvertToRGB32()`):** only for filters that need RGB.
+    - **None:** keeps what the signpost gives.
+  - **Colour matrix:** `matrix="Rec709"` by default (Rec601, PC.709, PC.601 and Rec2020 are also offered), plus
+    **Interlaced source** (`interlaced=true`).
+  - **Bit depth:** 8-bit, or 10-bit with `ConvertBits(10)` and a 10-bit encoder format. 10-bit isn't offered with
+    YV12 or RGB32.
+  - **Signpost format:** AviSource `pixel_type`; leave on Automatic.
+  - **Audio:** keep the audio, keep it converted to 16-bit (`ConvertAudioTo16bit()`), or no audio (`audio=false`).
+  - **Force a frame rate:** `AssumeFPS(num, den)`, e.g. 30000/1001.
+  - **Only part of the timeline:** `Trim(first, last)` in frames; last = 0 means to the end.
+- **Script file:** the path is written as-is in quotes; AviSynth has no escapes, and Windows paths can't contain `"`.
+  Paths with non-English letters get `utf8=true`. The file is UTF-8 without BOM, with CRLF line endings.
+  Example script:
+  ```
+  AviSource("C:\Users\you\Documents\project.avi", audio=true)
+  ConvertToYUV420(matrix="Rec709")
+  ```
+- **Preview and edit:** the script is shown with a **Copy script** button. **Edit the script by hand** lets you change
+  it, for example to use DirectShowSource or FFVideoSource (FFMS2) instead of AviSource if AviSource can't open the
+  signpost. That is rarely needed. **Reset to the generated script** goes back.
+- **Test the script:** opens the script with ffprobe and reports size, frame rate, frames, length and audio. If it
+  fails, you get a plain explanation: the editor isn't serving, AviSynth+ is missing or the wrong bitness, or a
+  function needs AviSynth+.
+- **Where the .avs goes:**
+  - By default it's a temporary file, `%TEMP%\ffenc_frameserve_<id>.avs`, deleted after the job (kept when **Keep
+    temporary files for debugging** is on; leftovers are cleaned at start-up).
+  - You can also keep it **next to the signpost** or **in a folder you choose**, as `<signpost name>_ffenc.avs`.
+  - **Save the .avs now** writes it without encoding.
+- **Encoding:** x264 (CRF / preset / tune), optional resize, AAC (bitrate / gain / compressor), chapters, MP4 or MKV,
+  faststart. Overwrite protection and the partial output file work as in every other preset. The confirmation shows
+  the script and the full command; the copied PowerShell command writes the script first.
+
 ## Main window (HandBrake-style)
 - **Left – presets:** every preset, built-in and yours, in your order. One click selects; **double-click** (or **▶ Run**,
   F5) loads the current input into that preset and opens the command preview, from where it goes to the queue.
@@ -147,20 +203,34 @@ plus the full command with a Copy button.
 - **Bottom – queue** with per-job progress, cancel and logs.
 
 ## Presets
-Everything in the preset panel is a **preset**: a named, saved set of options for an operation **type**. Nothing is locked.
+Everything in the preset panel is a **preset**: a named, saved set of options for an operation **type**.
 
-- Ships with 12 built-ins: the 9 script modes, **Join / stitch files**, **Custom pipeline** and **Add chapters (no re-encode)**. Edit, rename, reorder, duplicate or delete any of them;
-  built-ins can be **reset to factory defaults** and deleted ones restored (Presets › Restore missing built-in presets).
-- Editing a form marks the preset `*` (unsaved). **Save preset** (Ctrl+S) stores it, **Revert** drops the edits,
-  **Save as new…** turns the current form into a new preset (the original keeps its saved values).
+- Ships with 14 **built-in** presets: the 9 script modes, **Audio & subtitles**, **Join / stitch files**,
+  **Frameserver (AviSynth script)**, **Custom pipeline** and **Add chapters (no re-encode)**.
+- **Built-in presets are read-only.** They show a padlock and “Built-in, read-only” (screen readers hear
+  “built-in, read-only” in the preset list), and they always have the values that ship with the app, so an update
+  refreshes them. You can still change the form to try something:
+  - The preset is then marked `*` and the notice says “Built-in preset: changes can't overwrite it.”
+  - **Save** (button or Ctrl+S) opens **Save as new preset**, with a name like “Re-encode video (copy)” filled in.
+  - Clicking another preset while a built-in has unsaved changes asks: **Save as new preset**, **Discard changes**,
+    **Keep for later** (the changes stay as unsaved `*`) or **Cancel**.
+  - Built-ins can't be renamed or deleted. **Delete** becomes **Hide**. Pin to favorites, folders and reordering
+    still work.
+  - **Presets › Restore built-in presets…** shows hidden built-ins again and throws away unsaved changes in them.
+    Your own presets are not touched.
+- **Your own presets** (New…, Duplicate, Save as new…) are fully editable: **Save preset** (Ctrl+S) stores the
+  changes, **Revert** drops them, and you can rename and delete them.
+- **Upgrading from 0.4 or older:** if a built-in had been edited or renamed, your version is kept as a new preset
+  (“Re-encode video (your edits)”, or the name you gave it) and the built-in goes back to factory. Built-ins you had
+  deleted come back hidden. User presets that used a built-in's name are renamed (“… (2)”). The log lists every change.
 - **New…** starts from a copy of any preset or a blank preset of any type. Right-click a preset for the same actions.
 - Files chosen for a run (inputs, typed output names) are *not* part of a preset; they're remembered as a draft and carried
   over when you switch to another preset that takes a file.
 - **Favorites** (`"pinned": true`) and **folders** (`"category"`) are stored with the preset and survive export/import.
 - **Import / export** (panel buttons or Presets menu): JSON files with one or many presets. Imports get new ids and unique names;
-  unknown types are skipped.
+  unknown types are skipped. Imported copies of built-ins become your own presets.
 - Stored in `FFmpegEncoder.presets.json` next to the settings file (or `%APPDATA%\FFmpegEncoder\presets.json`).
-  Built-ins that you never customised store `"values": null` = “type defaults from File › Settings”.
+  For built-ins only the order, pin, folder and hidden flag are stored (`"values": null`); their values come from the app.
 - Every run shows the exact ffmpeg command(s) first.
 
 ### Preset types
@@ -177,6 +247,7 @@ Everything in the preset panel is a **preset**: a named, saved set of options fo
 | Remux MKV → MP4 | Stream copy, never overwrites, optional delete of source only after the MP4 verifies; summary in the script's wording. |
 | **Join / stitch files** | Concatenate several videos: lossless concat demuxer or re-encode with the concat filter, chapter per file (see above). |
 | **Audio & subtitles** | Keep/remove/rename/reorder tracks, add commentary or second-language audio, replace audio, add/remove subtitles, extract audio or subtitles (see above). |
+| **Frameserver (AviSynth script)** | DebugMode FrameServer signpost .avi -> generated AviSynth script -> x264/AAC MP4/MKV (see above). |
 | **Custom pipeline** | Build your own from independent choices (below). |
 | **Add chapters (no re-encode)** | Custom pipeline preset: copies every stream, adds chapters every 5 min (or your list), same container as the input, suffix `_chapters`. |
 
@@ -267,6 +338,7 @@ Live network tests: `cargo test --lib live -- --ignored` (`FFENC_LIVE=btbn-stabl
 - `src/updater/` – source lookup (BtbN/gyan), download+verify, extract, install/rollback.
 - `src/presets.rs` – preset file format, built-in list, import/export rules.
 - `src/cmd/tracks.rs` – Audio & subtitles: track mapping, codecs per container, delays/trim/pad/mix, extract commands.
+- `src/cmd/frameserve.rs` – AviSynth script generator (quoting, colour/matrix/bit depth/trim/fps/audio) and the encode command; `src/ffmpeg/avisynth.rs` – avisynth demuxer and avisynth.dll (32/64-bit) checks.
 - `src/cmd/join.rs` – join/stitch: concat list writer, compatibility check, chapter-per-file math, both command builders.
 - `src/cmdline.rs` – Windows cmd / PowerShell quoting for the copied commands.
 - `assets/` – `icon-source.png` (app artwork), `make_icon.py` → `app.ico` (16–256 px), `app.rc`, manifest.

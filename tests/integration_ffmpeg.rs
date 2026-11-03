@@ -388,6 +388,7 @@ fn all_modes_end_to_end() {
             log_file: Some(j.dest.with_file_name(format!("ffmpeg_error_{}.log", ffenc::util::stem(&j.dest)))),
             duration_s: None,
             side_files: vec![],
+            keep_side_files: false,
             post: PostAction::Remux { temp: j.temp.clone(), dest: j.dest.clone(), delete_source: Some(j.source.clone()) },
             warnings: vec![],
         })

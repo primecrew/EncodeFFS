@@ -1,5 +1,76 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.5.0 — frameserving and read-only built-in presets
+- **Frameserver (AviSynth script)**, a new built-in preset type (`src/cmd/frameserve.rs`,
+  `src/ffmpeg/avisynth.rs`, `src/ui/modes/frameserve.rs`).
+  - **What it does:** you pick the DebugMode FrameServer signpost .avi (drag/drop or Browse; it is probed with
+    ffprobe), and the app generates `%TEMP%\ffenc_frameserve_<id>.avs`. FFmpeg then encodes it with x264/AAC (Re-encode
+    choices: CRF/preset/tune, resize, gain/compressor, chapters, MP4/MKV, faststart, overwrite protection,
+    partial output).
+  - **Function names** were checked against the AviSynth+ docs (avisynth.nl Convert / AviSource):
+    - `ConvertToYUV420()` (**default**), `ConvertToYV12()`, `ConvertToYUV422()`, `ConvertToYUV444()` and
+      `ConvertToRGB32()`, each with `matrix=` (default `"Rec709"`) and `interlaced=true`.
+    - Also: `ConvertBits(10)`, `AssumeFPS(n, d)`, `Trim(a, b)` and `ConvertAudioTo16bit()`.
+    - `AviSource(path, audio=true|false[, pixel_type="…"][, utf8=true])`.
+  - **Colour help:** inline text for the selected option, plus a **Which one? (help)** button that explains every
+    choice in plain words.
+  - **Quoting:** AviSynth strings have no escapes, so the path is written verbatim (triple quotes if it contains `"`;
+    `"""`, a trailing `"` or line breaks are rejected). Non-ASCII paths get `utf8=true` (AviSynth+ r2768+). The file is UTF-8 without
+    BOM, CRLF. ffmpeg's avisynth demuxer imports scripts with `utf8=true` on AviSynth+ (interface 7+), so a script
+    path under a non-English user name works.
+  - **Keep the .avs:** temporary (deleted after the job unless Keep temporary files; leftovers older than 6 h cleaned at
+    start-up), next to the signpost, or in a chosen folder as `<name>_ffenc.avs` (new `JobSpec.keep_side_files`, so
+    the runner never deletes it). **Save the .avs now** writes it without encoding.
+  - **Edit the script by hand:** the typed text is used as-is. It must still contain a `…Source(` line.
+    **Reset to the generated script** goes back.
+  - **Test the script:** runs ffprobe on a temporary copy and shows resolution, fps, frames, length and audio. Errors
+    are explained in plain words (`explain_error`: not serving / decompressor, AviSynth missing or wrong bitness,
+    no avisynth demuxer, a function that needs AviSynth+). The tested length is used for chapters and the progress bar.
+  - **Environment check (background):**
+    - `ffmpeg -demuxers` (avisynth listed) and `-version` (`--enable-avisynth`);
+    - `avisynth.dll` in `%SystemRoot%\System32`, `SysWOW64` and the FFmpeg folder, with its PE machine type, compared
+      with ffmpeg.exe's (64-bit FFmpeg needs 64-bit AviSynth+).
+    - A missing demuxer blocks the run with a plain message; a missing or wrong-bitness DLL is a warning.
+- **Read-only built-in presets** (`presets::enforce_builtins`, `ui/presets.rs`):
+  - **Where values come from:** built-in name, type, description and values always come from the code. The presets
+    file keeps only their order, pin, folder and the new `hidden` flag (`values` is written as null).
+  - **Saving:** Save / Ctrl+S on a built-in opens Save as new preset ("<name> (copy)", made unique).
+  - **Switching away** from an edited built-in prompts: Save as new / Discard / Keep for later / Cancel. A
+    double-click Run continues after the choice.
+  - **Rename and delete:** rename is refused; delete hides. You can't hide the last visible preset.
+  - **Restore built-in presets…** unhides them and drops their unsaved changes. Pin, folders and reordering still work.
+  - **Screen reader and visuals:** padlock plus "Built-in, read-only" in the header; the accessible name of a list
+    entry is "<name>, built-in, read-only[, unsaved changes]"; the dialogs' name fields are labelled and focused.
+  - User presets are unchanged: Save, Revert, Save as new, Rename, Delete.
+- **Migration on load:**
+  - A built-in that differs from the factory one is kept as a user preset right after it: "<name> (your edits)", or the
+    custom name if it was renamed. The app compares resolved form values, so concrete-but-default values saved by
+    0.4 don't count.
+  - The built-in goes back to factory, keeping its pin, folder and position.
+  - Built-ins deleted in older versions come back hidden; new ones are added.
+  - Duplicate or unknown built-in links become user presets. User presets with a factory id get a new id.
+  - User presets named like a built-in are renamed "… (2)". Every change is written to the log.
+- **Tests:**
+  - **Unit:** 5 for the script generator and command builder, 3 for the AviSynth checks, 1 for the form state,
+    5 for presets/migration, 4 for the UI read-only rules.
+  - **`tests/integration_frameserve.rs`:**
+    - Part 1 always runs the built encode arguments with the real ffmpeg (the .avs input swapped for an equivalent
+      AVI) for 6 script variants.
+    - Part 2 (set `FFENC_WINE_FFMPEG`) runs each script with the Windows BtbN ffmpeg plus AviSynth+ 3.7.6 x64 under
+      Wine and checks pixel format, audio and frame count. This passed here.
+  - **Wine app run:** colour help, Test the script ("Test OK: 320x240 · 29.970 fps · 120 frames…"), F5 confirm with
+    the script, then Run gave an H.264/AAC MP4 (bt709 tags, 4.004 s) and the temporary .avs was deleted.
+  - **Read-only prompts in Wine:** the Save as new prompt, the leave prompt, and the migration of an edited and a
+    renamed built-in.
+- **Limits:**
+  - Not tested with a real DebugMode FrameServer signpost or editor: the "signpost" here was an uncompressed AVI read
+    by AviSource through real AviSynth+. Whether AviSource reads the signpost depends on the frameserver's VfW codec
+    being installed and the editor serving.
+  - 10-bit needs an x264 with 10-bit support (current BtbN/gyan builds have it).
+  - 4:2:2 / 4:4:4 / 10-bit H.264 plays on fewer devices (the confirmation warns).
+  - The DLL check only looks in System32, SysWOW64 and the FFmpeg folder, not PATH.
+  - Not tested with a real screen reader.
+
 ## 0.4.0 — audio & subtitles
 - **Before:** separate single-purpose presets (Add commentary, Extract audio to WAV, Replace primary audio, Copy
   subtitle tracks), one track at a time, no subtitle removal or file import, no length handling. They all still work.

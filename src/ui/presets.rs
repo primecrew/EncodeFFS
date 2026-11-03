@@ -42,6 +42,14 @@ pub fn canonical_values(p: &Preset, s: &Settings) -> Option<Value> {
     Some(presets::strip_run_fields(m.save(), m.run_fields()))
 }
 
+/// A stored built-in differs from the shipped one: other name/type, or values
+/// that resolve to different form values (so concrete-but-default values from
+/// older versions don't count as edits).
+pub fn builtin_differs(p: &Preset, s: &Settings) -> bool {
+    let Some(f) = p.builtin.as_deref().and_then(presets::factory) else { return false };
+    p.name != f.name || p.kind != f.kind || (!p.values.is_null() && canonical_values(p, s) != canonical_values(&f, s))
+}
+
 pub fn make_editor(p: &Preset, s: &Settings, draft: Option<&Value>) -> Option<Editor> {
     let mut mode = new_mode(&p.kind)?;
     mode.load(&p.values, s);
@@ -57,7 +65,7 @@ pub fn make_editor(p: &Preset, s: &Settings, draft: Option<&Value>) -> Option<Ed
 pub const SEARCH_ID: &str = "preset_search";
 
 /// Keys that hold "the" input of a form, used to carry a file across presets.
-const PRIMARY_KEYS: &[&str] = &["input", "video", "dest", "image"];
+const PRIMARY_KEYS: &[&str] = &["input", "video", "dest", "image", "signpost"];
 
 pub fn primary_input(e: &Editor) -> Option<PathBuf> {
     let v = e.mode.save();
@@ -90,8 +98,20 @@ pub enum SideEvent {
     Export { all: bool },
 }
 
+/// What to do with unsaved changes to a built-in when switching away.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LeaveChoice {
+    SaveAs(String),
+    Discard,
+    /// Keep them as unsaved changes (the form remembers them).
+    Keep,
+}
+
 pub enum Dialog {
     New { name: String, from: NewFrom },
+    /// Switching away from a built-in with unsaved changes.
+    Leave { to_id: String, run: bool, name: String },
+    RestoreBuiltins,
     SaveAs { name: String },
     Rename { id: String, name: String },
     Delete { id: String },
@@ -101,6 +121,8 @@ pub enum Dialog {
 
 pub enum Action {
     None,
+    Leave { to_id: String, run: bool, choice: LeaveChoice },
+    RestoreBuiltins,
     Create { name: String, from: NewFrom },
     SaveAs { name: String },
     Rename { id: String, name: String },
@@ -116,9 +138,42 @@ pub struct PresetUi {
     pub dialog: Option<Dialog>,
     /// Sidebar search text.
     pub filter: String,
+    /// Set by a confirmed "leave" prompt that came from a double-click / Run.
+    pub run_after: bool,
 }
 
 impl PresetUi {
+    pub fn new(list: Vec<Preset>, current: usize) -> Self {
+        let mut pu = PresetUi { list, current, editors: HashMap::new(), dialog: None, filter: String::new(), run_after: false };
+        if pu.current >= pu.list.len() || pu.list[pu.current].hidden {
+            pu.current = pu.first_visible();
+        }
+        pu
+    }
+    /// First preset shown in the sidebar (0 if everything is hidden).
+    pub fn first_visible(&self) -> usize {
+        self.list.iter().position(|p| !p.hidden).unwrap_or(0)
+    }
+    pub fn is_builtin(&self, idx: usize) -> bool {
+        self.list.get(idx).map(|p| p.is_builtin()).unwrap_or(false)
+    }
+    /// "<name> (copy)", made unique – the suggestion in "Save as new preset".
+    pub fn suggest_name(&self, idx: usize) -> String {
+        presets::unique_name(&self.list, &format!("{} (copy)", self.list[idx].name))
+    }
+    /// Save (Ctrl+S / Save button): user presets are saved; for a built-in the
+    /// "Save as new preset" dialog opens instead. Returns true when something was saved.
+    pub fn save_or_prompt(&mut self, s: &Settings) -> bool {
+        if self.is_builtin(self.current) {
+            self.dialog = Some(Dialog::SaveAs { name: self.suggest_name(self.current) });
+            false
+        } else {
+            self.save_current(s)
+        }
+    }
+    pub fn hidden_count(&self) -> usize {
+        self.list.iter().filter(|p| p.hidden).count()
+    }
     pub fn cur(&self) -> &Preset {
         &self.list[self.current]
     }
@@ -171,13 +226,18 @@ impl PresetUi {
             .collect()
     }
 
-    /// Store the form's values into the preset.
-    pub fn save_current(&mut self, s: &Settings) {
+    /// Store the form's values into the preset. Built-ins are read-only: nothing
+    /// is changed and false is returned (use Save as new preset).
+    pub fn save_current(&mut self, s: &Settings) -> bool {
         let idx = self.current;
+        if self.is_builtin(idx) {
+            return false;
+        }
         let e = self.editor(idx, s);
         let v = e.values();
         e.baseline = v.clone();
         self.list[idx].values = v;
+        true
     }
 
     /// Throw away edits (keeps the files of the current run).
@@ -206,7 +266,9 @@ impl PresetUi {
 
     /// Group key used for sidebar grouping and moving: favorites first, then folders.
     fn group_of(p: &Preset) -> String {
-        if p.pinned {
+        if p.hidden {
+            "\u{2}hidden".into()
+        } else if p.pinned {
             "\u{1}fav".into()
         } else {
             p.category.trim().to_string()
@@ -222,6 +284,7 @@ impl PresetUi {
         if !f.is_empty() {
             let kl = kinds();
             let hits = (0..self.list.len())
+                .filter(|&i| !self.list[i].hidden)
                 .filter(|&i| {
                     let p = &self.list[i];
                     let kind = kl.iter().find(|k| k.0 == p.kind).map(|k| k.1).unwrap_or("");
@@ -230,10 +293,10 @@ impl PresetUi {
                 .collect();
             return vec![(None, hits)];
         }
-        let fav: Vec<usize> = (0..self.list.len()).filter(|&i| self.list[i].pinned).collect();
+        let fav: Vec<usize> = (0..self.list.len()).filter(|&i| self.list[i].pinned && !self.list[i].hidden).collect();
         let mut folders: Vec<(String, Vec<usize>)> = vec![];
         let mut rest = vec![];
-        for (i, p) in self.list.iter().enumerate().filter(|(_, p)| !p.pinned) {
+        for (i, p) in self.list.iter().enumerate().filter(|(_, p)| !p.pinned && !p.hidden) {
             let c = p.category.trim();
             if c.is_empty() {
                 rest.push(i);
@@ -347,9 +410,14 @@ impl PresetUi {
                             label.push_str("★ ");
                         }
                         label.push_str(&p.name);
+                        let builtin = p.is_builtin();
+                        if builtin {
+                            label.push_str("  🔒");
+                        }
                         if modified {
                             label.push_str("  *");
                         }
+                        let a11y = format!("{}{}{}", p.name, if builtin { ", built-in, read-only" } else { "" }, if modified { ", unsaved changes" } else { "" });
                         let mut text = RichText::new(label);
                         if modified && i != self.current {
                             text = text.color(crate::ui::theme::c().unsaved);
@@ -357,19 +425,21 @@ impl PresetUi {
                         let tip = format!(
                             "Type: {}{}{}\n{}{}\n\nClick: select · Double-click: run · Right-click: more",
                             kind_label(&p.kind),
-                            if p.builtin.is_some() { " (built-in)" } else { "" },
+                            if builtin { " (built-in, read-only: save changes as a new preset)" } else { "" },
                             if p.category.trim().is_empty() { String::new() } else { format!("\nFolder: {}", p.category.trim()) },
                             p.description,
                             if modified { "\n* unsaved changes" } else { "" }
                         );
-                        let r = ui.add(egui::SelectableLabel::new(i == self.current, text)).on_hover_text(tip);
+                        let sel = i == self.current;
+                        let r = ui.add(egui::SelectableLabel::new(sel, text)).on_hover_text(tip);
+                        r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, sel, &a11y));
                         if r.double_clicked() {
                             run = Some(i);
                         } else if r.clicked() {
                             clicked = Some(i);
                         }
                         let id = p.id.clone();
-                        let (builtin, pinned, cat) = (p.builtin.is_some(), p.pinned, p.category.clone());
+                        let (pinned, cat) = (p.pinned, p.category.clone());
                         r.context_menu(|ui| {
                             if ui.button("Run (preview command)").clicked() {
                                 run = Some(i);
@@ -388,7 +458,7 @@ impl PresetUi {
                                 self.dialog = Some(Dialog::New { name: String::new(), from: NewFrom::Copy(id.clone()) });
                                 ui.close_menu();
                             }
-                            if ui.button("Rename…").clicked() {
+                            if ui.add_enabled(!builtin, egui::Button::new("Rename…")).on_disabled_hover_text("Built-in presets can't be renamed – duplicate it instead.").clicked() {
                                 self.dialog = Some(Dialog::Rename { id: id.clone(), name: self.list[i].name.clone() });
                                 ui.close_menu();
                             }
@@ -405,12 +475,12 @@ impl PresetUi {
                                 ev = Some(SideEvent::Export { all: false });
                                 ui.close_menu();
                             }
-                            if ui.add_enabled(builtin, egui::Button::new("Reset to factory defaults…")).clicked() {
+                            if builtin && ui.add_enabled(modified, egui::Button::new("Discard unsaved changes…")).clicked() {
                                 self.dialog = Some(Dialog::Reset { id: id.clone() });
                                 ui.close_menu();
                             }
                             ui.separator();
-                            if ui.button("Delete…").clicked() {
+                            if ui.button(if builtin { "Hide…" } else { "Delete…" }).clicked() {
                                 self.dialog = Some(Dialog::Delete { id: id.clone() });
                                 ui.close_menu();
                             }
@@ -457,14 +527,30 @@ impl PresetUi {
             }
         }
         if let Some(i) = run {
+            if self.ask_before_leaving(i, true) {
+                return ev;
+            }
             self.select(i, cx);
             return Some(SideEvent::Run);
         }
         if let Some(i) = clicked {
+            if self.ask_before_leaving(i, false) {
+                return ev;
+            }
             self.select(i, cx);
             ev = ev.or(Some(SideEvent::Selected));
         }
         ev
+    }
+
+    /// Switching from a built-in with unsaved changes to preset `to`: opens the
+    /// "Save as new / Discard / Keep" prompt and returns true (the switch waits).
+    pub fn ask_before_leaving(&mut self, to: usize, run: bool) -> bool {
+        if to == self.current || to >= self.list.len() || !self.is_builtin(self.current) || !self.modified(&self.cur().id.clone()) {
+            return false;
+        }
+        self.dialog = Some(Dialog::Leave { to_id: self.list[to].id.clone(), run, name: self.suggest_name(self.current) });
+        true
     }
 
     /// Draw the open dialog; returns what the user confirmed.
@@ -474,7 +560,56 @@ impl PresetUi {
         let mut close = false;
         let names: Vec<(String, String)> = self.list.iter().map(|p| (p.id.clone(), p.name.clone())).collect();
         let center = egui::Align2::CENTER_CENTER;
+        let cur_name = self.list[self.current].name.clone();
         match d {
+            Dialog::Leave { to_id, run, name } => {
+                crate::ui::common::fit(egui::Window::new("Unsaved changes to a built-in preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
+                    ui.label(format!("You changed “{cur_name}”. Built-in presets are read-only, so the changes can't be saved into it."));
+                    ui.label("Save them as a new preset?");
+                    let l = ui.label("New preset name");
+                    let r = ui.add(egui::TextEdit::singleline(name).desired_width(300.0));
+                    r.clone().labelled_by(l.id);
+                    let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if !enter && ui.memory(|m| m.focused().is_none()) {
+                        r.request_focus();
+                    }
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button(RichText::new("Save as new preset").strong()).clicked() || enter {
+                            act = Action::Leave { to_id: to_id.clone(), run: *run, choice: LeaveChoice::SaveAs(name.clone()) };
+                            close = true;
+                        }
+                        if ui.button("Discard changes").clicked() {
+                            act = Action::Leave { to_id: to_id.clone(), run: *run, choice: LeaveChoice::Discard };
+                            close = true;
+                        }
+                        if named(ui.button("Keep for later"), egui::WidgetType::Button, "Keep for later: switch now and keep the changes as unsaved changes in this form").clicked() {
+                            act = Action::Leave { to_id: to_id.clone(), run: *run, choice: LeaveChoice::Keep };
+                            close = true;
+                        }
+                        if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            close = true;
+                        }
+                    });
+                    hint(ui, "“Keep for later” switches now; the built-in keeps showing your changes as unsaved (*) until you save them as a new preset or discard them.");
+                });
+            }
+            Dialog::RestoreBuiltins => {
+                let hidden = self.list.iter().filter(|p| p.hidden).count();
+                let edited = self.list.iter().filter(|p| p.is_builtin() && self.editors.get(&p.id).map(|e| e.modified()).unwrap_or(false)).count();
+                crate::ui::common::fit(egui::Window::new("Restore built-in presets").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
+                    ui.label(format!("Show every built-in preset again ({hidden} hidden) and throw away unsaved changes in built-ins ({edited})?"));
+                    hint(ui, "Built-in presets always have the values that ship with the app. Your own presets are not touched.");
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new("Restore").strong()).clicked() {
+                            act = Action::RestoreBuiltins;
+                            close = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            }
             Dialog::New { name, from } => {
                 crate::ui::common::fit(egui::Window::new("New preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
                     egui::Grid::new("np").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
@@ -524,9 +659,15 @@ impl PresetUi {
                 });
             }
             Dialog::SaveAs { name } => {
+                let builtin = self.list[self.current].is_builtin();
                 crate::ui::common::fit(egui::Window::new("Save as new preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
+                    if builtin {
+                        ui.label(format!("“{cur_name}” is a built-in preset and is read-only, so your changes are saved as a new preset."));
+                    }
                     ui.label("Saves the current form as a new preset. The original preset keeps its saved values.");
+                    let l = ui.label("New preset name");
                     let r = ui.add(egui::TextEdit::singleline(name).desired_width(300.0));
+                    r.clone().labelled_by(l.id);
                     // read before re-focusing: lost_focus() is evaluated live
                     let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if !enter && ui.memory(|m| m.focused().is_none()) {
@@ -557,11 +698,27 @@ impl PresetUi {
                     });
                 });
             }
+            Dialog::Delete { id } if self.list.iter().any(|p| &p.id == id && p.is_builtin()) => {
+                let n = names.iter().find(|n| &n.0 == id).map(|n| n.1.clone()).unwrap_or_default();
+                crate::ui::common::fit(egui::Window::new("Hide built-in preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
+                    ui.label(format!("Hide the built-in preset “{n}” from the list?"));
+                    hint(ui, "Built-in presets can't be deleted. Bring it back any time with Presets › Restore built-in presets.");
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new("Hide").strong()).clicked() {
+                            act = Action::Delete { id: id.clone() };
+                            close = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            }
             Dialog::Delete { id } => {
                 let n = names.iter().find(|n| &n.0 == id).map(|n| n.1.clone()).unwrap_or_default();
                 crate::ui::common::fit(egui::Window::new("Delete preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
                     ui.label(format!("Delete the preset “{n}”?"));
-                    hint(ui, "Built-ins can be brought back with Presets › Restore missing built-in presets. Export first if you want a copy.");
+                    hint(ui, "This can't be undone. Export it first if you want a copy.");
                     ui.horizontal(|ui| {
                         if ui.button(RichText::new("Delete").color(crate::ui::theme::c().err)).clicked() {
                             act = Action::Delete { id: id.clone() };
@@ -609,11 +766,11 @@ impl PresetUi {
             }
             Dialog::Reset { id } => {
                 let n = names.iter().find(|n| &n.0 == id).map(|n| n.1.clone()).unwrap_or_default();
-                crate::ui::common::fit(egui::Window::new("Reset preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
-                    ui.label(format!("Reset “{n}” to its factory name and values?"));
-                    hint(ui, "Factory values follow File › Settings defaults (CRF, preset, bitrate, …).");
+                crate::ui::common::fit(egui::Window::new("Discard unsaved changes").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
+                    ui.label(format!("Throw away your unsaved changes to “{n}” and go back to the built-in values?"));
+                    hint(ui, "Built-in values follow File › Settings defaults (CRF, preset, bitrate, …). The chosen files are kept.");
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Reset").strong()).clicked() {
+                        if ui.button(RichText::new("Discard changes").strong()).clicked() {
                             act = Action::Reset { id: id.clone() };
                             close = true;
                         }
@@ -635,6 +792,31 @@ impl PresetUi {
         let s = cx.settings;
         match act {
             Action::None => {}
+            Action::Leave { to_id, run, choice } => {
+                match choice {
+                    LeaveChoice::SaveAs(name) => self.apply(Action::SaveAs { name }, cx)?,
+                    LeaveChoice::Discard => self.revert_current(s),
+                    LeaveChoice::Keep => {}
+                }
+                if let Some(i) = self.index_of(&to_id) {
+                    self.select(i, cx);
+                }
+                self.run_after = run;
+            }
+            Action::RestoreBuiltins => {
+                for i in 0..self.list.len() {
+                    if self.list[i].is_builtin() {
+                        self.list[i].hidden = false;
+                        let id = self.list[i].id.clone();
+                        if let Some(e) = self.editors.get(&id) {
+                            let run = e.run_values();
+                            if let Some(ne) = make_editor(&self.list[i], s, Some(&run)) {
+                                self.editors.insert(id, ne);
+                            }
+                        }
+                    }
+                }
+            }
             Action::Create { name, from } => {
                 let category = match &from {
                     NewFrom::Copy(id) => self.list.iter().find(|p| &p.id == id).map(|p| p.category.clone()).unwrap_or_default(),
@@ -652,7 +834,7 @@ impl PresetUi {
                     }
                 };
                 let name = if name.trim().is_empty() { base_name } else { name.trim().to_string() };
-                let p = Preset { id: presets::new_id(), name: presets::unique_name(&self.list, &name), kind, description: desc, builtin: None, values, pinned: false, category };
+                let p = Preset { id: presets::new_id(), name: presets::unique_name(&self.list, &name), kind, description: desc, builtin: None, values, pinned: false, category, hidden: false };
                 let at = self.current + 1;
                 self.list.insert(at, p);
                 self.select(at, cx);
@@ -664,7 +846,7 @@ impl PresetUi {
                 let full = e.mode.save();
                 let values = e.values();
                 let name = if name.trim().is_empty() { format!("{} copy", src.name) } else { name.trim().to_string() };
-                let p = Preset { id: presets::new_id(), name: presets::unique_name(&self.list, &name), kind: src.kind.clone(), description: src.description.clone(), builtin: None, values, pinned: false, category: src.category.clone() };
+                let p = Preset { id: presets::new_id(), name: presets::unique_name(&self.list, &name), kind: src.kind.clone(), description: src.description.clone(), builtin: None, values, pinned: false, category: src.category.clone(), hidden: false };
                 // original form goes back to its saved values
                 self.revert_current(s);
                 let mut ne = make_editor(&p, s, None).ok_or("Unknown preset type")?;
@@ -676,6 +858,9 @@ impl PresetUi {
                 self.current = idx + 1;
             }
             Action::Rename { id, name } => {
+                if self.list.iter().any(|p| p.id == id && p.is_builtin()) {
+                    return Err("Built-in presets can't be renamed. Use Duplicate (or Save as new preset) to make your own copy.".into());
+                }
                 let name = name.trim().to_string();
                 if name.is_empty() {
                     return Err("The name can't be empty.".into());
@@ -688,14 +873,26 @@ impl PresetUi {
                 }
             }
             Action::Delete { id } => {
-                if self.list.len() <= 1 {
-                    return Err("Keep at least one preset.".into());
-                }
                 let Some(i) = self.index_of(&id) else { return Ok(()) };
+                if self.list.iter().filter(|p| !p.hidden).count() <= 1 && !self.list[i].hidden {
+                    return Err("Keep at least one preset in the list.".into());
+                }
+                if self.list[i].is_builtin() {
+                    // built-ins are hidden, never deleted
+                    self.list[i].hidden = true;
+                    if self.current == i {
+                        let next = (i + 1..self.list.len()).chain(0..i).find(|&j| !self.list[j].hidden).unwrap_or(0);
+                        self.select(next, cx);
+                    }
+                    return Ok(());
+                }
                 self.list.remove(i);
                 self.editors.remove(&id);
                 if self.current >= self.list.len() || self.current > i {
                     self.current = self.current.saturating_sub(1).min(self.list.len() - 1);
+                }
+                if self.list[self.current].hidden {
+                    self.current = self.first_visible();
                 }
             }
             Action::SetCategory { id, category } => {
@@ -707,8 +904,8 @@ impl PresetUi {
                 let Some(i) = self.index_of(&id) else { return Ok(()) };
                 let Some(f) = self.list[i].builtin.as_deref().and_then(presets::factory) else { return Err("Only built-in presets have factory defaults.".into()) };
                 let run = self.editors.get(&id).map(|e| e.run_values());
-                let (pinned, category) = (self.list[i].pinned, self.list[i].category.clone());
-                self.list[i] = Preset { id: id.clone(), pinned, category, ..f };
+                let (pinned, category, hidden) = (self.list[i].pinned, self.list[i].category.clone(), self.list[i].hidden);
+                self.list[i] = Preset { id: id.clone(), pinned, category, hidden, ..f };
                 self.editors.remove(&id);
                 if let Some(e) = make_editor(&self.list[i], s, run.as_ref()) {
                     self.editors.insert(id, e);
@@ -732,7 +929,7 @@ mod tests {
     use serde_json::json;
 
     fn ui_with(list: Vec<Preset>) -> PresetUi {
-        PresetUi { list, current: 0, editors: HashMap::new(), dialog: None, filter: String::new() }
+        PresetUi { list, current: 0, editors: HashMap::new(), dialog: None, filter: String::new(), run_after: false }
     }
     fn set(e: &mut Editor, key: &str, v: Value, s: &Settings) {
         let mut full = e.mode.save();
@@ -771,11 +968,121 @@ mod tests {
         pu.revert_current(&s);
         assert!(!pu.modified("builtin-reencode"));
         assert_eq!(pu.editor(0, &s).mode.save()["input"], json!("/v/a.mkv"), "revert keeps the file");
+        // built-ins are read-only: Save changes nothing
         set(pu.editor(0, &s), "trim_start", json!(3.0), &s);
-        pu.save_current(&s);
+        assert!(!pu.save_current(&s));
+        assert!(pu.list[0].values.is_null());
+        assert!(pu.modified("builtin-reencode"), "the edit stays as an unsaved change");
+        // a user preset saves normally (values only, no run fields)
+        let mine = Preset { id: "pmine".into(), name: "Mine".into(), builtin: None, ..pu.list[0].clone() };
+        pu.list.push(mine);
+        pu.current = pu.list.len() - 1;
+        let i = pu.current;
+        set(pu.editor(i, &s), "input", json!("/v/a.mkv"), &s);
+        set(pu.editor(i, &s), "trim_start", json!(3.0), &s);
+        assert!(pu.save_or_prompt(&s));
+        assert!(pu.dialog.is_none());
+        assert!(!pu.modified("pmine"));
+        assert_eq!(pu.list[i].values["trim_start"], json!(3.0));
+        assert!(pu.list[i].values.get("input").is_none());
+    }
+
+    #[test]
+    fn builtins_are_read_only_and_prompt_save_as_new() {
+        let s = Settings::default();
+        let ctx = egui::Context::default();
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx };
+        let mut pu = ui_with(presets::factory_all());
+        assert!(pu.is_builtin(0));
+        set(pu.editor(0, &s), "input", json!("/v/a.mkv"), &s);
+        set(pu.editor(0, &s), "trim_end", json!(9.0), &s);
+        // Ctrl+S / Save on a built-in opens "Save as new preset" with a free name
+        assert!(!pu.save_or_prompt(&s));
+        let Some(Dialog::SaveAs { name }) = &pu.dialog else { panic!("no save-as prompt") };
+        assert_eq!(name, "Re-encode video (copy)");
+        pu.apply(Action::SaveAs { name: name.clone() }, &cx).unwrap();
+        pu.dialog = None;
+        assert_eq!(pu.cur().name, "Re-encode video (copy)");
+        assert!(!pu.cur().is_builtin() && pu.cur().values["trim_end"] == json!(9.0));
+        assert!(pu.list[0].values.is_null() && !pu.modified("builtin-reencode"), "built-in untouched and reverted");
+        // name collision: the next suggestion is unique
+        assert_eq!(pu.suggest_name(0), "Re-encode video (copy) (2)");
+        // rename refused, delete hides
+        assert!(pu.apply(Action::Rename { id: "builtin-mix".into(), name: "X".into() }, &cx).is_err());
+        let mix = pu.index_of("builtin-mix").unwrap();
+        pu.current = mix;
+        pu.apply(Action::Delete { id: "builtin-mix".into() }, &cx).unwrap();
+        assert!(pu.index_of("builtin-mix").is_some() && pu.list[mix].hidden, "hidden, not deleted");
+        assert_ne!(pu.current, mix, "selection moved to a visible preset");
+        assert!(!pu.sections("")[0].1.contains(&mix) && !pu.sections("mix")[0].1.contains(&mix));
+        assert_eq!(pu.hidden_count(), 1);
+        // restore: visible again, unsaved built-in edits dropped
+        set(pu.editor(0, &s), "trim_end", json!(5.0), &s);
+        pu.apply(Action::RestoreBuiltins, &cx).unwrap();
+        assert_eq!(pu.hidden_count(), 0);
         assert!(!pu.modified("builtin-reencode"));
-        assert_eq!(pu.list[0].values["trim_start"], json!(3.0));
-        assert!(pu.list[0].values.get("input").is_none());
+        assert_eq!(pu.editor(0, &s).mode.save()["input"], json!("/v/a.mkv"), "files kept");
+        // user presets: delete really deletes; can't hide the last visible preset
+        let id = pu.list[1].id.clone();
+        assert!(!pu.list[1].is_builtin());
+        pu.apply(Action::Delete { id: id.clone() }, &cx).unwrap();
+        assert!(pu.index_of(&id).is_none());
+        let mut one = ui_with(vec![presets::factory("builtin-mix").unwrap()]);
+        assert!(one.apply(Action::Delete { id: "builtin-mix".into() }, &cx).is_err());
+    }
+
+    #[test]
+    fn migration_compares_resolved_values() {
+        let s = Settings::default();
+        let f = presets::factory("builtin-reencode").unwrap();
+        assert!(!builtin_differs(&f, &s));
+        // concrete values equal to the defaults (saved by 0.4 without real edits)
+        let same = Preset { values: canonical_values(&f, &s).unwrap(), ..f.clone() };
+        assert!(!builtin_differs(&same, &s));
+        let mut v = canonical_values(&f, &s).unwrap();
+        v["video"]["crf"] = json!(17);
+        assert!(builtin_differs(&Preset { values: v, ..f.clone() }, &s));
+        assert!(builtin_differs(&Preset { name: "Mine".into(), ..f.clone() }, &s));
+        let user = Preset { builtin: None, name: "x".into(), ..f };
+        assert!(!builtin_differs(&user, &s));
+    }
+
+    #[test]
+    fn leaving_an_edited_builtin_prompts() {
+        let s = Settings::default();
+        let ctx = egui::Context::default();
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx };
+        let mut pu = ui_with(presets::factory_all());
+        let mix = pu.index_of("builtin-mix").unwrap();
+        // unchanged: no prompt
+        assert!(!pu.ask_before_leaving(mix, false));
+        set(pu.editor(0, &s), "trim_start", json!(2.0), &s);
+        assert!(!pu.ask_before_leaving(0, false), "same preset");
+        assert!(pu.ask_before_leaving(mix, true));
+        let Some(Dialog::Leave { to_id, run, name }) = &pu.dialog else { panic!() };
+        assert_eq!((to_id.as_str(), *run, name.as_str()), ("builtin-mix", true, "Re-encode video (copy)"));
+        // keep for later: switch, edits stay unsaved
+        pu.apply(Action::Leave { to_id: "builtin-mix".into(), run: false, choice: LeaveChoice::Keep }, &cx).unwrap();
+        assert_eq!(pu.cur().id, "builtin-mix");
+        assert!(pu.modified("builtin-reencode"));
+        // discard
+        pu.current = 0;
+        pu.apply(Action::Leave { to_id: "builtin-mix".into(), run: true, choice: LeaveChoice::Discard }, &cx).unwrap();
+        assert!(!pu.modified("builtin-reencode") && pu.cur().id == "builtin-mix" && pu.run_after);
+        // save as new, then switch to the requested preset (index shifts are handled by id)
+        pu.run_after = false;
+        pu.current = 0;
+        set(pu.editor(0, &s), "trim_start", json!(4.0), &s);
+        pu.apply(Action::Leave { to_id: "builtin-mix".into(), run: false, choice: LeaveChoice::SaveAs("Short start".into()) }, &cx).unwrap();
+        assert_eq!(pu.cur().id, "builtin-mix");
+        let new = pu.list.iter().find(|p| p.name == "Short start").unwrap();
+        assert_eq!(new.values["trim_start"], json!(4.0));
+        assert!(!pu.modified("builtin-reencode") && pu.list[0].values.is_null());
+        // a user preset with changes never prompts
+        let i = pu.list.iter().position(|p| p.name == "Short start").unwrap();
+        pu.current = i;
+        set(pu.editor(i, &s), "trim_start", json!(1.0), &s);
+        assert!(!pu.ask_before_leaving(0, false));
     }
 
     #[test]
@@ -827,13 +1134,18 @@ mod tests {
         assert_eq!(pu.cur().kind, "custom");
         assert_eq!(pu.cur().name, "Custom pipeline (2)");
         assert!(pu.cur().builtin.is_none());
-        // copy of re-encode with edits saved first
+        // copy of re-encode: the built-in's saved values (factory), not unsaved edits
         pu.current = 0;
         set(pu.editor(0, &s), "trim_start", json!(7.0), &s);
-        pu.save_current(&s);
+        assert!(!pu.save_current(&s));
         pu.apply(Action::Create { name: "My encode".into(), from: NewFrom::Copy("builtin-reencode".into()) }, &cx).unwrap();
         assert_eq!(pu.cur().name, "My encode");
-        assert_eq!(pu.cur().values["trim_start"], json!(7.0));
+        assert_eq!(pu.cur().values["trim_start"], json!(0.0));
+        pu.revert_current(&s);
+        let me = pu.current;
+        pu.current = 0;
+        pu.revert_current(&s);
+        pu.current = me;
         // save as: edits move to the new preset, original reverts
         pu.current = 0;
         set(pu.editor(0, &s), "input", json!("/v/b.mkv"), &s);
@@ -852,8 +1164,8 @@ mod tests {
         assert!(pu.apply(Action::Rename { id: id.clone(), name: "re-encode VIDEO".into() }, &cx).is_err());
         pu.apply(Action::Rename { id: id.clone(), name: "Short".into() }, &cx).unwrap();
         assert_eq!(pu.list[1].name, "Short");
-        // reset built-in
-        pu.apply(Action::Rename { id: "builtin-reencode".into(), name: "Mine".into() }, &cx).unwrap();
+        // reset (discard changes) of a built-in
+        assert!(pu.apply(Action::Rename { id: "builtin-reencode".into(), name: "Mine".into() }, &cx).is_err());
         pu.apply(Action::Reset { id: "builtin-reencode".into() }, &cx).unwrap();
         assert_eq!(pu.list[0].name, "Re-encode video");
         assert!(pu.list[0].values.is_null());

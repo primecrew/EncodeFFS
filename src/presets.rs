@@ -4,6 +4,13 @@
 //! kind's form). Built-in presets ship with `values = null`, meaning "the kind's
 //! defaults derived from Settings", so resetting a built-in just clears its values.
 //! Presets live in their own JSON file next to the settings file.
+//!
+//! Built-in presets are read-only (0.5): their name, type, description and values
+//! always come from the app code ([`BUILTINS`] / [`factory_values`]), so an app
+//! update refreshes them. The presets file only remembers their order, favorite
+//! pin, folder and whether they are hidden. Edits must be saved as a new preset;
+//! built-ins edited by older versions are moved into a user preset on load
+//! ([`enforce_builtins`]) so nothing is lost.
 
 use std::path::{Path, PathBuf};
 
@@ -36,6 +43,16 @@ pub struct Preset {
     /// Optional folder in the sidebar ("" = none).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub category: String,
+    /// Hidden from the sidebar (built-ins can only be hidden, not deleted).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
+}
+
+impl Preset {
+    /// A shipped, read-only preset.
+    pub fn is_builtin(&self) -> bool {
+        self.builtin.as_deref().map(|b| factory(b).is_some()).unwrap_or(false)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -67,6 +84,7 @@ pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
     ("builtin-subs", "subs", "Copy subtitle tracks", "Copy subtitle tracks from one file into another."),
     ("builtin-remux", "remux", "Remux MKV -> MP4", "Stream-copy every MKV in a folder to MP4 (never overwrites)."),
     ("builtin-join", "join", "Join / stitch files", "Concatenate several videos into one – lossless when they match, or re-encoded – with a chapter per file."),
+    ("builtin-frameserve", "frameserve", "Frameserver (AviSynth script)", "Encode straight from your editor through DebugMode FrameServer: pick the signpost .avi, the app writes the AviSynth script (ConvertToYUV420 by default) and encodes it with x264 + AAC."),
     ("builtin-custom", "custom", "Custom pipeline", "Build your own: video / audio / subtitle actions, trim, chapters, container, extra ffmpeg args."),
     ("builtin-addchapters", "custom", "Add chapters (no re-encode)", "Copy every stream and add chapters (every 5 min, your own list, or imported) – no quality loss."),
 ];
@@ -93,16 +111,12 @@ pub fn factory(id: &str) -> Option<Preset> {
         values: factory_values(id),
         pinned: false,
         category: String::new(),
+        hidden: false,
     })
 }
 
 pub fn factory_all() -> Vec<Preset> {
     BUILTINS.iter().filter_map(|b| factory(b.0)).collect()
-}
-
-/// Factory presets whose id is no longer present (deleted by the user).
-pub fn missing_builtins(list: &[Preset]) -> Vec<Preset> {
-    factory_all().into_iter().filter(|f| !list.iter().any(|p| p.builtin.as_deref() == Some(f.id.as_str()))).collect()
 }
 
 /// Where presets are stored: next to the settings file.
@@ -161,40 +175,117 @@ pub fn parse_file(text: &str) -> Result<(Vec<Preset>, Option<Vec<String>>), Stri
 }
 
 pub fn to_json(list: &[Preset]) -> String {
+    // built-ins: values come from the app code, only order / pin / folder / hidden are stored
+    let presets = list.iter().map(|p| if p.is_builtin() { Preset { values: Value::Null, ..p.clone() } } else { p.clone() }).collect();
     serde_json::to_string_pretty(&PresetFile {
         ffmpeg_encoder_presets: FORMAT_VERSION,
-        presets: list.to_vec(),
+        presets,
         known_builtins: BUILTINS.iter().map(|b| b.0.to_string()).collect(),
     })
     .unwrap_or_default()
 }
 
-/// Append factory presets that are newer than the file (not deleted ones).
-fn add_new_builtins(list: &mut Vec<Preset>, known: &[String]) {
-    let known: Vec<&str> = if known.is_empty() { BUILTINS_V02.to_vec() } else { known.iter().map(|s| s.as_str()).collect() };
-    for f in factory_all() {
-        if !known.contains(&f.id.as_str()) && !list.iter().any(|p| p.builtin.as_deref() == Some(f.id.as_str())) {
-            let mut f = f;
-            f.name = unique_name(list, &f.name);
-            list.push(f);
+/// Default test for "the stored built-in differs from the factory one" (raw JSON).
+/// The app passes a smarter test that compares the resolved form values.
+pub fn differs_raw(p: &Preset) -> bool {
+    let Some(f) = p.builtin.as_deref().and_then(factory) else { return false };
+    p.name != f.name || p.kind != f.kind || (!p.values.is_null() && p.values != f.values)
+}
+
+/// Make the built-ins read-only copies of the factory definitions:
+/// - a stored built-in that differs (`differs`) keeps the user's version as a new
+///   user preset right after it ("<name> (your edits)", or the name they gave it);
+/// - every factory preset is present exactly once (missing ones are added: new
+///   ones visible, ones deleted in older versions hidden);
+/// - duplicate or unknown built-in links become user presets; user presets never
+///   use a factory id or a built-in's name.
+/// Returns plain-language notes for the log.
+pub fn enforce_builtins(list: &mut Vec<Preset>, known: &[String], differs: &dyn Fn(&Preset) -> bool) -> Vec<String> {
+    let mut notes = vec![];
+    let mut seen: Vec<String> = vec![];
+    let mut out: Vec<Preset> = Vec::with_capacity(list.len() + BUILTINS.len());
+    for mut p in std::mem::take(list) {
+        let link = p.builtin.clone();
+        match link.as_deref().and_then(factory) {
+            Some(f) if !seen.contains(&f.id) => {
+                seen.push(f.id.clone());
+                let copy = differs(&p).then(|| p.clone());
+                let (pinned, category, hidden, id) = (p.pinned, p.category.clone(), p.hidden, p.id.clone());
+                out.push(Preset { id, pinned, category, hidden, ..f.clone() });
+                if let Some(mut c) = copy {
+                    let base = if c.name.trim().eq_ignore_ascii_case(&f.name) || c.name.trim().is_empty() { format!("{} (your edits)", f.name) } else { c.name.trim().to_string() };
+                    if c.values.is_null() {
+                        c.values = f.values.clone();
+                    }
+                    if c.kind.trim().is_empty() {
+                        c.kind = f.kind.clone();
+                    }
+                    c.id = new_id();
+                    c.builtin = None;
+                    c.hidden = false;
+                    c.name = unique_name(&out, &base);
+                    notes.push(format!("The built-in preset “{}” had your own changes. Built-ins are read-only now, so your version was kept as the preset “{}”.", f.name, c.name));
+                    out.push(c);
+                }
+            }
+            _ => {
+                if link.is_some() {
+                    p.builtin = None;
+                }
+                out.push(p);
+            }
         }
     }
+    // factory presets not in the file
+    let known: Vec<&str> = if known.is_empty() { BUILTINS_V02.to_vec() } else { known.iter().map(|s| s.as_str()).collect() };
+    for f in factory_all() {
+        if !seen.contains(&f.id) {
+            let deleted = known.contains(&f.id.as_str());
+            out.push(Preset { hidden: deleted, ..f });
+        }
+    }
+    // user presets: no factory ids, no duplicate ids, no built-in names
+    let builtin_names: Vec<String> = out.iter().filter(|p| p.is_builtin()).map(|p| p.name.to_lowercase()).collect();
+    let mut ids: Vec<String> = out.iter().filter(|p| p.is_builtin()).map(|p| p.id.clone()).collect();
+    for i in 0..out.len() {
+        if out[i].is_builtin() {
+            continue;
+        }
+        if factory(&out[i].id).is_some() || ids.contains(&out[i].id) || out[i].id.trim().is_empty() {
+            out[i].id = new_id();
+        }
+        ids.push(out[i].id.clone());
+        if builtin_names.contains(&out[i].name.trim().to_lowercase()) {
+            let old = out[i].name.clone();
+            let others: Vec<Preset> = out.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, p)| p.clone()).collect();
+            out[i].name = unique_name(&others, &old);
+            notes.push(format!("Your preset “{old}” has the same name as a built-in and was renamed to “{}”.", out[i].name));
+        }
+    }
+    *list = out;
+    notes
 }
 
 /// Load presets; a missing file gives the factory list. A corrupt file is
 /// renamed to `*.bad` (so it is never silently overwritten) and the factory list is used.
 pub fn load_from(path: &Path) -> (Vec<Preset>, Option<String>) {
+    let (l, notes) = load_from_with(path, &differs_raw);
+    (l, notes.into_iter().find(|n| n.contains("unreadable")))
+}
+
+/// [`load_from`] with the app's "differs from factory" test; returns all notes.
+pub fn load_from_with(path: &Path, differs: &dyn Fn(&Preset) -> bool) -> (Vec<Preset>, Vec<String>) {
     match std::fs::read_to_string(path) {
-        Err(_) => (factory_all(), None),
+        Err(_) => (factory_all(), vec![]),
         Ok(t) => match parse_file(&t) {
             Ok((mut l, known)) => {
-                add_new_builtins(&mut l, &known.unwrap_or_default());
-                (l, None)
+                let notes = enforce_builtins(&mut l, &known.unwrap_or_default(), differs);
+                (l, notes)
             }
             Err(e) => {
                 let bad = path.with_extension(format!("bad-{}", crate::util::now_unix()));
                 let _ = std::fs::rename(path, &bad);
-                (factory_all(), Some(format!("Presets file was unreadable ({e}); moved to {} and started from the built-ins.", bad.display())))
+                (factory_all(), vec![format!("Presets file was unreadable ({e}); moved to {} and started from the built-ins.", bad.display())])
             }
         },
     }
@@ -270,15 +361,6 @@ mod tests {
     }
 
     #[test]
-    fn missing_after_delete() {
-        let mut l = factory_all();
-        l.retain(|p| p.kind != "mix");
-        let m = missing_builtins(&l);
-        assert_eq!(m.len(), 1);
-        assert_eq!(m[0].kind, "mix");
-    }
-
-    #[test]
     fn names() {
         let mut l = factory_all();
         assert_eq!(unique_name(&l, "Fresh"), "Fresh");
@@ -293,9 +375,14 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pre_{}", crate::util::unique_id()));
         let path = dir.join("p.json");
         let mut l = factory_all();
-        l[0].values = json!({"video": {"crf": 18}});
+        l.push(Preset { id: "p1".into(), name: "Mine".into(), builtin: None, values: json!({"video": {"crf": 18}}), ..factory("builtin-reencode").unwrap() });
+        l[2].pinned = true;
+        l[3].hidden = true;
         save_to(&path, &l).unwrap();
         assert_eq!(load_from(&path), (l.clone(), None));
+        // built-ins are stored without values (they come from the app code)
+        let raw: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(raw["presets"].as_array().unwrap().iter().filter(|p| p.get("builtin").is_some()).all(|p| p["values"].is_null()));
         // bare array and single object
         let one = serde_json::to_string(&l[1]).unwrap();
         assert_eq!(parse(&one).unwrap(), vec![l[1].clone()]);
@@ -320,7 +407,7 @@ mod tests {
         let existing = factory_all();
         let mut a = factory("builtin-reencode").unwrap();
         a.values = json!({"x": 1});
-        let b = Preset { id: "zzz".into(), name: "Mine".into(), kind: "custom".into(), description: String::new(), builtin: None, values: Value::Null, pinned: false, category: String::new() };
+        let b = Preset { id: "zzz".into(), name: "Mine".into(), kind: "custom".into(), description: String::new(), builtin: None, values: Value::Null, pinned: false, category: String::new(), hidden: false };
         let c = Preset { kind: "teleport".into(), ..b.clone() };
         let (out, skipped) = prepare_import(&existing, vec![a, b.clone(), c, b], &["reencode", "custom"]);
         assert_eq!(skipped.len(), 1);
@@ -348,7 +435,7 @@ mod tests {
     }
 
     #[test]
-    fn new_builtins_appended_deleted_stay_deleted() {
+    fn new_builtins_appended_deleted_ones_come_back_hidden() {
         let dir = std::env::temp_dir().join(format!("pre_{}", crate::util::unique_id()));
         let path = dir.join("p.json");
         std::fs::create_dir_all(&dir).unwrap();
@@ -359,17 +446,69 @@ mod tests {
         let v02 = serde_json::json!({"ffmpeg_encoder_presets": 1, "presets": old});
         std::fs::write(&path, v02.to_string()).unwrap();
         let (l, _) = load_from(&path);
-        assert!(l.iter().any(|p| p.id == "builtin-addchapters"), "new built-in appended");
-        assert!(!l.iter().any(|p| p.id == "builtin-mix"), "deleted built-in not resurrected");
+        let get = |id: &str| l.iter().find(|p| p.id == id).unwrap().clone();
+        assert!(!get("builtin-addchapters").hidden, "new built-in appended, visible");
+        assert!(get("builtin-mix").hidden, "deleted built-in is back, but hidden");
+        assert!(!get("builtin-frameserve").hidden);
         assert!(l[0].pinned && l[0].category == "Daily");
-        // after saving, a deleted new built-in stays deleted
-        let l2: Vec<Preset> = l.into_iter().filter(|p| p.id != "builtin-addchapters").collect();
-        save_to(&path, &l2).unwrap();
+        assert_eq!(l.iter().filter(|p| p.is_builtin()).count(), BUILTINS.len());
+        // after saving, a hidden built-in stays hidden
+        save_to(&path, &l).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("known_builtins"));
-        assert!(!text.contains("\"pinned\": false"), "defaults not written");
-        assert_eq!(load_from(&path).0, l2);
+        assert!(!text.contains("\"pinned\": false") && !text.contains("\"hidden\": false"), "defaults not written");
+        assert_eq!(load_from(&path).0, l);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn edited_builtins_migrate_to_user_presets() {
+        let mut re = factory("builtin-reencode").unwrap();
+        re.values = json!({"video": {"crf": 18}});
+        re.pinned = true;
+        let mut mix = factory("builtin-mix").unwrap();
+        mix.name = "My mix".into();
+        mix.category = "Audio".into();
+        let mut dup = factory("builtin-still").unwrap();
+        dup.id = "p-dup".into();
+        dup.name = "Still copy".into();
+        // user preset that uses a factory id and a built-in's name
+        let squat = Preset { id: "builtin-join".into(), name: "join / STITCH files".into(), builtin: None, ..factory("builtin-custom").unwrap() };
+        let gone = Preset { id: "builtin-old".into(), builtin: Some("builtin-old".into()), name: "Old".into(), ..factory("builtin-custom").unwrap() };
+        let mut l = vec![re, mix, factory("builtin-still").unwrap(), dup, squat, gone];
+        let known: Vec<String> = BUILTINS.iter().map(|b| b.0.to_string()).collect();
+        let notes = enforce_builtins(&mut l, &known, &differs_raw);
+        let by_name = |n: &str| l.iter().find(|p| p.name == n).unwrap_or_else(|| panic!("no {n}: {:?}", l.iter().map(|p| &p.name).collect::<Vec<_>>())).clone();
+        // the built-in itself is factory again, keeping pin / folder
+        let b = l.iter().find(|p| p.id == "builtin-reencode").unwrap();
+        assert!(b.values.is_null() && b.name == "Re-encode video" && b.pinned);
+        // the user's version is right after it
+        let pos = l.iter().position(|p| p.id == "builtin-reencode").unwrap();
+        assert_eq!(l[pos + 1].name, "Re-encode video (your edits)");
+        assert_eq!(l[pos + 1].values["video"]["crf"], 18);
+        assert!(l[pos + 1].builtin.is_none() && l[pos + 1].id.starts_with('p'));
+        // renamed built-in: copy keeps the user's name, built-in gets its own back
+        assert_eq!(by_name("Mix audio tracks to one (MKV)").category, "Audio");
+        let m = by_name("My mix");
+        assert!(m.builtin.is_none() && m.kind == "mix" && m.category == "Audio");
+        // duplicate link -> plain user preset with its own id
+        let d = by_name("Still copy");
+        assert!(d.builtin.is_none() && d.id == "p-dup");
+        // squatter: new id, renamed away from the built-in name
+        let s = l.iter().find(|p| p.name.starts_with("join / STITCH files")).unwrap();
+        assert!(s.id != "builtin-join" && s.name == "join / STITCH files (2)", "{}", s.name);
+        // unknown built-in link -> user preset
+        assert!(by_name("Old").builtin.is_none());
+        // every factory preset exactly once, ids unique
+        assert_eq!(l.iter().filter(|p| p.is_builtin()).count(), BUILTINS.len());
+        let ids: std::collections::HashSet<_> = l.iter().map(|p| p.id.clone()).collect();
+        assert_eq!(ids.len(), l.len());
+        assert!(notes.iter().any(|n| n.contains("Re-encode video (your edits)")));
+        assert!(notes.iter().any(|n| n.contains("renamed")));
+        // running it again changes nothing
+        let again = l.clone();
+        assert!(enforce_builtins(&mut l, &known, &differs_raw).is_empty());
+        assert_eq!(l, again);
     }
 
     #[test]

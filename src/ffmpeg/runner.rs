@@ -43,6 +43,8 @@ pub struct JobSpec {
     /// Expected output duration for the progress bar.
     pub duration_s: Option<f64>,
     pub side_files: Vec<(PathBuf, String)>,
+    /// Side files the user asked to keep (e.g. a saved .avs script): written, never deleted.
+    pub keep_side_files: bool,
     pub post: PostAction,
     pub warnings: Vec<String>,
 }
@@ -56,6 +58,7 @@ impl JobSpec {
             log_file: Some(log_file),
             duration_s,
             side_files: cmd.side_files,
+            keep_side_files: false,
             post: PostAction::None,
             warnings: cmd.warnings,
         }
@@ -557,6 +560,9 @@ impl Queue {
     }
 
     fn cleanup_side_files(&self, spec: &JobSpec) {
+        if spec.keep_side_files {
+            return;
+        }
         if self.keep_temp() {
             for (p, _) in &spec.side_files {
                 self.log(format!("Kept temporary file (debugging): {}", p.display()));

@@ -18,6 +18,7 @@ pub mod remux;      // mode 9
 pub mod custom;     // composable "custom" preset type
 pub mod join;       // join / stitch files
 pub mod tracks;     // audio & subtitles tool (0.4)
+pub mod frameserve; // AviSynth frameserving (0.5)
 
 use std::path::PathBuf;
 

@@ -177,6 +177,7 @@ impl Mode for RemuxMode {
                 log_file: Some(log_path_for(&j.dest)),
                 duration_s: None,
                 side_files: vec![],
+                keep_side_files: false,
                 post: PostAction::Remux { temp: j.temp.clone(), dest: j.dest.clone(), delete_source: self.st.delete_sources.then(|| j.source.clone()) },
                 warnings: vec![],
             })

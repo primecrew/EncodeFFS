@@ -319,7 +319,10 @@ pub fn cleanup_stale(dir: &Path, max_age: std::time::Duration) -> usize {
     let mut n = 0;
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        if !(name.starts_with(TEMP_PREFIX) || name.starts_with(super::join::LIST_PREFIX)) || !(name.ends_with(&format!(".{TEMP_EXT}")) || name.ends_with(".txt")) {
+        let ours = (name.starts_with(TEMP_PREFIX) && name.ends_with(&format!(".{TEMP_EXT}")))
+            || (name.starts_with(super::join::LIST_PREFIX) && name.ends_with(".txt"))
+            || (name.starts_with(super::frameserve::TEMP_PREFIX) && name.ends_with(".avs"));
+        if !ours {
             continue;
         }
         let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|m| m.elapsed().ok()).map(|a| a >= max_age).unwrap_or(false);
@@ -576,12 +579,14 @@ mod tests {
         assert!(chapter_input(-1.0, ChapterMode::Auto, 4.0, &[]).is_err());
         let d = std::env::temp_dir().join(format!("stale_{}", crate::util::unique_id()));
         std::fs::create_dir_all(&d).unwrap();
-        for f in ["ffenc_chapters_1.ffmeta", "ffenc_chapters_2.txt", "other.ffmeta"] {
+        let list = format!("{}9.txt", super::super::join::LIST_PREFIX);
+        for f in ["ffenc_chapters_1.ffmeta", list.as_str(), "ffenc_frameserve_3.avs", "other.ffmeta", "my clip_ffenc.avs"] {
             std::fs::write(d.join(f), "x").unwrap();
         }
         assert_eq!(cleanup_stale(&d, std::time::Duration::from_secs(3600)), 0, "fresh files kept");
-        assert_eq!(cleanup_stale(&d, std::time::Duration::ZERO), 2);
+        assert_eq!(cleanup_stale(&d, std::time::Duration::ZERO), 3);
         assert!(d.join("other.ffmeta").exists());
+        assert!(d.join("my clip_ffenc.avs").exists(), "saved scripts are never cleaned up");
         std::fs::remove_dir_all(&d).unwrap();
     }
 }
