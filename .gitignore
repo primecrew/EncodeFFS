@@ -2,3 +2,16 @@
 /dist/logs
 /dist/*.settings.json
 /dist-experimental/
+
+# secrets / local environment (never commit)
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+credentials*.json
+.venv/
+venv/
+__pycache__/
+node_modules/
