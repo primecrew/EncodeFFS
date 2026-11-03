@@ -25,14 +25,14 @@ mod icon_tests {
 }
 
 fn main() -> eframe::Result<()> {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title(ffenc::full_title())
-            .with_inner_size([1380.0, 900.0])
-            .with_min_inner_size([820.0, 600.0])
-            .with_drag_and_drop(true)
-            .with_icon(std::sync::Arc::new(icon())),
-        ..Default::default()
-    };
-    eframe::run_native(ffenc::DATA_DIR_NAME, options, Box::new(|cc| Ok(Box::new(ui::App::new(cc)))))
+    // where the window opens: the saved layout (if "Remember window layout" is on and it is still
+    // on a connected screen), otherwise the default size, centered
+    let startup = ui::layout::Startup::decide();
+    let viewport = egui::ViewportBuilder::default()
+        .with_title(ffenc::full_title())
+        .with_min_inner_size(ffenc::layout::MIN_SIZE)
+        .with_drag_and_drop(true)
+        .with_icon(std::sync::Arc::new(icon()));
+    let options = eframe::NativeOptions { viewport: startup.viewport(viewport), centered: startup.placement.pos.is_none(), ..Default::default() };
+    eframe::run_native(ffenc::DATA_DIR_NAME, options, Box::new(move |cc| Ok(Box::new(ui::App::new(cc, Some(startup))))))
 }

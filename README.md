@@ -361,6 +361,25 @@ and unfinished partial outputs, writes their paths to the log, and skips the sta
       are ignored.
     - `splash.png`: any PNG, shown at most 360 × 200.
   - The built-in defaults are `assets/splash.txt` and the app icon.
+- **Window layout** (File › Settings › Startup › **Remember window layout**, on by default; 0.6.0-dev.2):
+  - Saved and restored at the next start:
+    - the window's position, size and maximized state, and which screen it is on;
+    - the widths of the preset list and the Source panel, and the height of the queue/log panel;
+    - which collapsible sections are open (preset groups, Advanced compressor settings, Audio & subtitles sections,
+      Show differences, Import from text, Files lists).
+  - The last selected preset was already remembered (settings file).
+  - Saved about 1.5 seconds after a change and on exit, so a crash loses at most the last moment.
+  - A window that would open off-screen (for example on a screen that is no longer connected) opens centered at
+    the default size. A window partly off the screen, or bigger than it, is moved/shrunk onto it, and never opens
+    smaller than the minimum size (820 × 600).
+  - Sizes are in Windows' logical pixels, so the window keeps its size when you change the text size or theme,
+    and on screens with a different scaling. Panel sizes follow the text size.
+  - **Reset window layout** (same place) puts the window back to the default size centered on its screen and the
+    panels and sections back to their defaults, immediately.
+  - Turning the option off stops saving and deletes the saved layout; the window then opens at the default size.
+  - Stored in its own file, next to the settings: `FFmpegEncoder-Experimental.layout.json` (portable) or
+    `%APPDATA%\FFmpegEncoder-Experimental\layout.json` (installed). If that file is missing, old or damaged, the app
+    starts with the defaults; settings are not affected.
 - **Portable or installed:**
   - **Portable zip:** unzip anywhere and run; settings are stored next to the exe.
   - **Installer** (`…-setup.exe`, NSIS, 64-bit):
@@ -404,6 +423,7 @@ Live network tests: `cargo test --lib live -- --ignored` (`FFENC_LIVE=btbn-stabl
 - `src/updater/` – source lookup (BtbN/gyan), download+verify, extract, install/rollback.
 - `src/presets.rs` – preset file format, built-in list, import/export rules.
 - `src/cmd/tracks.rs` – Audio & subtitles: track mapping, codecs per container, delays/trim/pad/mix, extract commands.
+- `src/layout.rs` – window layout file and startup placement (off-screen checks, clamping, monitor list); `src/ui/layout.rs` – recording/saving the live layout, remembered sections, Reset.
 - `src/import_stable.rs` – read-only import of the stable version's settings/presets; `src/splash.rs` + `src/ui/splash.rs` – splash text/picture (overridable) and overlay; `installer/installer.nsi` + `scripts/build-release.sh` – portable zip + NSIS installer.
 - `src/cmd/frameserve.rs` – AviSynth script generator (quoting, colour/matrix/bit depth/trim/fps/audio) and the encode command; `src/ffmpeg/avisynth.rs` – avisynth demuxer and avisynth.dll (32/64-bit) checks.
 - `src/cmd/join.rs` – join/stitch: concat list writer, compatibility check, chapter-per-file math, both command builders.

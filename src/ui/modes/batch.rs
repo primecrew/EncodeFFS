@@ -122,7 +122,7 @@ impl Mode for BatchMode {
         }
 
         if !self.rows.is_empty() {
-            egui::CollapsingHeader::new(format!("Files ({})", self.rows.len())).default_open(true).show(ui, |ui| {
+            crate::ui::layout::section(ui, "batch.files", egui::CollapsingHeader::new(format!("Files ({})", self.rows.len())), true, |ui| {
                 egui::ScrollArea::vertical().max_height(180.0).id_salt("m7files").show(ui, |ui| {
                     egui::Grid::new("m7rows").striped(true).num_columns(3).show(ui, |ui| {
                         for r in &mut self.rows {

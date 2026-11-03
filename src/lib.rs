@@ -36,9 +36,10 @@ pub const FILE_STEM: &str = "FFmpegEncoder-Experimental";
 pub const STABLE_FILE_STEM: &str = "FFmpegEncoder";
 
 pub mod import_stable;
+pub mod layout;
 pub mod splash;
 
-/// "FFmpeg Encoder 0.6.0-dev.1 (Experimental)"
+/// "FFmpeg Encoder 0.6.0-dev.2 (Experimental)"
 pub fn full_title() -> String {
     if EDITION.is_empty() {
         format!("{APP_NAME} {APP_VERSION}")

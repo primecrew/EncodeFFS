@@ -155,6 +155,9 @@ pub struct Settings {
     pub duration_tolerance_s: f64,
     /// Show the splash screen for a moment at startup (0.6; on by default).
     pub show_splash: bool,
+    /// Remember window layout (0.6.0-dev.2; on by default): window place/size, panel sizes and open
+    /// sections are saved in their own file next to this one and restored at the next start.
+    pub remember_layout: bool,
     /// Legacy (0.1.x): last-used values per mode; migrated into presets on first start of 0.2.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, serde_json::Value>,
@@ -193,6 +196,7 @@ impl Default for Settings {
             keep_temp_files: false,
             duration_tolerance_s: 1.5,
             show_splash: true,
+            remember_layout: true,
             modes: BTreeMap::new(),
             last_mode: String::new(),
         }
@@ -546,6 +550,19 @@ mod tests {
         let p = dir.join("s.json");
         off.save_to(&p).unwrap();
         assert!(!Settings::load_from(&p).show_splash);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn remember_layout_default_on_and_saved() {
+        assert!(Settings::default().remember_layout);
+        assert!(Settings::from_json(r#"{"crf": 20, "show_splash": false}"#).unwrap().remember_layout, "older files: on");
+        let off = Settings::from_json(r#"{"remember_layout": false}"#).unwrap();
+        assert!(!off.remember_layout);
+        let dir = std::env::temp_dir().join(format!("ffenc_rl_{}", crate::util::unique_id()));
+        let p = dir.join("s.json");
+        off.save_to(&p).unwrap();
+        assert!(!Settings::load_from(&p).remember_layout);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

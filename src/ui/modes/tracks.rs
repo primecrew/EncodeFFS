@@ -675,7 +675,7 @@ impl Mode for TracksMode {
         let mut add_audio = false;
         let mut replace: Option<Option<usize>> = None;
         let mut add_subs = false;
-        egui::CollapsingHeader::new("Add an audio track (commentary or another language)").id_salt("sec_add").show(ui, |ui| {
+        crate::ui::layout::section(ui, "tracks.add_audio", egui::CollapsingHeader::new("Add an audio track (commentary or another language)"), false, |ui| {
             ui.horizontal_wrapped(|ui| {
                 if ui.radio(st.add_kind == AddKind::Commentary, "Commentary").clicked() {
                     st.add_kind = AddKind::Commentary;
@@ -695,7 +695,7 @@ impl Mode for TracksMode {
             }
             hint(ui, "WAV, MP3, FLAC, M4A, AAC, OGG or OPUS – or another video, to take its audio. You can also drop audio files on the window. Delay, volume and a mixed version can be set on the new track above.");
         });
-        egui::CollapsingHeader::new("Replace audio").id_salt("sec_replace").show(ui, |ui| {
+        crate::ui::layout::section(ui, "tracks.replace_audio", egui::CollapsingHeader::new("Replace audio"), false, |ui| {
             let mains: Vec<(usize, String)> = st.audio.iter().enumerate().filter(|(_, t)| t.source == Source::Main).map(|(i, t)| (i, format!("Audio {}{}", i + 1, if t.title.is_empty() { String::new() } else { format!(" ({})", t.title) }))).collect();
             if mains.is_empty() {
                 hint(ui, "The video has no audio of its own – use “Add an audio track”.");
@@ -728,7 +728,7 @@ impl Mode for TracksMode {
                 });
             }
         });
-        egui::CollapsingHeader::new("Add subtitles").id_salt("sec_subs").show(ui, |ui| {
+        crate::ui::layout::section(ui, "tracks.add_subtitles", egui::CollapsingHeader::new("Add subtitles"), false, |ui| {
             ui.horizontal_wrapped(|ui| {
                 field(ui, "Language of the new subtitles", &mut st.sub_lang, 60.0, "eng");
                 if ui.button("Choose subtitle file(s)…").clicked() {
@@ -737,7 +737,7 @@ impl Mode for TracksMode {
             });
             hint(ui, "SRT, ASS/SSA, VTT, SUB/IDX or SUP files – or another video, to take its subtitles. Title, default, forced, delay and text encoding can be set on each new track above.");
         });
-        egui::CollapsingHeader::new("Remove subtitles").id_salt("sec_rmsubs").show(ui, |ui| {
+        crate::ui::layout::section(ui, "tracks.remove_subtitles", egui::CollapsingHeader::new("Remove subtitles"), false, |ui| {
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Remove all subtitles").clicked() {
                     for t in st.subs.iter_mut() {
@@ -753,7 +753,7 @@ impl Mode for TracksMode {
             hint(ui, "To remove only some, untick them in the list above. To save a subtitle track as a file, use “Extract subtitles” below.");
         });
         let main_audio: Vec<(usize, String)> = st.audio.iter().filter(|t| t.source == Source::Main).map(|t| (t.stream, format!("Audio {}{} – {}", t.stream + 1, if t.title.is_empty() { String::new() } else { format!(" ({})", t.title) }, audio_desc(t)))).collect();
-        egui::CollapsingHeader::new("Extract audio to separate files").id_salt("sec_xa").show(ui, |ui| {
+        crate::ui::layout::section(ui, "tracks.extract_audio", egui::CollapsingHeader::new("Extract audio to separate files"), false, |ui| {
             ui.checkbox(&mut st.extract_audio, "Save audio from the video as separate files");
             ui.add_enabled_ui(st.extract_audio, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -784,7 +784,7 @@ impl Mode for TracksMode {
             });
         });
         let main_subs: Vec<(usize, String)> = st.subs.iter().filter(|t| t.source == Source::Main).map(|t| (t.stream, format!("Subtitles {}{} – {}", t.stream + 1, if t.title.is_empty() { format!(" ({})", t.language) } else { format!(" ({})", t.title) }, tr::sub_codec_name(&t.codec)))).collect();
-        egui::CollapsingHeader::new("Extract subtitles to separate files").id_salt("sec_xs").show(ui, |ui| {
+        crate::ui::layout::section(ui, "tracks.extract_subtitles", egui::CollapsingHeader::new("Extract subtitles to separate files"), false, |ui| {
             ui.checkbox(&mut st.extract_subs, "Save subtitles from the video as separate files");
             ui.add_enabled_ui(st.extract_subs, |ui| {
                 ui.horizontal_wrapped(|ui| {

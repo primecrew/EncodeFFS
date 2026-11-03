@@ -1,5 +1,39 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.6.0-dev.2 — window layout persistence (branch `ui-experimental`)
+- **Remember window layout** (Settings › Startup; on by default; `remember_layout` in the settings file, older files
+  get on) and a **Reset window layout** button (applies immediately). Both have visible labels (screen-reader names)
+  and are normal keyboard-focusable controls.
+- **What is saved:**
+  - window position (outer, physical pixels), inner size (logical pixels at 100 %), maximized state, and the
+    work area of the screen it was on;
+  - preset list / Source panel widths and the queue/log panel height (egui points);
+  - open/closed state of the collapsible sections, by stable keys (`settings.compressor_advanced`,
+    `presets.group:<name>`, `tracks.*`, `join.differences`, `chapters.import:<id>`, `batch.files`, `custom.files`).
+  - Last selected preset was already saved (`last_preset`); there are no other sort/view choices to keep.
+- **Where:** `FFmpegEncoder-Experimental.layout.json` next to the portable settings file, or `layout.json` in
+  `%APPDATA%\FFmpegEncoder-Experimental`. A separate file so a damaged/old layout can never break settings or startup;
+  parsing is lenient per part (window / panels / sections), unusable values (zero, tiny, huge, NaN) are dropped.
+- **When:** about 1.5 s after the last change (debounced) and on exit; written via a temp file + rename.
+- **Restoring:** decided before the window is created (`ffenc::layout::placement`):
+  - Windows: the connected screens' work areas and DPI are read (`EnumDisplayMonitors`, `GetDpiForMonitor`).
+  - The saved title bar must be visibly on a screen (at least 160 px wide, half its height); otherwise the window
+    opens centered at the default size (1380 × 900, shrunk to fit a small screen).
+  - On the screen it overlaps most, the size is clamped to [820 × 600, work area minus the frame] and the position
+    moved so the whole window is on that screen.
+  - Maximized windows reopen maximized and restore down to their saved normal size. The normal size is only taken
+    once it has been unchanged for 0.4 s, because Wine/some window managers report the maximized size a frame before
+    the maximized flag.
+  - A minimized window at exit keeps the last normal place.
+  - On mixed-DPI setups the position is re-checked on the first frames and corrected if the window landed elsewhere.
+- **Reset:** forgets the file, gives panels/sections fresh ids (so egui uses their defaults), un-maximizes, sets
+  the default size and centers the window on its current screen.
+- **Option off:** nothing is restored or written; turning it off (Save) deletes the layout file.
+- **Tests:** `layout::tests` (round trip, old/missing/broken files, off-screen and disconnected screens,
+  partly-off-screen and oversized clamping, tiny sizes, 150 % screen, option off, reset) and
+  `settings::tests::remember_layout_default_on_and_saved`.
+- New dependency for Windows only: `windows-sys` 0.59 (already in the build through eframe/rfd), features Gdi/HiDpi.
+
 ## 0.6.0-dev.1 — experimental edition (branch `ui-experimental`; master / 0.5.x untouched)
 - **Separate identity:**
   - **Names:** version `0.6.0-dev.1`, bin `FFmpegEncoder-Experimental.exe`, title “FFmpeg Encoder 0.6.0-dev.1

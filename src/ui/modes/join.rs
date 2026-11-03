@@ -309,7 +309,7 @@ impl Mode for JoinMode {
                     self.st.method = JoinMethod::Reencode;
                 }
             });
-            egui::CollapsingHeader::new("Show differences").id_salt("joindiff").show(ui, |ui| {
+            crate::ui::layout::section(ui, "join.differences", egui::CollapsingHeader::new("Show differences"), false, |ui| {
                 for i in &issues {
                     hint(ui, i);
                 }

@@ -1,6 +1,7 @@
 /target
 /dist/logs
 /dist/*.settings.json
+/dist/*.layout.json
 /dist-experimental/
 
 # secrets / local environment (never commit)

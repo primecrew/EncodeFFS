@@ -192,7 +192,7 @@ impl Mode for CustomMode {
             ui.end_row();
         });
         if st.o.batch && !self.rows.is_empty() {
-            egui::CollapsingHeader::new(format!("Files ({})", self.rows.len())).default_open(false).show(ui, |ui| {
+            crate::ui::layout::section(ui, "custom.files", egui::CollapsingHeader::new(format!("Files ({})", self.rows.len())), false, |ui| {
                 egui::ScrollArea::vertical().max_height(160.0).id_salt("cu_files").show(ui, |ui| {
                     for r in &mut self.rows {
                         ui.horizontal(|ui| {

@@ -2,6 +2,7 @@
 
 pub mod chapter_creator;
 pub mod common;
+pub mod layout;
 pub mod modes;
 pub mod presets;
 pub mod source;
@@ -270,6 +271,8 @@ pub struct App {
     splash: Option<splash::Splash>,
     /// "Import settings from stable version" dialog.
     import_offer: Option<ImportOffer>,
+    /// Window layout persistence (0.6.0-dev.2).
+    layout: layout::LayoutRt,
 }
 
 /// Open a file or folder with the OS (Explorer on Windows).
@@ -329,11 +332,13 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("F1", "This help"),
 ];
 
+const REMEMBER_LAYOUT_HELP: &str = "On (the default): the window's position, size, maximized state and screen, the panel sizes and which sections are open are saved (shortly after a change and on exit) and restored at the next start. A window that would be off-screen or too small opens centered at the default size instead.";
+const RESET_LAYOUT_HELP: &str = "Puts the window back to the default size, centered on its screen, and the panels and sections back to their defaults. Applies immediately.";
 const OWN_FOLDER_NOTE: &str = "Doesn't apply: you're using your own FFmpeg folder, so the app never checks for FFmpeg updates by itself. This option only matters for the copy the app downloads. Help › Check for FFmpeg updates… still works and can download an app-managed copy.";
 const NEVER_CHECK_HELP: &str = "Unchecked (the default): when the app starts it looks online for a newer FFmpeg, at most once a day, and only shows a notice; it never installs anything without asking. Checked: the app never looks for FFmpeg updates by itself and never shows an update notice. You can still check any time with Help › Check for FFmpeg updates….";
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, startup: Option<layout::Startup>) -> Self {
         let first_run = !settings::settings_path().exists();
         let mut settings = Settings::load();
         // appearance before the first frame, so panels are laid out at the right scale
@@ -366,6 +371,10 @@ impl App {
         }
         let (list, presets_path, had_file, migrated) = load_presets(&mut settings, &queue);
         let current = list.iter().position(|p| p.id == settings.last_preset && !p.hidden).unwrap_or(0);
+        let layout = layout::LayoutRt::new(startup, settings.remember_layout);
+        if settings.remember_layout {
+            queue.log(format!("Window layout: {}", layout.path.display()));
+        }
         let mut app = App {
             settings,
             pre: PresetUi::new(list, current),
@@ -397,6 +406,7 @@ impl App {
             pending_run: None,
             splash: None,
             import_offer: None,
+            layout,
         };
         if app.settings.show_splash && std::env::var_os("FFENC_NO_SPLASH").is_none() {
             let s = splash::Splash::new();
@@ -1486,6 +1496,7 @@ impl App {
         let mut keep = true;
         let mut save = false;
         let mut err = None;
+        let mut reset_layout = false;
         common::fit(egui::Window::new("Settings").collapsible(false).resizable(true).default_width(640.0), ctx, false).show(ctx, |ui| {
             egui::ScrollArea::vertical().max_height((ctx.screen_rect().height() - 150.0).max(120.0)).show(ui, |ui| {
                 common::section(ui, "Appearance");
@@ -1494,6 +1505,12 @@ impl App {
                 common::section(ui, "Startup");
                 ui.checkbox(&mut ed.show_splash, "Show splash screen at startup").on_hover_text("A short welcome screen with the name and version (about 2 seconds; any key or click closes it).");
                 hint(ui, format!("To change its text or picture, put {} and/or {} next to the app or in the settings folder.", ffenc::splash::TEXT_FILE, ffenc::splash::IMAGE_FILE));
+                ui.checkbox(&mut ed.remember_layout, "Remember window layout").on_hover_text(REMEMBER_LAYOUT_HELP);
+                hint(ui, REMEMBER_LAYOUT_HELP);
+                if ui.button("Reset window layout").on_hover_text(RESET_LAYOUT_HELP).clicked() {
+                    reset_layout = true;
+                }
+                hint(ui, RESET_LAYOUT_HELP);
                 common::section(ui, "Folders");
                 egui::Grid::new("set_f").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                     let d = ed.input_folder.clone();
@@ -1537,7 +1554,7 @@ impl App {
                     common::num_u32(ui, &mut ed.fallback_sample_rate, 8000..=384000, " Hz");
                     ui.end_row();
                     ui.label("Compressor");
-                    egui::CollapsingHeader::new("Advanced compressor settings").id_salt("set_comp_adv").default_open(false).show(ui, |ui| {
+                    layout::section(ui, "settings.compressor_advanced", egui::CollapsingHeader::new("Advanced compressor settings"), false, |ui| {
                         common::compressor_params_ui(ui, "set_comp", &mut ed.compressor);
                     });
                     ui.end_row();
@@ -1611,7 +1628,19 @@ impl App {
         if let Some(e) = err {
             self.error = Some(e);
         }
+        if reset_layout {
+            match self.layout.reset(ctx) {
+                Ok(()) => self.queue.log("Window layout reset to the defaults."),
+                Err(e) => self.queue.log(e),
+            }
+        }
         if save {
+            if self.settings.remember_layout && !ed.remember_layout {
+                match self.layout.forget_saved() {
+                    Ok(()) => self.queue.log("Remember window layout is off: the saved layout was removed."),
+                    Err(e) => self.queue.log(e),
+                }
+            }
             let ff_changed = ed.ffmpeg_bin_path != self.settings.ffmpeg_bin_path;
             // appearance is edited live on self.settings, not on the dialog copy
             ed.appearance = self.settings.appearance.clone();
@@ -1734,7 +1763,8 @@ impl eframe::App for App {
         }
 
         let screen = ctx.screen_rect().size();
-        egui::SidePanel::left("presets").resizable(true).default_width(240.0).width_range(150.0..=(screen.x * 0.45).max(200.0)).show(ctx, |ui| {
+        let presets_w = self.layout.initial.presets_width.unwrap_or(240.0);
+        let presets_panel = egui::SidePanel::left(layout::panel_id("presets")).resizable(true).default_width(presets_w).width_range(150.0..=(screen.x * 0.45).max(200.0)).show(ctx, |ui| {
             ui.add_space(4.0);
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
             let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
@@ -1753,24 +1783,29 @@ impl eframe::App for App {
                 Some(SideEvent::Export { all }) => self.export_presets(all),
             }
         });
+        layout::LayoutRt::record_panel(&mut self.layout.panels.presets_width, presets_panel.response.rect.width(), (screen.x * 0.45).max(200.0));
 
         // at large text sizes the window has few points of width: the form comes first
         if self.settings.show_source_panel && !source_panel_too_narrow(ctx) {
-            egui::SidePanel::right("source").resizable(true).default_width(300.0).width_range(180.0..=(screen.x * 0.4).max(220.0)).show(ctx, |ui| {
+            let source_w = self.layout.initial.source_width.unwrap_or(300.0);
+            let r = egui::SidePanel::right(layout::panel_id("source")).resizable(true).default_width(source_w).width_range(180.0..=(screen.x * 0.4).max(220.0)).show(ctx, |ui| {
                 ui.add_space(4.0);
                 let idx = self.pre.current;
                 let input = presets::primary_input(self.pre.editor(idx, &self.settings));
                 let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
                 self.source.ui(ui, input, ffprobe.as_deref());
             });
+            layout::LayoutRt::record_panel(&mut self.layout.panels.source_width, r.response.rect.width(), (screen.x * 0.4).max(220.0));
         }
 
-        egui::TopBottomPanel::bottom("queue").resizable(true).default_height(220.0_f32.min(screen.y * 0.26)).height_range(60.0..=(screen.y * 0.4).max(80.0)).show(ctx, |ui| {
+        let queue_h = self.layout.initial.queue_height.unwrap_or(220.0_f32.min(screen.y * 0.26));
+        let r = egui::TopBottomPanel::bottom(layout::panel_id("queue")).resizable(true).default_height(queue_h).height_range(60.0..=(screen.y * 0.4).max(80.0)).show(ctx, |ui| {
             // never let the panel's content force it taller than its cap (large text sizes)
             egui::ScrollArea::vertical().id_salt("queue_panel_scroll").auto_shrink([false, false]).show(ui, |ui| {
                 self.queue_panel(ui);
             });
         });
+        layout::LayoutRt::record_panel(&mut self.layout.panels.queue_height, r.response.rect.height(), (screen.y * 0.4).max(80.0));
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let idx = self.pre.current;
@@ -1905,6 +1940,10 @@ impl eframe::App for App {
         }
         theme::focus_ring(ctx);
 
+        // window layout: record and save (debounced) so a crash doesn't lose it
+        let q = self.queue.clone();
+        self.layout.frame(ctx, self.settings.remember_layout, &mut |m| q.log(m));
+
         // keep progress bars moving while jobs run
         if self.queue.is_busy() || self.updater.busy() {
             ctx.request_repaint_after(Duration::from_millis(250));
@@ -1914,6 +1953,9 @@ impl eframe::App for App {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.queue.cancel_all();
         self.save_settings();
+        if let Err(e) = self.layout.flush(self.settings.remember_layout) {
+            self.queue.log(e);
+        }
         // Give a running ffmpeg a moment to stop cleanly.
         for _ in 0..30 {
             if !self.queue.is_busy() {
