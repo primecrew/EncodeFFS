@@ -122,7 +122,12 @@ pub struct Settings {
     // ---- app behaviour
     pub update_source: UpdateSource,
     pub update_channel: UpdateChannel,
+    /// Legacy mirror of `!never_check_updates`, still written so older versions keep the same behaviour.
     pub auto_check_updates: bool,
+    /// "Turn off Update Check for FFMPEG" (0.5.1): never look for FFmpeg updates automatically.
+    /// Off for new users (checks stay on); files from older versions get `!auto_check_updates`,
+    /// so their behaviour doesn't change. Help › Check for FFmpeg updates still works.
+    pub never_check_updates: bool,
     /// Unix seconds of the last automatic update check.
     pub last_update_check: u64,
     /// Keep ffmpeg_error*.log even when the job succeeds.
@@ -171,6 +176,7 @@ impl Default for Settings {
             update_source: UpdateSource::BtbN,
             update_channel: UpdateChannel::Stable,
             auto_check_updates: true,
+            never_check_updates: false,
             last_update_check: 0,
             keep_logs_on_success: false,
             drafts: BTreeMap::new(),
@@ -228,16 +234,62 @@ pub fn logs_dir() -> PathBuf {
     settings_path().parent().map(|p| p.join("logs")).unwrap_or_else(|| roaming_dir().join("logs"))
 }
 
+/// What started an FFmpeg update check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckTrigger {
+    /// The once-a-day check at startup (and the banner it may show).
+    Automatic,
+    /// The user chose Help › Check for FFmpeg updates… (or a download button).
+    Manual,
+}
+
+/// Which FFmpeg the app is using, as far as update checks are concerned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfmpegInUse {
+    NotFound,
+    /// The copy the app downloaded (Help › Check for FFmpeg updates). Automatic checks apply.
+    AppManaged,
+    /// The user's own folder (configured, next to the app, or PATH). No automatic checks.
+    OwnFolder,
+}
+
+/// Seconds between automatic checks.
+pub const AUTO_CHECK_INTERVAL_S: u64 = 86_400;
+
 impl Settings {
+    /// Parse a settings file's text. Files written before 0.5.1 have no `never_check_updates`;
+    /// they keep their old behaviour (`auto_check_updates`, which defaulted to on).
+    pub fn from_json(text: &str) -> Option<Settings> {
+        let v: serde_json::Value = serde_json::from_str(text).ok()?;
+        let mut s: Settings = serde_json::from_value(v.clone()).ok()?;
+        if v.get("never_check_updates").is_none() {
+            let auto = v.get("auto_check_updates").and_then(|a| a.as_bool()).unwrap_or(true);
+            s.never_check_updates = !auto;
+        }
+        s.auto_check_updates = !s.never_check_updates;
+        s.appearance = s.appearance.sanitized();
+        Some(s)
+    }
+
     pub fn load_from(path: &Path) -> Settings {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|t| serde_json::from_str::<Settings>(&t).ok())
-            .map(|mut s| {
-                s.appearance = s.appearance.sanitized();
-                s
-            })
-            .unwrap_or_default()
+        std::fs::read_to_string(path).ok().and_then(|t| Self::from_json(&t)).unwrap_or_default()
+    }
+
+    /// May an update check run now? Manual checks always may. Automatic ones only when the
+    /// app-managed FFmpeg is in use (never for the user's own folder), "Turn off Update Check for
+    /// FFMPEG" is unchecked and the last check is a day old.
+    pub fn may_check_updates(&self, trigger: CheckTrigger, now_unix: u64, ffmpeg: FfmpegInUse) -> bool {
+        match trigger {
+            CheckTrigger::Manual => true,
+            CheckTrigger::Automatic => {
+                ffmpeg == FfmpegInUse::AppManaged && !self.never_check_updates && now_unix.saturating_sub(self.last_update_check) > AUTO_CHECK_INTERVAL_S
+            }
+        }
+    }
+
+    /// Does the "Turn off Update Check for FFMPEG" option apply? Not with the user's own FFmpeg folder.
+    pub fn update_check_option_applies(ffmpeg: FfmpegInUse) -> bool {
+        ffmpeg != FfmpegInUse::OwnFolder
     }
 
     pub fn load() -> Settings {
@@ -248,7 +300,9 @@ impl Settings {
         if let Some(d) = path.parent() {
             std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
         }
-        let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        let mut out = self.clone();
+        out.auto_check_updates = !out.never_check_updates;
+        let text = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
         // write-then-rename so a crash never leaves a truncated settings file
         let tmp = path.with_extension("json.tmp");
         std::fs::write(&tmp, text).map_err(|e| format!("Could not save settings to {}: {e}", path.display()))?;
@@ -382,5 +436,66 @@ mod tests {
         assert_eq!(step_scale(3.0, true), 3.0);
         assert_eq!(step_scale(0.75, false), 0.75);
         assert_eq!(step_scale(7.0, false), 2.5);
+    }
+
+    #[test]
+    fn update_checks_enabled_by_default_for_new_users() {
+        let s = Settings::default();
+        assert!(!s.never_check_updates, "'Turn off Update Check for FFMPEG' is unchecked by default");
+        assert!(s.auto_check_updates);
+        assert!(s.may_check_updates(CheckTrigger::Automatic, 10 * AUTO_CHECK_INTERVAL_S, FfmpegInUse::AppManaged));
+        // no settings file at all = first run
+        let missing = std::env::temp_dir().join(format!("ffenc_nofile_{}", crate::util::unique_id())).join("s.json");
+        assert!(!Settings::load_from(&missing).never_check_updates);
+    }
+
+    #[test]
+    fn old_settings_keep_their_update_behaviour() {
+        // 0.5.0 and older: automatic checks on (explicit or the old default) -> stay on
+        let on = Settings::from_json(r#"{"crf": 20, "auto_check_updates": true, "last_update_check": 5}"#).unwrap();
+        assert!(!on.never_check_updates && on.auto_check_updates);
+        let implicit = Settings::from_json(r#"{"crf": 20}"#).unwrap();
+        assert!(!implicit.never_check_updates, "old default was 'check at startup'");
+        // they had turned automatic checks off -> never check
+        let off = Settings::from_json(r#"{"auto_check_updates": false}"#).unwrap();
+        assert!(off.never_check_updates && !off.auto_check_updates);
+        // 0.5.1 files: the new key wins
+        let new = Settings::from_json(r#"{"auto_check_updates": true, "never_check_updates": true}"#).unwrap();
+        assert!(new.never_check_updates && !new.auto_check_updates);
+        // saved files carry both keys, consistent, and round-trip
+        let dir = std::env::temp_dir().join(format!("ffenc_upd_{}", crate::util::unique_id()));
+        let p = dir.join("s.json");
+        let mut s = on.clone();
+        s.never_check_updates = true;
+        s.auto_check_updates = true; // stale mirror is fixed on save
+        s.save_to(&p).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!((v["never_check_updates"].as_bool(), v["auto_check_updates"].as_bool()), (Some(true), Some(false)));
+        assert!(Settings::load_from(&p).never_check_updates);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn update_check_scheduler() {
+        use FfmpegInUse::*;
+        let day = AUTO_CHECK_INTERVAL_S;
+        let mut s = Settings { never_check_updates: false, last_update_check: 1000, ..Settings::default() };
+        assert!(s.may_check_updates(CheckTrigger::Automatic, 1000 + day + 1, AppManaged));
+        assert!(!s.may_check_updates(CheckTrigger::Automatic, 1000 + day - 1, AppManaged), "at most once a day");
+        assert!(!s.may_check_updates(CheckTrigger::Automatic, 1000 + day + 1, NotFound), "not without FFmpeg");
+        assert!(!s.may_check_updates(CheckTrigger::Automatic, u64::MAX, OwnFolder), "never for the user's own FFmpeg folder");
+        s.never_check_updates = true;
+        assert!(!s.may_check_updates(CheckTrigger::Automatic, u64::MAX, AppManaged), "never when the option is checked");
+        // manual checks always allowed, whatever the setting or FFmpeg
+        for never in [true, false] {
+            s.never_check_updates = never;
+            for f in [NotFound, AppManaged, OwnFolder] {
+                assert!(s.may_check_updates(CheckTrigger::Manual, 0, f));
+            }
+        }
+        // the option is greyed out only for the user's own folder
+        assert!(Settings::update_check_option_applies(AppManaged));
+        assert!(Settings::update_check_option_applies(NotFound));
+        assert!(!Settings::update_check_option_applies(OwnFolder));
     }
 }

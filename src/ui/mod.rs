@@ -17,7 +17,7 @@ use ffenc::ffmpeg::runner::{full_args, JobSpec, JobStatus, PostAction, Queue};
 use ffenc::output_guard::{self, Choice, Conflict, Outcome, Reason, Target, WhenExists};
 use ffenc::ffmpeg::version::{self, compare, FfmpegCheck, Verdict};
 use ffenc::presets::{self as pstore, Preset};
-use ffenc::settings::{self, Settings};
+use ffenc::settings::{self, CheckTrigger, FfmpegInUse, Settings};
 use ffenc::updater::{install, AvailableBuild};
 use ffenc::cmdline::{self, Shell};
 use ffenc::util::{fmt_hms, now_unix};
@@ -317,6 +317,9 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("F1", "This help"),
 ];
 
+const OWN_FOLDER_NOTE: &str = "Doesn't apply: you're using your own FFmpeg folder, so the app never checks for FFmpeg updates by itself. This option only matters for the copy the app downloads. Help › Check for FFmpeg updates… still works and can download an app-managed copy.";
+const NEVER_CHECK_HELP: &str = "Unchecked (the default): when the app starts it looks online for a newer FFmpeg, at most once a day, and only shows a notice; it never installs anything without asking. Checked: the app never looks for FFmpeg updates by itself and never shows an update notice. You can still check any time with Help › Check for FFmpeg updates….";
+
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let first_run = !settings::settings_path().exists();
@@ -415,12 +418,21 @@ impl App {
         if first_run || app.ff.is_none() {
             app.open_locate(first_run);
         }
-        // Non-intrusive daily update check.
-        if app.settings.auto_check_updates && now_unix().saturating_sub(app.settings.last_update_check) > 86_400 && app.ff.is_some() {
+        // Non-intrusive daily update check (never when "Turn off Update Check for FFMPEG" is checked).
+        if app.settings.may_check_updates(CheckTrigger::Automatic, now_unix(), app.ffmpeg_in_use()) {
             let (s, c) = (app.settings.update_source, app.settings.update_channel);
             app.startup_check = Some(Bg::spawn(&cc.egui_ctx, move || ffenc::updater::check(s, c)));
         }
         app
+    }
+
+    /// App-managed copy or the user's own folder (only the managed copy gets automatic update checks).
+    fn ffmpeg_in_use(&self) -> FfmpegInUse {
+        match &self.ff {
+            None => FfmpegInUse::NotFound,
+            Some(f) if f.is_app_managed() => FfmpegInUse::AppManaged,
+            Some(_) => FfmpegInUse::OwnFolder,
+        }
     }
 
     fn refresh_ffmpeg(&mut self, ctx: &egui::Context) {
@@ -1348,6 +1360,7 @@ impl App {
 
     fn settings_dialog(&mut self, ctx: &egui::Context) {
         let Some(mut ed) = self.settings_edit.take() else { return };
+        let in_use = self.ffmpeg_in_use();
         let mut keep = true;
         let mut save = false;
         let mut err = None;
@@ -1419,7 +1432,18 @@ impl App {
                     });
                     ui.end_row();
                     ui.label("");
-                    ui.checkbox(&mut ed.auto_check_updates, "Check for FFmpeg updates at startup (max once a day, never installs)");
+                    ui.vertical(|ui| {
+                        if Settings::update_check_option_applies(in_use) {
+                            ui.checkbox(&mut ed.never_check_updates, "Turn off Update Check for FFMPEG").on_hover_text(NEVER_CHECK_HELP);
+                            hint(ui, NEVER_CHECK_HELP);
+                        } else {
+                            // greyed out but still focusable/readable; the note says why
+                            let mut v = ed.never_check_updates;
+                            ui.add_enabled(false, egui::Checkbox::new(&mut v, "Turn off Update Check for FFMPEG"))
+                                .on_disabled_hover_text(OWN_FOLDER_NOTE);
+                            hint(ui, OWN_FOLDER_NOTE);
+                        }
+                    });
                     ui.end_row();
                     ui.label("");
                     ui.checkbox(&mut ed.keep_logs_on_success, "Keep ffmpeg_error*.log files when a job succeeds");
@@ -1498,6 +1522,10 @@ impl App {
                     self.startup_check = None;
                     self.settings.last_update_check = now_unix();
                     let _ = self.settings.save();
+                    // the setting may have been switched on while the check ran: no notice then
+                    if !self.settings.may_check_updates(CheckTrigger::Automatic, u64::MAX, self.ffmpeg_in_use()) {
+                        return;
+                    }
                     if let (Ok(b), Some(v)) = (r, self.ff_version()) {
                         if compare(&version::parse_version(v), &b.version) == Verdict::UpdateAvailable {
                             self.update_banner = Some(format!("FFmpeg {} is available (installed: {v}).", b.label));

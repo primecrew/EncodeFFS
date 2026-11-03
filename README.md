@@ -317,7 +317,17 @@ and unfinished partial outputs, writes their paths to the log, and skips the sta
 - Default target is the app-managed folder (the Settings path is switched to it). Updating your configured folder
   in place is optional and needs a confirmation tick. Blocked while jobs run.
 - The previous build is kept in `<bin>.previous`; **Help › Roll back FFmpeg** swaps back (one generation).
-- Optional silent daily check (Settings) shows a banner when something newer exists. Nothing installs without a click.
+- **Automatic check:** when the app starts it looks for a newer FFmpeg at most once a day and shows a notice if
+  there is one. Nothing installs without a click.
+  - It only runs for the **app-managed copy** (the FFmpeg the app downloaded). With **your own FFmpeg folder**
+    (a folder you chose, an `ffmpeg` folder next to the app, or PATH) the app never checks by itself.
+  - **File › Settings › “Turn off Update Check for FFMPEG”** stops automatic checks and the notice completely. It is
+    **unchecked by default**, so checks stay on.
+  - With your own folder the option is greyed out (screen readers still read it), with a note that it doesn't apply.
+  - Upgrading from an older version keeps what you had: if automatic checks were on they stay on; if you had turned
+    them off, the new option is checked.
+  - **Help › Check for FFmpeg updates…** always works when you choose it, even with the option checked or your own
+    folder, and can download an app-managed copy. The dialog then says automatic checks are off.
 - **Check for app updates…** is a stub for now.
 
 ## Build

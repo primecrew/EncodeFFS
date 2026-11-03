@@ -1,5 +1,37 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.5.1 — "Turn off Update Check for FFMPEG"
+- **New option:** File › Settings › FFmpeg updates & logs › **Turn off Update Check for FFMPEG** (`never_check_updates`).
+  - **Unchecked by default** for new users and on first run, so the once-a-day check at startup stays on.
+  - When checked: no automatic check and no network call at startup, and no update notice (the notice is also
+    suppressed if the option is switched on while a check is running).
+  - Help › Check for FFmpeg updates… still works and notes that automatic checks are off.
+  - The checkbox's visible text is its screen-reader label, and plain help text sits under it.
+- **Own FFmpeg folder:**
+  - Automatic checks only run for the **app-managed copy** (`FfPaths::is_app_managed`: found as the managed copy,
+    or the configured folder is the managed bin, compared case- and slash-insensitively).
+  - With the user's own folder (configured elsewhere, next to the app, or PATH) automatic checks never run.
+  - The option is shown greyed out (still in the accessibility tree, hover text) with the note "Doesn't apply:
+    you're using your own FFmpeg folder…".
+  - The manual check still works and can install an app-managed copy.
+- **Upgrade path:** files without `never_check_updates` get `!auto_check_updates`; a missing key counts as the old
+  default, on. So nobody's behaviour changes. `auto_check_updates` is still written (mirror) so 0.5.0 behaves the
+  same after a downgrade.
+- **Scheduler:** a single pure function, `Settings::may_check_updates(trigger, now, FfmpegInUse)`. Manual checks are
+  always allowed. Automatic checks need app-managed FFmpeg, the option unchecked, and the last check more than a day ago.
+- **Tests:**
+  - **Unit:** the default is unchecked and checks are enabled (also with no settings file); migration of
+    old on/off/missing values and the new key winning; save writes a consistent mirror; the scheduler (day limit,
+    no FFmpeg, own folder, option checked, manual always allowed); which FFmpeg counts as app-managed.
+  - **Wine smoke test:**
+    - The Settings dialog with the managed copy (enabled, unchecked) and with an own folder (greyed out with the note,
+      HC 1.5×).
+    - With a check due, startup checked for the managed copy (`last_update_check` updated) but not with the option
+      checked or with an own folder.
+    - The manual Help check still worked with the option checked, showing the note.
+- **Not tested:** real Windows and a real screen reader. A disabled egui control isn't reachable with Tab; the note
+  under it is plain text.
+
 ## 0.5.0 — frameserving and read-only built-in presets
 - **Frameserver (AviSynth script)**, a new built-in preset type (`src/cmd/frameserve.rs`,
   `src/ffmpeg/avisynth.rs`, `src/ui/modes/frameserve.rs`).

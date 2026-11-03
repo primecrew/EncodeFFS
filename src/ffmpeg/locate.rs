@@ -101,6 +101,23 @@ pub fn managed_bin() -> PathBuf {
     managed_root().join("bin")
 }
 
+/// Is `dir` the app-managed FFmpeg folder? (Compared case-insensitively, ignoring a trailing slash
+/// and `\` vs `/`, because the configured path is typed or picked by the user.)
+pub fn is_managed_dir(dir: &Path, managed: &Path) -> bool {
+    fn norm(p: &Path) -> String {
+        let s = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()).to_string_lossy().replace('\\', "/").to_lowercase();
+        s.trim_end_matches('/').trim_start_matches("//?/").to_string()
+    }
+    norm(dir) == norm(managed)
+}
+
+impl FfPaths {
+    /// The copy the app downloaded and manages (found as "app-managed", or configured to that folder).
+    pub fn is_app_managed(&self) -> bool {
+        self.source == FfSource::Managed || is_managed_dir(&self.bin_dir, &managed_bin())
+    }
+}
+
 /// Candidate bin folders in resolution order (without PATH).
 pub fn candidates(configured: &Path) -> Vec<(PathBuf, FfSource)> {
     let mut v = Vec::new();
@@ -163,5 +180,26 @@ mod tests {
         assert_eq!(check_bin_dir(&d.join("bin")).unwrap(), d.join("bin"));
         assert_eq!(check_bin_dir(&d).unwrap(), d.join("bin"), "parent folder accepted");
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn managed_vs_own_folder() {
+        let root = std::env::temp_dir().join(format!("ffenc_mng_{}", crate::util::unique_id()));
+        let managed = root.join("FFmpegEncoder").join("ffmpeg").join("bin");
+        std::fs::create_dir_all(&managed).unwrap();
+        assert!(is_managed_dir(&managed, &managed));
+        let typed = PathBuf::from(format!("{}/", managed.to_string_lossy().to_uppercase()));
+        if cfg!(windows) {
+            assert!(is_managed_dir(&typed, &managed));
+        }
+        assert!(is_managed_dir(&PathBuf::from(format!("{}/", managed.display())), &managed), "trailing slash");
+        assert!(!is_managed_dir(&root.join("my ffmpeg").join("bin"), &managed));
+        let own = FfPaths { ffmpeg: "x".into(), ffprobe: "y".into(), bin_dir: root.join("mine"), source: FfSource::Configured };
+        assert!(!own.is_app_managed());
+        let m = FfPaths { source: FfSource::Managed, ..own.clone() };
+        assert!(m.is_app_managed());
+        let configured_to_managed = FfPaths { bin_dir: managed_bin(), ..own.clone() };
+        assert!(configured_to_managed.is_app_managed());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

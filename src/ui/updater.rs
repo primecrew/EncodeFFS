@@ -47,7 +47,9 @@ pub fn verdict_text(v: Verdict) -> (&'static str, Color32) {
 
 impl UpdaterUi {
     /// Open the dialog and start a check with the settings' source/channel.
+    /// Manual checks are always allowed, even with "Turn off Update Check for FFMPEG" checked.
     pub fn open_and_check(&mut self, ctx: &egui::Context, s: &Settings) {
+        debug_assert!(s.may_check_updates(ffenc::settings::CheckTrigger::Manual, 0, ffenc::settings::FfmpegInUse::OwnFolder));
         self.open = true;
         if self.install.is_none() {
             self.source = s.update_source;
@@ -91,6 +93,11 @@ impl UpdaterUi {
         }
         let mut open = self.open;
         crate::ui::common::fit(egui::Window::new("FFmpeg updates").open(&mut open).collapsible(false).resizable(true).default_width(620.0), ctx, true).show(ctx, |ui| {
+            if ff.is_some_and(|f| !f.is_app_managed()) {
+                hint(ui, "You're using your own FFmpeg folder, so the app never checks for updates by itself. This check runs only because you asked; installing the newest build gives you an app-managed copy (or updates your folder if you choose that).");
+            } else if settings.never_check_updates {
+                hint(ui, "Automatic update checks are off (File › Settings › “Turn off Update Check for FFMPEG”). This check runs only because you asked for it.");
+            }
             egui::Grid::new("upd").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                 ui.label("Installed");
                 ui.vertical(|ui| {
