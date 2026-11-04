@@ -100,9 +100,13 @@ fn existing_output_is_protected() {
     // 3. keep both -> "Out Video (2).mp4", original untouched
     let s = guarded(spec(&input, &out, &[]), Choice::KeepBoth).unwrap();
     assert_eq!(s.args[0], "-n");
-    assert_eq!(wait(&q, enqueue(s)), JobStatus::Done);
+    let id = enqueue(s);
+    assert_eq!(wait(&q, id), JobStatus::Done);
     let two = dir.join("Out Video (2).mp4");
     assert!(is_video(&ffprobe, &two), "keep both wrote (2)");
+    // the "Encoding Finished" popup gets the final name, not the temporary partial name
+    let fin = q.shared.lock().unwrap().jobs.iter().find(|j| j.id == id).unwrap().final_output.clone();
+    assert_eq!(fin.as_deref(), Some(two.as_path()));
     assert_eq!(std::fs::read(&out).unwrap(), ORIGINAL);
 
     // 4. skip -> nothing queued

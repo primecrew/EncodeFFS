@@ -52,13 +52,11 @@ pub struct Appearance {
     pub scale: f32,
     /// Extra factor for monospace text (commands, logs, chapter text), on top of `scale`.
     pub mono_scale: f32,
-    /// Bold interface text (Segoe UI Bold when available).
-    pub bold: bool,
 }
 
 impl Default for Appearance {
     fn default() -> Self {
-        Appearance { theme: ThemeChoice::System, scale: 1.0, mono_scale: 1.0, bold: false }
+        Appearance { theme: ThemeChoice::System, scale: 1.0, mono_scale: 1.0 }
     }
 }
 
@@ -140,7 +138,7 @@ pub struct Settings {
     pub show_source_panel: bool,
     /// Terminal syntax for "Copy command" in the run confirmation.
     pub copy_shell: crate::cmdline::Shell,
-    /// Theme, text size, bold (0.3.2; older files get the defaults).
+    /// Theme, text size (0.3.2; older files get the defaults).
     #[serde(deserialize_with = "lenient")]
     pub appearance: Appearance,
     /// What to do when an output file already exists (0.3.3).
@@ -150,6 +148,8 @@ pub struct Settings {
     pub keep_temp_files: bool,
     /// Audio & subtitles: added tracks may differ from the video by this many seconds before a warning (0.4).
     pub duration_tolerance_s: f64,
+    /// Show the "Encoding Finished" popup when jobs succeed (on by default).
+    pub show_finished_popup: bool,
     /// Remember window layout (0.5.2; on by default): window place/size, panel sizes, dialog sizes and
     /// open sections are saved in their own file next to this one and restored at the next start.
     pub remember_layout: bool,
@@ -193,6 +193,7 @@ impl Default for Settings {
             when_exists: crate::output_guard::WhenExists::Ask,
             keep_temp_files: false,
             duration_tolerance_s: 1.5,
+            show_finished_popup: true,
             remember_layout: true,
             managed_ffmpeg_dir: String::new(),
             modes: BTreeMap::new(),
@@ -226,15 +227,26 @@ pub fn roaming_dir() -> PathBuf {
     std::env::temp_dir().join("FFmpegEncoder")
 }
 
+/// Marker file the installer puts next to the exe (0.5.3): an installed copy keeps its settings in
+/// %APPDATA%, never next to the exe.
+pub const INSTALLED_MARKER: &str = "FFmpegEncoder.installed";
+
 /// Where settings live: next to the exe if that folder is writable (portable),
-/// otherwise %APPDATA%\FFmpegEncoder\settings.json.
+/// otherwise %APPDATA%\FFmpegEncoder\settings.json. Installed copies (marker file next to the
+/// exe) always use %APPDATA%.
 pub fn settings_path() -> PathBuf {
-    let ed = exe_dir();
-    let portable = ed.join(PORTABLE_FILE);
-    if (portable.exists() && std::fs::OpenOptions::new().append(true).open(&portable).is_ok()) || dir_writable(&ed) {
+    settings_path_in(&exe_dir(), &roaming_dir())
+}
+
+pub fn settings_path_in(exe_dir: &Path, roaming: &Path) -> PathBuf {
+    if exe_dir.join(INSTALLED_MARKER).exists() {
+        return roaming.join("settings.json");
+    }
+    let portable = exe_dir.join(PORTABLE_FILE);
+    if (portable.exists() && std::fs::OpenOptions::new().append(true).open(&portable).is_ok()) || dir_writable(exe_dir) {
         return portable;
     }
-    roaming_dir().join("settings.json")
+    roaming.join("settings.json")
 }
 
 /// Folder for the app log (next to the settings file).
@@ -394,7 +406,7 @@ mod tests {
         std::fs::write(&p, r#"{"crf": 21, "appearance": {"theme": "Light", "scale": 9.0, "mono_scale": 0.1, "bold": true}}"#).unwrap();
         let s = Settings::load_from(&p);
         assert_eq!(s.crf, 21);
-        assert_eq!(s.appearance, Appearance { theme: ThemeChoice::Light, scale: 3.0, mono_scale: 0.8, bold: true });
+        assert_eq!(s.appearance, Appearance { theme: ThemeChoice::Light, scale: 3.0, mono_scale: 0.8 });
         std::fs::write(&p, r#"{"crf": 22, "appearance": {"theme": "Neon", "scale": "big"}}"#).unwrap();
         let s = Settings::load_from(&p);
         assert_eq!((s.crf, s.appearance.clone()), (22, Appearance::default()));
@@ -402,7 +414,7 @@ mod tests {
         assert_eq!(Settings::load_from(&p).crf, 23);
         // round trip
         let mut s = Settings::default();
-        s.appearance = Appearance { theme: ThemeChoice::HighContrast, scale: 2.5, mono_scale: 1.25, bold: true };
+        s.appearance = Appearance { theme: ThemeChoice::HighContrast, scale: 2.5, mono_scale: 1.25 };
         s.save_to(&p).unwrap();
         assert_eq!(Settings::load_from(&p).appearance, s.appearance);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -536,5 +548,36 @@ mod tests {
             assert_eq!(Settings::load_from(&p).managed_ffmpeg_dir, v);
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn finished_popup_setting_and_old_bold_field() {
+        assert!(Settings::default().show_finished_popup);
+        // older files: no key -> on; a leftover "bold" (option removed) is ignored and not written back
+        let s = Settings::from_json(r#"{"crf": 20, "appearance": {"theme": "Dark", "bold": true}}"#).unwrap();
+        assert!(s.show_finished_popup);
+        assert_eq!(s.appearance.theme, ThemeChoice::Dark);
+        let off = Settings::from_json(r#"{"show_finished_popup": false}"#).unwrap();
+        assert!(!off.show_finished_popup);
+        let dir = std::env::temp_dir().join(format!("ffenc_fp_{}", crate::util::unique_id()));
+        let p = dir.join("s.json");
+        off.save_to(&p).unwrap();
+        assert!(!Settings::load_from(&p).show_finished_popup);
+        s.save_to(&p).unwrap();
+        assert!(!std::fs::read_to_string(&p).unwrap().contains("bold"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn portable_vs_installed_settings_location() {
+        let root = std::env::temp_dir().join(format!("ffenc_inst_{}", crate::util::unique_id()));
+        let (exe, roam) = (root.join("app"), root.join("roaming").join(crate::DATA_DIR_NAME));
+        std::fs::create_dir_all(&exe).unwrap();
+        assert_eq!(settings_path_in(&exe, &roam), exe.join(PORTABLE_FILE), "portable: next to the exe");
+        std::fs::write(exe.join(INSTALLED_MARKER), "installed").unwrap();
+        assert_eq!(settings_path_in(&exe, &roam), roam.join("settings.json"), "installed: %APPDATA%");
+        assert!(INSTALLED_MARKER.starts_with(crate::FILE_STEM));
+        assert_ne!(INSTALLED_MARKER, "FFmpegEncoder-Experimental.installed");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

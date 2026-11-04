@@ -1,5 +1,26 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.5.3 — Encoding Finished popup; installer; Bold text option removed
+- **Encoding Finished popup** (`show_finished_popup`, on by default; Settings › When encoding finishes):
+  - `ffenc::finished`: `Tracker` collects finished jobs and hands out one popup when the queue is idle again
+    and at least one job succeeded (single job, batch or queue); failures/cancellations only counted.
+  - Jobs record `final_output` (the published name after keep-both numbering, the remux destination, or the
+    output path); never the temporary partial name.
+  - Go to file: `explorer.exe /select,"<path>"` (from %SystemRoot%), passed raw; paths containing `"` or
+    control characters (invalid in Windows names) or a missing file open the folder instead.
+  - UI `ui::finished` (foreground window, Esc closes, default button focused one frame later and not while a
+    text field has focus; taskbar flash via RequestUserAttention when unfocused).
+  - Tests: `finished::tests` (tracker, quoting, fallback, formatting), `settings::tests::finished_popup_setting_and_old_bold_field`,
+    `tests/overwrite_guard.rs` checks `final_output` is the keep-both name.
+- **Installer** (ported from the experimental edition, stable names): `installer/installer.nsi` +
+  `scripts/build-release.sh` → `dist/FFmpegEncoder-<v>-setup.exe` and the portable zip. App id / uninstall key
+  `FFmpegEncoder` (experimental: `FFmpegEncoderExperimental`), folder `FFmpeg Encoder`, per-user default, optional
+  per-machine, Start Menu + optional desktop shortcut, keeps settings unless ticked, no FFmpeg bundled.
+  `settings::INSTALLED_MARKER` (`FFmpegEncoder.installed`) → settings in `%APPDATA%\FFmpegEncoder`;
+  test `settings::tests::portable_vs_installed_settings_location`.
+- **Bold text removed** (Settings › Appearance and View menu): `appearance.bold` is gone; old settings files
+  that still have it load fine (ignored, not written back). Fonts: Segoe UI regular only.
+
 ## 0.5.2 — window layout, app-managed FFmpeg location
 Functional changes ported from the experimental branch (0.6.0-dev.2/dev.3); no UI restyle, splash or installer.
 - **Window layout** (`remember_layout`, on by default; Settings › Window layout › Remember / Reset):

@@ -93,6 +93,8 @@ pub struct Job {
     pub group: Option<u64>,
     pub keep_log: bool,
     pub elapsed: Option<Duration>,
+    /// The file a successful job left behind under its final name (after keep-both numbering).
+    pub final_output: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -210,6 +212,7 @@ impl Queue {
                 group: gid,
                 keep_log,
                 elapsed: None,
+                final_output: None,
             });
             ids.push(id);
         }
@@ -315,6 +318,9 @@ impl Queue {
                         j.elapsed = Some(started.elapsed());
                         if status == JobStatus::Done {
                             j.progress = Some(1.0);
+                            if j.final_output.is_none() {
+                                j.final_output = j.spec.output.clone();
+                            }
                         }
                     }
                     if let Some(g) = job.group {
@@ -514,6 +520,7 @@ impl Queue {
         if let PostAction::Publish { temp, dest, overwrite } = &spec.post {
             match crate::output_guard::publish(temp, dest, *overwrite) {
                 Ok(used) => {
+                    self.set_progress(job.id, |j| j.final_output = Some(used.clone()));
                     if &used != dest {
                         self.log(format!("{} appeared while encoding; the new file was saved as {} instead.", dest.display(), used.display()));
                     } else if *overwrite {
@@ -530,6 +537,7 @@ impl Queue {
                 let _ = std::fs::remove_file(temp);
                 return JobStatus::Failed(format!("{e}. Source MKV kept."));
             }
+            self.set_progress(job.id, |j| j.final_output = Some(dest.clone()));
             let mut s = self.shared.lock().unwrap();
             let mut deleted = None;
             if let Some(src) = delete_source {
