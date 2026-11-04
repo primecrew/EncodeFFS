@@ -22,11 +22,26 @@ pub mod util;
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const APP_NAME: &str = "FFmpeg Encoder";
 
-/// Folder name under %APPDATA% / %LOCALAPPDATA%.
-pub const DATA_DIR_NAME: &str = "FFmpegEncoder";
-/// Prefix of the portable files next to the exe.
-pub const FILE_STEM: &str = "FFmpegEncoder";
-/// The experimental edition's folder name (its downloaded FFmpeg is never used or moved by this app).
-pub const OTHER_EDITION_DATA_DIR_NAME: &str = "FFmpegEncoder-Experimental";
+// ---- Edition identity (codecs branch). A separate app next to the stable one: own exe name,
+// data folders and portable file names, so it never writes the stable version's settings,
+// presets or downloaded FFmpeg ("Import settings from stable" only reads/copies them).
+/// Shown after the version in the window title.
+pub const EDITION: &str = "Codecs";
+/// Folder name under %APPDATA% / %LOCALAPPDATA% (stable: "FFmpegEncoder").
+pub const DATA_DIR_NAME: &str = "FFmpegEncoder-Codecs";
+/// Stable version's folder name (read only, for importing).
+pub const STABLE_DATA_DIR_NAME: &str = "FFmpegEncoder";
+/// Prefix of the portable files next to the exe (stable: "FFmpegEncoder").
+pub const FILE_STEM: &str = "FFmpegEncoder-Codecs";
+pub const STABLE_FILE_STEM: &str = "FFmpegEncoder";
+/// Other editions' folders (their downloaded FFmpeg is never used or moved by this app).
+pub const OTHER_EDITION_DATA_DIR_NAMES: &[&str] = &["FFmpegEncoder", "FFmpegEncoder-Experimental"];
+
+pub mod import_stable;
+
+/// "FFmpeg Encoder 0.5.4-codecs.1 (Codecs)"
+pub fn full_title() -> String {
+    format!("{APP_NAME} {APP_VERSION} ({EDITION})")
+}
 
 pub mod layout;

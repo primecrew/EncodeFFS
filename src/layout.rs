@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 /// Layout file next to the portable settings file.
-pub const PORTABLE_FILE: &str = "FFmpegEncoder.layout.json";
+pub const PORTABLE_FILE: &str = "FFmpegEncoder-Codecs.layout.json";
 /// Layout file in the %APPDATA% folder (installed copies).
 pub const ROAMING_FILE: &str = "layout.json";
 pub const FORMAT_VERSION: u32 = 1;

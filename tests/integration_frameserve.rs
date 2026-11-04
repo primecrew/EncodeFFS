@@ -37,7 +37,7 @@ fn enc(script_path: PathBuf, text: String, output: PathBuf) -> EncodeParams {
         script_path,
         script_text: text,
         output,
-        video: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: None },
+        video: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: None, ..Default::default() },
         audio: AudioEncode::default(),
         has_audio: true,
         pix_fmt: "yuv420p".into(),

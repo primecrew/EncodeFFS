@@ -186,9 +186,9 @@ impl Mode for BatchMode {
             ui.end_row();
         });
         if bs.passthrough.encodes_video() {
-            section(ui, "Video (libx264)");
+            section(ui, &format!("Video ({})", bs.video.codec.encoder()));
             egui::Grid::new("m7v").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                video_encode_ui(ui, "m7", &mut bs.video, true);
+                crate::ui::codecs_ui::video_codec_ui(ui, "m7", &mut bs.video, cx.encoders.as_ref(), None);
                 range_ui(ui, &mut bs.range_convert);
                 ui.label("Deinterlace");
                 ui.vertical(|ui| {
@@ -203,9 +203,9 @@ impl Mode for BatchMode {
             warn(ui, "Interlaced video detected, but video passthrough is selected, so no deinterlacing will be applied.");
         }
         if bs.passthrough.encodes_audio() {
-            section(ui, "Audio (AAC)");
+            section(ui, "Audio");
             egui::Grid::new("m7a").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                audio_encode_ui(ui, "m7a", &mut bs.audio);
+                crate::ui::codecs_ui::audio_codec_ui(ui, "m7a", &mut bs.audio, cx.encoders.as_ref(), true);
             });
         }
         egui::Grid::new("m7f").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
@@ -213,7 +213,9 @@ impl Mode for BatchMode {
         });
     }
 
-    fn build(&mut self, _cx: &Ctx) -> Result<Plan, String> {
+    fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
+        let bs = &self.st.bs;
+        crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), bs.passthrough.encodes_video().then_some(&bs.video), bs.passthrough.encodes_audio().then_some(&bs.audio))?;
         if self.scan.is_some() {
             return Err("Still scanning the folder.".into());
         }

@@ -220,7 +220,7 @@ impl Mode for CustomMode {
             });
             ui.end_row();
             if o.video == VideoAction::X264 {
-                video_encode_ui(ui, "cu", &mut o.video_encode, true);
+                crate::ui::codecs_ui::video_codec_ui(ui, "cu", &mut o.video_encode, cx.encoders.as_ref(), None);
                 ui.label("Resize");
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut o.resize, "New vertical resolution");
@@ -344,7 +344,10 @@ impl Mode for CustomMode {
         }
     }
 
-    fn build(&mut self, _cx: &Ctx) -> Result<Plan, String> {
+    fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
+        if self.st.o.video == VideoAction::X264 {
+            crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&self.st.o.video_encode), None)?;
+        }
         let st = &self.st;
         if st.out_dir.trim().is_empty() {
             return Err("Choose an output folder.".into());

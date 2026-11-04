@@ -111,7 +111,8 @@ pub fn build(pr: &ReencodeParams) -> Result<BuiltCommand, String> {
             resize,
             pr.range_convert.then(|| RANGE_FILTER.to_string()),
         ]);
-        a.extend(x264_args(&pr.video, filter.as_deref(), pr.range_convert));
+        warnings.extend(super::codecs::check_video(&pr.video, &pr.output)?);
+        a.extend(super::codecs::video_args(&pr.video, filter.as_deref(), pr.range_convert, &pr.output));
     } else {
         a.push_all(["-c:v", "copy"]);
         if pr.deinterlace {
@@ -127,11 +128,12 @@ pub fn build(pr: &ReencodeParams) -> Result<BuiltCommand, String> {
 
     // ---- audio
     if pr.passthrough.encodes_audio() {
-        a.extend(pr.audio.aac_args());
+        warnings.extend(super::codecs::check_audio(&pr.audio, &pr.output)?);
+        a.extend(super::codecs::audio_args(&pr.audio));
         // A plain -filter:a creates one simple filtergraph per output audio stream,
         // so every audio track gets the gain/compressor while keeping its order,
         // language/title tags and dispositions (no filter_complex needed).
-        if let Some(chain) = pr.audio.filter_chain() {
+        if let Some(chain) = pr.audio.filter_chain().filter(|_| pr.audio.codec != super::codecs::AudioCodec::Copy) {
             a.push_all(["-filter:a".to_string(), chain]);
         }
     } else {

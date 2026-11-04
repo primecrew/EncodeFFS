@@ -1,6 +1,7 @@
 //! The egui application: menu, mode list, mode form, preview dialog, queue + log.
 
 pub mod chapter_creator;
+pub mod codecs_ui;
 pub mod common;
 pub mod finished;
 pub mod layout;
@@ -331,7 +332,17 @@ const NEVER_CHECK_HELP: &str = "Unchecked (the default): when the app starts it 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, startup: Option<layout::Startup>) -> Self {
         let first_run = !settings::settings_path().exists();
+        // codecs edition: on the very first start, copy the stable version's settings + presets
+        // (the stable files are only read; its downloaded FFmpeg is not copied)
+        let imported = if first_run {
+            ffenc::import_stable::find().map(|f| ffenc::import_stable::import_into(&f, &settings::settings_path(), &locate::stable_managed_bin()))
+        } else {
+            None
+        };
         let mut settings = Settings::load();
+        if let Some(Err(e)) = &imported {
+            eprintln!("import from stable failed: {e}");
+        }
         // where the app-managed FFmpeg lives (before anything looks for FFmpeg)
         ffenc::ffmpeg::managed::set_location(&settings.managed_ffmpeg_dir);
         // appearance before the first frame, so panels are laid out at the right scale
@@ -339,7 +350,7 @@ impl App {
         theme::apply(&cc.egui_ctx, &settings.appearance);
         let applied = Some(settings.appearance.clone());
         let ctx = cc.egui_ctx.clone();
-        let queue = Queue::new(Some(settings::logs_dir().join("FFmpegEncoder.log")), move || ctx.request_repaint());
+        let queue = Queue::new(Some(settings::logs_dir().join(format!("{}.log", ffenc::FILE_STEM))), move || ctx.request_repaint());
         queue.log(format!("{} {} started. Settings: {}", ffenc::APP_NAME, ffenc::APP_VERSION, settings::settings_path().display()));
         queue.set_keep_temp(settings.keep_temp_files);
         let registry = settings::logs_dir().join("partial-outputs.txt");
@@ -406,7 +417,10 @@ impl App {
             ff_task: None,
             preview: None,
             error: None,
-            info: None,
+            info: match &imported {
+                Some(Ok(r)) => Some(("Imported from the stable version".into(), format!("This is the experimental Codecs build; it keeps its own settings, separate from the stable version. Your stable FFmpeg Encoder settings and presets were copied in:\n\n{}\n\nThe stable version's files were only read, not changed.", r.notes.join("\n")))),
+                _ => None,
+            },
             drop_note: None,
             started: std::time::Instant::now(),
             sim_drop_done: false,
@@ -504,7 +518,7 @@ impl App {
                 self.pre.list.extend(new);
                 if n > 0 {
                     let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-                    let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+                    let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
                     self.pre.select(first, &cx);
                 }
                 self.save_presets();
@@ -520,7 +534,7 @@ impl App {
 
     fn export_presets(&mut self, all: bool) {
         let list: Vec<Preset> = if all { (0..self.pre.list.len()).map(|i| self.pre.export_copy(i, &self.settings)).collect() } else { vec![self.pre.export_copy(self.pre.current, &self.settings)] };
-        let name = if all { "FFmpegEncoder presets.json".to_string() } else { format!("{}.preset.json", ffenc::util::safe_name(&list[0].name)) };
+        let name = if all { format!("{} presets.json", ffenc::FILE_STEM) } else { format!("{}.preset.json", ffenc::util::safe_name(&list[0].name)) };
         let Some(f) = rfd::FileDialog::new().add_filter("Presets (JSON)", &["json"]).set_file_name(name).save_file() else { return };
         match std::fs::write(&f, pstore::to_json(&list)) {
             Ok(()) => self.queue.log(format!("Exported {} preset(s) to {}", list.len(), f.display())),
@@ -550,7 +564,7 @@ impl App {
                 _ => {}
             }
         }
-        let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx };
+        let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
         match self.pre.editor(idx, &self.settings).mode.build(&cx) {
             Ok(plan) => {
                 self.preview = Some(Preview::new(plan, ff.ffmpeg.clone(), self.settings.when_exists));
@@ -1198,7 +1212,7 @@ impl App {
         let act = self.pre.dialogs(ctx);
         if !matches!(act, Action::None) {
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
             let r = self.pre.apply(act, &cx);
             if let Err(e) = r {
                 self.error = Some(e);
@@ -1299,7 +1313,7 @@ impl App {
     /// Files from a drop or Ctrl+O into the selected preset.
     fn route_paths(&mut self, ctx: &egui::Context, dropped: Vec<PathBuf>) {
         let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-        let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+        let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
         let idx = self.pre.current;
         let ed = self.pre.editor(idx, &self.settings);
         let paths = if ed.mode.wants_folders() { dropped.clone() } else { ffenc::util::expand_dropped(&dropped) };
@@ -1447,7 +1461,7 @@ impl App {
                 mloc_out = self.mloc.settings_ui(ui, blocked);
                 common::section(ui, "Encoding defaults (used by built-in presets that are not customised, and by new blank presets)");
                 egui::Grid::new("set_e").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                    let mut v = ffenc::cmd::common::VideoEncode { crf: ed.crf, preset: ed.preset.clone(), tune: None };
+                    let mut v = ffenc::cmd::common::VideoEncode { crf: ed.crf, preset: ed.preset.clone(), tune: None, ..Default::default() };
                     common::video_encode_ui(ui, "set", &mut v, false);
                     ed.crf = v.crf;
                     ed.preset = v.preset;
@@ -1694,7 +1708,7 @@ impl eframe::App for App {
         let presets_panel = egui::SidePanel::left(layout::panel_id("presets")).resizable(true).default_width(presets_w).width_range(150.0..=(screen.x * 0.45).max(200.0)).show(ctx, |ui| {
             ui.add_space(4.0);
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
             match self.pre.sidebar(ui, &cx) {
                 None => {}
                 Some(SideEvent::Selected) => self.save_settings(),
@@ -1790,7 +1804,7 @@ impl eframe::App for App {
             }
             egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                 let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-                let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+                let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
                 self.pre.editor(idx, &self.settings).mode.ui(ui, &cx);
                 ui.add_space(10.0);
                 if ui.add_sized([180.0, 32.0], egui::Button::new(RichText::new("Preview & run…").strong())).clicked() {

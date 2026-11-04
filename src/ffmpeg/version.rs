@@ -155,6 +155,8 @@ pub struct FfmpegCheck {
     pub configuration: String,
     pub has_libx264: bool,
     pub has_aac: bool,
+    /// Optional encoders (codecs branch), from the same `ffmpeg -encoders` run (cached per check).
+    pub encoders: crate::cmd::codecs::Encoders,
 }
 
 /// Run `ffmpeg -version` and `ffmpeg -encoders`.
@@ -178,6 +180,7 @@ pub fn check_ffmpeg(ffmpeg: &Path) -> Result<FfmpegCheck, String> {
         configuration: configuration_from_output(&ver_full).unwrap_or_default(),
         has_libx264: has_encoder(&enc, "libx264"),
         has_aac: has_encoder(&enc, "aac"),
+        encoders: crate::cmd::codecs::Encoders::from_list(&enc),
     })
 }
 

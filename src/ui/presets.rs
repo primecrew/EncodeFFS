@@ -313,10 +313,13 @@ impl PresetUi {
         if !fav.is_empty() {
             out.push((Some("Favorites".to_string()), fav));
         }
+        // the "Experimental codecs" folder goes below the regular presets
+        let exp = folders.iter().position(|g| g.0.eq_ignore_ascii_case(presets::EXPERIMENTAL_GROUP)).map(|i| folders.remove(i));
         out.extend(folders.into_iter().map(|(n, v)| (Some(n), v)));
         if !rest.is_empty() {
             out.push((Some("Presets".to_string()), rest));
         }
+        out.extend(exp.map(|(n, v)| (Some(n), v)));
         out
     }
 
@@ -991,7 +994,7 @@ mod tests {
     fn builtins_are_read_only_and_prompt_save_as_new() {
         let s = Settings::default();
         let ctx = egui::Context::default();
-        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx };
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, encoders: None };
         let mut pu = ui_with(presets::factory_all());
         assert!(pu.is_builtin(0));
         set(pu.editor(0, &s), "input", json!("/v/a.mkv"), &s);
@@ -1051,7 +1054,7 @@ mod tests {
     fn leaving_an_edited_builtin_prompts() {
         let s = Settings::default();
         let ctx = egui::Context::default();
-        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx };
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, encoders: None };
         let mut pu = ui_with(presets::factory_all());
         let mix = pu.index_of("builtin-mix").unwrap();
         // unchanged: no prompt
@@ -1124,7 +1127,7 @@ mod tests {
     fn create_saveas_rename_delete_reset() {
         let s = Settings::default();
         let ctx = egui::Context::default();
-        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx };
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, encoders: None };
         let mut pu = ui_with(presets::factory_all());
         let n0 = pu.list.len();
         // blank custom
@@ -1183,7 +1186,7 @@ mod tests {
     fn select_carries_input_file() {
         let s = Settings::default();
         let ctx = egui::Context::default();
-        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx };
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, encoders: None };
         let f = std::env::temp_dir().join(format!("carry_{}.mkv", ffenc::util::unique_id()));
         std::fs::write(&f, b"x").unwrap();
         let mut pu = ui_with(presets::factory_all());
@@ -1215,8 +1218,12 @@ mod tests {
         let mut pu = ui_with(presets::factory_all());
         let n = pu.list.len();
         let secs = pu.sections("");
-        assert_eq!(secs.len(), 1);
-        assert!(secs[0].0.is_none() && secs[0].1 == (0..n).collect::<Vec<_>>(), "user order, no headings");
+        // the experimental-codec built-ins start in their own folder, below the rest
+        let e = n - 4;
+        assert_eq!(secs.len(), 2);
+        assert_eq!(secs[0].0.as_deref(), Some("Presets"));
+        assert_eq!(secs[0].1, (0..e).collect::<Vec<_>>(), "user order");
+        assert_eq!((secs[1].0.as_deref(), secs[1].1.clone()), (Some(presets::EXPERIMENTAL_GROUP), (e..n).collect::<Vec<_>>()));
         // favorites + a folder
         pu.list[3].pinned = true;
         pu.list[5].pinned = true;
@@ -1224,7 +1231,7 @@ mod tests {
         pu.list[4].category = "audio".into();
         let secs = pu.sections("");
         let heads: Vec<_> = secs.iter().map(|s| s.0.clone().unwrap()).collect();
-        assert_eq!(heads, ["Favorites", "Audio", "Presets"]);
+        assert_eq!(heads, ["Favorites", "Audio", "Presets", presets::EXPERIMENTAL_GROUP]);
         assert_eq!(secs[0].1, vec![3, 5]);
         assert_eq!(secs[1].1, vec![1, 4], "folder names match case-insensitively");
         assert!(!secs[2].1.contains(&3) && secs[2].1.contains(&0));
@@ -1260,7 +1267,7 @@ mod tests {
     fn category_action_and_reset_keeps_pin() {
         let s = Settings::default();
         let ctx = egui::Context::default();
-        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx };
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, encoders: None };
         let mut pu = ui_with(presets::factory_all());
         pu.apply(Action::SetCategory { id: "builtin-mix".into(), category: "  Audio ".into() }, &cx).unwrap();
         let i = pu.index_of("builtin-mix").unwrap();

@@ -4,6 +4,12 @@ Portable Windows GUI (Rust + egui) that replaces the PowerShell script v22.0.
 One `FFmpegEncoder.exe`, no installer, no runtime. Needs `ffmpeg.exe` + `ffprobe.exe`
 (the app can download them for you).
 
+> **Codecs edition (branch `codecs`, 0.5.4-codecs.1)** — an experimental side-by-side build:
+> `FFmpegEncoder-Codecs.exe`, window title “(Codecs)”, its own settings/presets/FFmpeg folders
+> (`%APPDATA%\FFmpegEncoder-Codecs`, `%LOCALAPPDATA%\FFmpegEncoder-Codecs`, portable
+> `FFmpegEncoder-Codecs.*.json`). It never writes the stable version's files; on the very first start it
+> copies the stable settings and presets in (read only). Portable zip only. See “Video & audio codecs”.
+
 ## Run
 1. Copy `FFmpegEncoder.exe` anywhere (e.g. `C:\Apps\FFmpegEncoder\`) and run it.
 2. First start (and whenever no working ffmpeg/ffprobe is found) asks for the folder holding `ffmpeg.exe` and
@@ -292,6 +298,29 @@ Re-encode, Custom pipeline (single file and folder batch) and Batch re-encode ca
   **name suffix**, **faststart**, and free-form **extra input options** (before `-i`) and **extra output options**
   (before the output file; quotes group values with spaces).
 
+## Video & audio codecs (Codecs edition)
+H.264 (libx264) + AAC stays the default everywhere; the existing presets produce byte-for-byte the same
+commands as 0.5.3 (`tests/h264_unchanged.rs`).
+- **Video codec** (Re-encode, Batch re-encode, Custom pipeline video step, Join re-encode):
+  - **H.264 (libx264)** — default, plays everywhere.
+  - **HEVC / H.265 (libx265)** — CRF (20 game / 18 camera), presets ultrafast…placebo (slow), tunes grain /
+    animation / fastdecode / zerolatency, 10-bit (yuv420p10le), `-tag:v hvc1` in MP4/MOV (Apple players),
+    `-x265-params log-level=error`.
+  - **AV1 (SVT-AV1)** — CRF 0–63 (28 game / 26 camera), preset 0–13 (5), 10-bit, optional film grain
+    (`-svtav1-params film-grain=N:film-grain-denoise=0|1`).
+  - CRF values are not comparable across codecs. The ⓘ button explains player/browser compatibility.
+  - Containers: MKV/MP4 OK for all; AV1 in MOV gets a caution; invalid combinations are refused with a
+    plain message.
+  - Codecs the FFmpeg build lacks (checked with `ffmpeg -encoders`, cached per FFmpeg path) are disabled
+    with an explanation.
+  - Warnings: HEVC/AV1 don't play in every browser; an 8-bit source with 10-bit on (fine, explains why).
+- **Audio**: AAC (default), AC3 (384 / 448 / 640 kb/s, up to 5.1; more channels are downmixed to 5.1),
+  or Keep original (stream copy; not for Join).
+- **Presets**: four read-only built-ins in the sidebar folder **Experimental codecs** (below the others):
+  Archive – HEVC 10-bit (game / camera footage) CRF 20 / 18 slow, Archive – AV1 10-bit (game / camera
+  footage) CRF 28 / 26 preset 5 (grain off); audio AAC. Existing presets files get them on first load;
+  your own presets are untouched (18 built-ins in total).
+
 ## Encoding Finished popup (0.5.3)
 - When jobs finish **successfully**, a small window **Encoding Finished** shows the output file's final name (after
   "keep both" numbering), its folder, size and how long it took, with **Go to file** (Explorer opens with the file
@@ -397,7 +426,7 @@ File › Settings › **App-managed FFmpeg location**: where the FFmpeg the app 
 
 ## Build
 ```
-# Linux cross-compile (what produced dist/):
+# Linux cross-compile (what produced dist/; on the codecs branch: dist-codecs/, portable zip only):
 sudo apt install gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
 rustup target add x86_64-pc-windows-gnu
 cargo build --release --target x86_64-pc-windows-gnu

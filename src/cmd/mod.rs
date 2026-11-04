@@ -5,6 +5,7 @@
 //! One module per mode so new modes can be added without touching the others.
 
 pub mod common;
+pub mod codecs;     // HEVC / AV1 / AC3 / audio copy (codecs branch)
 pub mod chapters;
 pub mod reencode;   // mode 1 + mode 7 (batch uses the same builder per file)
 pub mod still;      // mode 2

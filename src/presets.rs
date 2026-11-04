@@ -19,7 +19,7 @@ use serde_json::Value;
 
 use crate::settings::{settings_path, PORTABLE_FILE};
 
-pub const PORTABLE_PRESETS_FILE: &str = "FFmpegEncoder.presets.json";
+pub const PORTABLE_PRESETS_FILE: &str = "FFmpegEncoder-Codecs.presets.json";
 pub const FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -87,7 +87,14 @@ pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
     ("builtin-frameserve", "frameserve", "Frameserver (AviSynth script)", "Encode straight from your editor through DebugMode FrameServer: pick the signpost .avi, the app writes the AviSynth script (ConvertToYUV420 by default) and encodes it with x264 + AAC."),
     ("builtin-custom", "custom", "Custom pipeline", "Build your own: video / audio / subtitle actions, trim, chapters, container, extra ffmpeg args."),
     ("builtin-addchapters", "custom", "Add chapters (no re-encode)", "Copy every stream and add chapters (every 5 min, your own list, or imported) – no quality loss."),
+    ("builtin-hevc-game", "reencode", "Archive – HEVC 10-bit (game footage)", "Experimental: libx265 CRF 20, preset slow, 10-bit, AAC. Smaller files than H.264; not every device/browser plays HEVC."),
+    ("builtin-hevc-camera", "reencode", "Archive – HEVC 10-bit (camera footage)", "Experimental: libx265 CRF 18, preset slow, 10-bit, AAC. Smaller files than H.264; not every device/browser plays HEVC."),
+    ("builtin-av1-game", "reencode", "Archive – AV1 10-bit (game footage)", "Experimental: SVT-AV1 CRF 28, preset 5, 10-bit, AAC. Very small files; needs a recent player/GPU to decode."),
+    ("builtin-av1-camera", "reencode", "Archive – AV1 10-bit (camera footage)", "Experimental: SVT-AV1 CRF 26, preset 5, 10-bit, film grain off, AAC. Very small files; needs a recent player/GPU to decode."),
 ];
+
+/// Sidebar folder the experimental-codec built-ins start in (below the others).
+pub const EXPERIMENTAL_GROUP: &str = "Experimental codecs";
 
 /// Factory option values (null = the kind's defaults).
 pub fn factory_values(id: &str) -> Value {
@@ -96,6 +103,14 @@ pub fn factory_values(id: &str) -> Value {
             "video": "Copy", "audio": "Copy", "subs": "Copy",
             "chapter_mode": "Auto", "chapter_interval_min": 5.0,
             "container": "same", "suffix": "_chapters", "faststart": true
+        }),
+        "builtin-hevc-game" | "builtin-hevc-camera" => serde_json::json!({
+            "video": { "codec": "Hevc", "crf": if id.ends_with("game") { 20 } else { 18 }, "preset": "slow", "tune": null, "ten_bit": true },
+            "suffix": "_hevc"
+        }),
+        "builtin-av1-game" | "builtin-av1-camera" => serde_json::json!({
+            "video": { "codec": "Av1", "crf": if id.ends_with("game") { 28 } else { 26 }, "svt_preset": 5, "ten_bit": true, "film_grain": 0 },
+            "suffix": "_av1"
         }),
         _ => Value::Null,
     }
@@ -110,7 +125,7 @@ pub fn factory(id: &str) -> Option<Preset> {
         builtin: Some(id.into()),
         values: factory_values(id),
         pinned: false,
-        category: String::new(),
+        category: if desc.starts_with("Experimental:") { EXPERIMENTAL_GROUP.into() } else { String::new() },
         hidden: false,
     })
 }
@@ -350,11 +365,49 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn experimental_codec_presets() {
+        use crate::cmd::codecs::VideoCodec;
+        use crate::cmd::common::{AudioEncode, VideoEncode};
+        let v = |id: &str| -> VideoEncode { serde_json::from_value(factory(id).unwrap().values["video"].clone()).unwrap() };
+        let h = v("builtin-hevc-game");
+        assert_eq!((h.codec, h.crf, h.preset.as_str(), h.ten_bit), (VideoCodec::Hevc, 20, "slow", true));
+        assert_eq!(v("builtin-hevc-camera").crf, 18);
+        let a = v("builtin-av1-game");
+        assert_eq!((a.codec, a.crf, a.svt_preset, a.ten_bit, a.film_grain), (VideoCodec::Av1, 28, 5, true, 0));
+        assert_eq!(v("builtin-av1-camera").crf, 26);
+        // audio stays AAC default
+        assert!(factory("builtin-av1-camera").unwrap().values.get("audio").is_none());
+        assert_eq!(AudioEncode::default().codec, crate::cmd::codecs::AudioCodec::Aac);
+        // plain re-encode stays H.264
+        assert!(factory("builtin-reencode").unwrap().values.is_null());
+        assert_eq!(VideoEncode::default().codec, VideoCodec::H264);
+    }
+
+    #[test]
+    fn upgrade_adds_codec_presets_only() {
+        // a 0.5.3 presets file: all old built-ins known, plus a user preset
+        let old_ids: Vec<String> = BUILTINS.iter().filter(|b| !b.0.contains("hevc") && !b.0.contains("av1")).map(|b| b.0.to_string()).collect();
+        let mut list: Vec<Preset> = old_ids.iter().map(|id| Preset { values: Value::Null, ..factory(id).unwrap() }).collect();
+        let user = Preset { id: "p1".into(), name: "Mine".into(), builtin: None, values: json!({"video": {"crf": 17, "preset": "medium"}}), ..factory("builtin-reencode").unwrap() };
+        list.push(user.clone());
+        let mut out = list;
+        enforce_builtins(&mut out, &old_ids, &|_| false);
+        for id in ["builtin-hevc-game", "builtin-hevc-camera", "builtin-av1-game", "builtin-av1-camera"] {
+            let p = out.iter().find(|p| p.id == id).expect(id);
+            assert!(!p.hidden && p.category == EXPERIMENTAL_GROUP);
+        }
+        let u = out.iter().find(|p| p.id == "p1").unwrap();
+        assert_eq!((u.name.as_str(), &u.values, u.builtin.is_none()), ("Mine", &user.values, true));
+        assert_eq!(out.len(), BUILTINS.len() + 1);
+    }
+
+    #[test]
     fn factory_list() {
         let f = factory_all();
         assert_eq!(f.len(), BUILTINS.len());
         assert!(f.iter().all(|p| p.builtin.as_deref() == Some(p.id.as_str())));
-        assert!(f.iter().filter(|p| p.id != "builtin-addchapters").all(|p| p.values.is_null()));
+        assert!(f.iter().filter(|p| p.id != "builtin-addchapters" && p.category.is_empty()).all(|p| p.values.is_null()));
+        assert_eq!(f.iter().filter(|p| p.category == EXPERIMENTAL_GROUP).count(), 4);
         assert_eq!(factory("builtin-addchapters").unwrap().values["container"], "same");
         let ids: std::collections::HashSet<_> = f.iter().map(|p| p.id.clone()).collect();
         assert_eq!(ids.len(), f.len());
@@ -513,7 +566,7 @@ mod tests {
 
     #[test]
     fn paths() {
-        assert_eq!(presets_path_for(Path::new("/x/FFmpegEncoder.settings.json")), PathBuf::from("/x/FFmpegEncoder.presets.json"));
+        assert_eq!(presets_path_for(&Path::new("/x").join(crate::settings::PORTABLE_FILE)), PathBuf::from("/x").join(PORTABLE_PRESETS_FILE));
         assert_eq!(presets_path_for(Path::new("/r/FFmpegEncoder/settings.json")), PathBuf::from("/r/FFmpegEncoder/presets.json"));
     }
 }

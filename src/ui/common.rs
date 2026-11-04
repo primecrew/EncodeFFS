@@ -359,6 +359,11 @@ pub fn bitrate_ui(ui: &mut Ui, label: &str, k: &mut u32) {
 /// Bitrate + gain + compressor rows.
 pub fn audio_encode_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode) {
     bitrate_ui(ui, "AAC bitrate", &mut a.bitrate_k);
+    audio_filters_ui(ui, id, a);
+}
+
+/// Gain / compressor rows (any re-encoded audio codec).
+pub fn audio_filters_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode) {
     ui.label("Gain");
     ui.horizontal(|ui| {
         num_f64(ui, &mut a.gain_db, -30.0..=30.0, 0.1, " dB");

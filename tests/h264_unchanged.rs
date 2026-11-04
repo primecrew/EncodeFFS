@@ -36,7 +36,7 @@ fn cases() -> Vec<(&'static str, String)> {
     let mut p = re("/out/a.mp4");
     p.trim_start = 3.0;
     p.trim_end = 2.0;
-    p.video = VideoEncode { crf: 19, preset: "veryslow".into(), tune: Some("grain".into()) };
+    p.video = VideoEncode { crf: 19, preset: "veryslow".into(), tune: Some("grain".into()), ..Default::default() };
     p.audio.bitrate_k = 320;
     p.audio.gain_db = 3.0;
     p.audio.compressor = CompressorPreset::Medium;

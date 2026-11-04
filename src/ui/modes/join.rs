@@ -324,10 +324,10 @@ impl Mode for JoinMode {
         }
         if self.st.method == JoinMethod::Reencode {
             hint(ui, "Every file is scaled/padded to the first file's size and frame rate; audio is resampled to its rate (mono or stereo).");
-            section(ui, "Video (libx264)");
-            egui::Grid::new("joinv").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| video_encode_ui(ui, "join", &mut self.st.video, true));
-            section(ui, "Audio (AAC)");
-            egui::Grid::new("joina").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| audio_encode_ui(ui, "joina", &mut self.st.audio));
+            section(ui, &format!("Video ({})", self.st.video.codec.encoder()));
+            egui::Grid::new("joinv").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| crate::ui::codecs_ui::video_codec_ui(ui, "join", &mut self.st.video, cx.encoders.as_ref(), None));
+            section(ui, "Audio");
+            egui::Grid::new("joina").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| crate::ui::codecs_ui::audio_codec_ui(ui, "joina", &mut self.st.audio, cx.encoders.as_ref(), false));
         }
 
         section(ui, "Chapters & output");
@@ -356,7 +356,10 @@ impl Mode for JoinMode {
             self.update_name();
         }
     }
-    fn build(&mut self, _cx: &Ctx) -> Result<Plan, String> {
+    fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
+        if self.st.method == JoinMethod::Reencode {
+            crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&self.st.video), Some(&self.st.audio))?;
+        }
         if self.st.files.len() < 2 {
             return Err("Add at least two files to join.".into());
         }

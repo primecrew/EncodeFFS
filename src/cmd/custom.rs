@@ -28,7 +28,7 @@ impl VideoAction {
     pub fn label(self) -> &'static str {
         match self {
             VideoAction::Copy => "Copy (no re-encode)",
-            VideoAction::X264 => "Re-encode (libx264)",
+            VideoAction::X264 => "Re-encode (codec below; H.264 default)",
             VideoAction::Drop => "Drop video",
         }
     }
@@ -278,7 +278,8 @@ pub fn build(pr: &CustomParams) -> Result<BuiltCommand, String> {
                     pr.resize.map(|(w, h)| format!("scale={w}:{h}")),
                     pr.range_convert.then(|| RANGE_FILTER.to_string()),
                 ]);
-                a.extend(x264_args(&pr.video_encode, filter.as_deref(), pr.range_convert));
+                warnings.extend(super::codecs::check_video(&pr.video_encode, &pr.output)?);
+                a.extend(super::codecs::video_args(&pr.video_encode, filter.as_deref(), pr.range_convert, &pr.output));
             }
             _ => {
                 a.push_all(["-c:v", "copy"]);

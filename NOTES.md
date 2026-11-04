@@ -1,5 +1,24 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.5.4-codecs.1 — Codecs edition (branch `codecs`, experimental, side by side with stable)
+- Identity: `FFmpegEncoder-Codecs.exe`, title “(Codecs)”, `DATA_DIR_NAME`/`FILE_STEM` `FFmpegEncoder-Codecs`
+  (`src/lib.rs`); path helpers `roaming_dir_named` / `local_app_dir_named`; other editions' FFmpeg folders are
+  protected from managed-FFmpeg moves. First start copies the stable settings/presets in
+  (`src/import_stable.rs`, from the experimental branch; stable files only read).
+- `src/cmd/codecs.rs`: `VideoCodec` (H264 default / Hevc / Av1), `AudioCodec` (Aac default / Ac3 / Copy),
+  `video_args` / `audio_args` (H.264 and AAC go through the unchanged `x264_args` / `aac_args`),
+  `check_video` / `check_audio` (container rules, warnings), `Encoders::from_list` (`ffmpeg -encoders`,
+  stored in `FfmpegCheck`, so cached per FFmpeg path).
+- New `VideoEncode` fields (`codec`, `ten_bit`, `svt_preset`, `film_grain`, `film_grain_denoise`) and
+  `AudioEncode` fields (`codec`, `ac3_bitrate_k`) are `serde(default)`: old presets load as H.264/AAC.
+- UI `src/ui/codecs_ui.rs`, used by Re-encode, Batch, Join (no audio copy) and Custom pipeline (video).
+- Built-ins `builtin-hevc-game`, `builtin-hevc-camera`, `builtin-av1-game`, `builtin-av1-camera`
+  (category “Experimental codecs”, sorted below the regular presets); appended via `known_builtins`.
+- Tests: `tests/h264_unchanged.rs` + `tests/h264_golden.txt` (golden 0.5.3 commands, written before any codec
+  change), `tests/codecs_ffmpeg.rs` (real ffmpeg/ffprobe: hevc+hvc1+yuv420p10le, av1 MP4/MKV + grain, AC3 5.1,
+  copy), unit tests in `cmd::codecs` and `presets`.
+- `scripts/build-release.sh` builds the portable zip into `dist-codecs/` (installer only with `INSTALLER=1`).
+
 ## 0.5.3 — Encoding Finished popup; installer; Bold text option removed
 - **Encoding Finished popup** (`show_finished_popup`, on by default; Settings › When encoding finishes):
   - `ffenc::finished`: `Tracker` collects finished jobs and hands out one popup when the queue is idle again

@@ -67,10 +67,19 @@ pub struct VideoEncode {
     pub preset: String,
     /// None = no -tune.
     pub tune: Option<String>,
+    /// Codec (codecs branch). Missing in older presets = H.264, so they build the same command.
+    pub codec: super::codecs::VideoCodec,
+    /// HEVC/AV1: write 10-bit (yuv420p10le). Ignored for H.264.
+    pub ten_bit: bool,
+    /// AV1 (SVT-AV1) preset 0–13.
+    pub svt_preset: u32,
+    /// AV1 film grain synthesis 0 (off) – 50.
+    pub film_grain: u32,
+    pub film_grain_denoise: bool,
 }
 impl Default for VideoEncode {
     fn default() -> Self {
-        VideoEncode { crf: 22, preset: "slow".into(), tune: None }
+        VideoEncode { crf: 22, preset: "slow".into(), tune: None, codec: Default::default(), ten_bit: true, svt_preset: 5, film_grain: 0, film_grain_denoise: false }
     }
 }
 
@@ -212,10 +221,17 @@ pub struct AudioEncode {
     pub compressor: CompressorPreset,
     /// Used when `compressor == Advanced`.
     pub advanced: CompressorParams,
+    /// Codec (codecs branch). Missing in older presets = AAC.
+    pub codec: super::codecs::AudioCodec,
+    /// AC3 bitrate (kbps).
+    pub ac3_bitrate_k: u32,
+    /// Most channels in any source audio track (from ffprobe; not saved). AC3 downmixes > 5.1.
+    #[serde(skip)]
+    pub source_channels: Option<u32>,
 }
 impl Default for AudioEncode {
     fn default() -> Self {
-        AudioEncode { bitrate_k: 192, gain_db: 0.0, compressor: CompressorPreset::None, advanced: CompressorParams::default() }
+        AudioEncode { bitrate_k: 192, gain_db: 0.0, compressor: CompressorPreset::None, advanced: CompressorParams::default(), codec: Default::default(), ac3_bitrate_k: 448, source_channels: None }
     }
 }
 
@@ -380,7 +396,7 @@ mod tests {
 
     #[test]
     fn x264() {
-        let v = VideoEncode { crf: 20, preset: "fast".into(), tune: Some("film".into()) };
+        let v = VideoEncode { crf: 20, preset: "fast".into(), tune: Some("film".into()), ..Default::default() };
         assert_eq!(
             x264_args(&v, Some("bwdif"), true),
             vec!["-c:v", "libx264", "-crf", "20", "-preset", "fast", "-pix_fmt", "yuv420p", "-vf", "bwdif",

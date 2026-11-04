@@ -27,6 +27,8 @@ pub struct Ctx<'a> {
     pub settings: &'a Settings,
     pub ffprobe: Option<&'a Path>,
     pub egui: &'a egui::Context,
+    /// Optional encoders of the current FFmpeg (None until it has been checked).
+    pub encoders: Option<ffenc::cmd::codecs::Encoders>,
 }
 
 /// Jobs to preview and queue.
@@ -108,7 +110,7 @@ pub fn kinds() -> Vec<(&'static str, &'static str)> {
 
 /// Defaults derived from settings, shared by several modes.
 pub fn default_video(s: &Settings) -> ffenc::cmd::common::VideoEncode {
-    ffenc::cmd::common::VideoEncode { crf: s.crf, preset: s.preset.clone(), tune: None }
+    ffenc::cmd::common::VideoEncode { crf: s.crf, preset: s.preset.clone(), tune: None, ..Default::default() }
 }
 
 pub fn default_audio(s: &Settings) -> ffenc::cmd::common::AudioEncode {
@@ -117,5 +119,6 @@ pub fn default_audio(s: &Settings) -> ffenc::cmd::common::AudioEncode {
         gain_db: s.gain_db,
         compressor: ffenc::cmd::common::CompressorPreset::None,
         advanced: s.compressor,
+        ..Default::default()
     }
 }

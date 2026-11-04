@@ -29,7 +29,7 @@ fn main() -> eframe::Result<()> {
     // on a connected screen), otherwise the default size, centered
     let startup = ui::layout::Startup::decide();
     let viewport = egui::ViewportBuilder::default()
-        .with_title(format!("{} {}", ffenc::APP_NAME, ffenc::APP_VERSION))
+        .with_title(ffenc::full_title())
         .with_min_inner_size(ffenc::layout::MIN_SIZE)
         .with_drag_and_drop(true)
         .with_icon(std::sync::Arc::new(icon()));

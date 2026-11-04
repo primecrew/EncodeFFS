@@ -282,12 +282,17 @@ pub fn build(pr: &JoinParams) -> Result<BuiltCommand, String> {
             a.push(g.join(";"));
             if has_v {
                 a.push_all(["-map", "[vc]"]);
-                a.extend(x264_args(&pr.video, None, false));
+                cmd.warnings.extend(super::codecs::check_video(&pr.video, &pr.output)?);
+                a.extend(super::codecs::video_args(&pr.video, None, false, &pr.output));
             }
             if has_a {
                 a.push("-map".into());
                 a.push(amap);
-                a.extend(pr.audio.aac_args());
+                if pr.audio.codec == super::codecs::AudioCodec::Copy {
+                    return Err("Joining with re-encode mixes the audio through the concat filter, so it can't be copied. Choose AAC or AC3.".into());
+                }
+                cmd.warnings.extend(super::codecs::check_audio(&pr.audio, &pr.output)?);
+                a.extend(super::codecs::audio_args(&pr.audio));
             }
             if has_v {
                 cmd.warnings.push(format!("Re-encode join: every file is scaled/padded to {w}x{h} at {fps} fps{}; subtitles are not carried over.", if has_a { format!(", audio {rate} Hz {layout}") } else { String::new() }));
