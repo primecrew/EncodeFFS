@@ -2,6 +2,7 @@
 
 pub mod chapter_creator;
 pub mod common;
+pub mod finished;
 pub mod layout;
 pub mod managed_loc;
 pub mod modes;
@@ -236,6 +237,8 @@ struct LocateDlg {
 
 pub struct App {
     settings: Settings,
+    /// "Encoding Finished" popup.
+    finished: finished::FinishedUi,
     /// Settings › App-managed FFmpeg location (applied immediately, not with Save).
     mloc: managed_loc::ManagedLocUi,
     pre: PresetUi,
@@ -253,7 +256,6 @@ pub struct App {
     sim_drop_done: bool,
     /// Appearance currently applied to egui (None = not yet).
     applied: Option<ffenc::settings::Appearance>,
-    bold_available: bool,
     /// Ctrl+wheel accumulator (ln of zoom).
     wheel_zoom: f32,
     /// Text-size slider value while dragging (applied on release).
@@ -286,18 +288,17 @@ pub fn open_path(p: &Path) {
     let _ = std::process::Command::new("xdg-open").arg(p).spawn();
 }
 
+const FINISHED_POPUP_HELP: &str = "When jobs finish successfully, show a popup with the file name and a Go to file button (one popup for a whole batch or queue). Failed or cancelled jobs are only reported in the Log.";
+
 const WIN_FONTS: &str = r"C:\Windows\Fonts";
 
-/// Fonts: Segoe UI (Windows' UI font) as the main proportional font when present
-/// – Segoe UI Bold (or Semibold) when bold text is on – then egui's defaults and
-/// system fallbacks so unicode file names render. Returns whether a bold face was found.
-fn install_fonts(ctx: &egui::Context, bold: bool) -> bool {
+/// Fonts: Segoe UI (Windows' UI font) as the main proportional font when present, then egui's
+/// defaults and system fallbacks so unicode file names render.
+fn install_fonts(ctx: &egui::Context) {
     let dir = std::env::var("FFENC_FONTS_DIR").unwrap_or_else(|_| WIN_FONTS.to_string());
     let read = |f: &str| std::fs::read(Path::new(&dir).join(f)).ok();
     let mut fonts = egui::FontDefinitions::default();
-    let bold_face = read("segoeuib.ttf").or_else(|| read("seguisb.ttf"));
-    let bold_found = bold_face.is_some();
-    let main = if bold { bold_face.or_else(|| read("segoeui.ttf")) } else { read("segoeui.ttf") };
+    let main = read("segoeui.ttf");
     if let Some(bytes) = main {
         fonts.font_data.insert("ui-main".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
         fonts.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "ui-main".into());
@@ -312,7 +313,6 @@ fn install_fonts(ctx: &egui::Context, bold: bool) -> bool {
         }
     }
     ctx.set_fonts(fonts);
-    bold_found
 }
 
 /// Too narrow (in points, i.e. after text scaling) to show the Source panel next to the form.
@@ -347,7 +347,7 @@ impl App {
         // where the app-managed FFmpeg lives (before anything looks for FFmpeg)
         ffenc::ffmpeg::managed::set_location(&settings.managed_ffmpeg_dir);
         // appearance before the first frame, so panels are laid out at the right scale
-        let bold_available = install_fonts(&cc.egui_ctx, settings.appearance.bold);
+        install_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx, &settings.appearance);
         let applied = Some(settings.appearance.clone());
         let ctx = cc.egui_ctx.clone();
@@ -396,13 +396,13 @@ impl App {
             started: std::time::Instant::now(),
             sim_drop_done: false,
             applied,
-            bold_available,
             wheel_zoom: 0.0,
             scale_edit: None,
             show_help: false,
             settings_edit: None,
             updater: UpdaterUi::default(),
             mloc: managed_loc::ManagedLocUi::default(),
+            finished: finished::FinishedUi::default(),
             show_about: false,
             first_run_dismissed: false,
             locate: None,
@@ -774,7 +774,6 @@ impl App {
                         }
                     }
                 });
-                ui.add_enabled(self.bold_available, egui::Checkbox::new(&mut a.bold, "Bold text"));
                 ui.separator();
                 if ui.button("Appearance settings…").clicked() {
                     self.settings_edit = Some(self.settings.clone());
@@ -1334,6 +1333,12 @@ impl App {
             }
         }
 
+{
+            let shared = self.queue.shared.clone();
+            let s = shared.lock().unwrap();
+            self.finished.watch(ctx, &s.jobs, self.settings.show_finished_popup);
+        }
+        self.finished.show(ctx);
         self.settings_dialog(ctx);
         if let Some(o) = self.mloc.poll(ctx) {
             self.apply_managed_location(ctx, o);
@@ -1405,9 +1410,6 @@ impl App {
         let a = a.clone();
         if self.applied.as_ref() != Some(&a) {
             let first = self.applied.is_none();
-            if first || self.applied.as_ref().map(|p| p.bold) != Some(a.bold) {
-                self.bold_available = install_fonts(ctx, a.bold);
-            }
             theme::apply(ctx, &a);
             self.applied = Some(a.clone());
             if !first {
@@ -1453,10 +1455,9 @@ impl App {
         }
     }
 
-    /// Theme, text size, monospace size, bold – edits `self.settings.appearance` live.
+    /// Theme, text size, monospace size – edits `self.settings.appearance` live.
     fn appearance_ui(&mut self, ui: &mut egui::Ui) {
         use ffenc::settings::{ThemeChoice, MONO_MAX, MONO_MIN, SCALE_MAX, SCALE_MIN, SCALE_STEPS};
-        let bold_ok = self.bold_available;
         egui::Grid::new("set_look").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
             let a = &mut self.settings.appearance;
             ui.label("Theme");
@@ -1498,14 +1499,6 @@ impl App {
                 ui.label(RichText::new("ffmpeg -i \"input.mkv\" -c:v libx264 -crf 22 output.mp4").monospace());
             });
             ui.end_row();
-            ui.label("Bold text");
-            ui.vertical(|ui| {
-                ui.add_enabled(bold_ok, egui::Checkbox::new(&mut a.bold, "Use a bold font for the interface"));
-                if !bold_ok {
-                    hint(ui, "Needs Segoe UI Bold (C:\\Windows\\Fonts\\segoeuib.ttf), which this system doesn't have.");
-                }
-            });
-            ui.end_row();
         });
     }
 
@@ -1524,7 +1517,7 @@ impl App {
             });
             common::section(ui, "Accessibility");
             ui.label("• View › Theme: System, Dark, Light or High contrast. View › Text size or Ctrl + plus/minus: 75–300 %.");
-            ui.label("• File › Settings › Appearance: text size slider, separate size for commands/logs, bold text.");
+            ui.label("• File › Settings › Appearance: text size slider, separate size for commands/logs.");
             ui.label("• Everything in the menus and forms can be reached with Tab; the focused control has a thick outline.");
             ui.label("• Screen readers (Narrator, NVDA) can read buttons, labels, check boxes and text fields through UI Automation. Some parts (the queue list, the drag-and-drop file list order, colours) are only partly announced.");
             ui.label("• Every action in a preset's right-click menu is also in the Presets menu.");
@@ -1614,6 +1607,9 @@ impl App {
                     });
                     ui.end_row();
                 });
+                common::section(ui, "When encoding finishes");
+                ui.checkbox(&mut ed.show_finished_popup, "Show Encoding Finished popup").on_hover_text(FINISHED_POPUP_HELP);
+                hint(ui, FINISHED_POPUP_HELP);
                 common::section(ui, "FFmpeg updates & logs");
                 egui::Grid::new("set_u").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                     ui.label("Source");

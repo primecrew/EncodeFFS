@@ -1,6 +1,6 @@
 //! Appearance: Dark / Light / High-contrast styles, the semantic colour palette
 //! used by the app's own coloured text (all ≥ 4.5:1 against every background it
-//! appears on – see the contrast tests), UI scale, bold text and the keyboard
+//! appears on – see the contrast tests), UI scale and the keyboard
 //! focus ring.
 
 use std::cell::Cell;

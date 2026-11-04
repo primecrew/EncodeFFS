@@ -39,8 +39,8 @@ On start the app checks the build has `libx264` and `aac`.
   Applies immediately and is remembered. All status colours (ok / warning / error / info) meet WCAG AA 4.5:1 in every theme.
 - **Text size** 75–300 % (steps 100, 110, 125, 150, 175, 200, 250, 300 %): **Ctrl + plus / Ctrl + minus**, **Ctrl + 0** = 100 %,
   **Ctrl + mouse wheel**, View › Text size, or the slider in Settings › Appearance. Scales all text, buttons, lists,
-  dialogs and icons; remembered. Separate **command/log (monospace) size** (80–200 % on top of the text size) and a
-  **Bold text** option (uses Segoe UI Bold). At large sizes panels wrap and scroll; the Source panel hides itself when the
+  dialogs and icons; remembered. Separate **command/log (monospace) size** (80–200 % on top of the text size).
+  (The Bold text option was removed in 0.6.0-dev.4; an old setting for it is ignored.) At large sizes panels wrap and scroll; the Source panel hides itself when the
   window is too narrow and comes back when there is room (View › Source info panel).
 - **Keyboard:** Tab / Shift+Tab move between controls (the focused one has a thick outline), Enter / Space press it,
   arrow keys change sliders and lists, Esc closes dialogs. Shortcuts: **F5** run selected preset (the confirmation opens
@@ -301,6 +301,18 @@ Re-encode, Custom pipeline (single file and folder batch) and Batch re-encode ca
 - **Trim**, **chapters** (chapter creator, auto-create when missing, or remove the source's), **container** (same as input, mp4, mkv, mov, m4v, m4a, mka),
   **name suffix**, **faststart**, and free-form **extra input options** (before `-i`) and **extra output options**
   (before the output file; quotes group values with spaces).
+
+## Encoding Finished popup (0.6.0-dev.4)
+- When jobs finish **successfully**, a small window **Encoding Finished** shows the output file's final name (after
+  "keep both" numbering), its folder, size and how long it took, with **Go to file** (Explorer opens with the file
+  selected; if the file was moved or deleted, its folder opens instead), **Open folder** and **Close** (Esc).
+- One popup per run: when a batch or several queued jobs finish, it lists all the files (each with its own
+  **Go to file**) and says how many other jobs failed or were cancelled.
+- Not shown when every job failed or was cancelled, or for skipped files; those are reported in the Log as before.
+- Works for every preset type. Temporary chapter/list files are still cleaned up as before.
+- It doesn't take the keyboard focus while you are typing in a field, and never presses a button by itself. If the
+  app is in the background, its taskbar button flashes.
+- Turn it off in File › Settings › When encoding finishes › **Show Encoding Finished popup** (on by default).
 
 ## Settings
 Stored as JSON. Portable first: `FFmpegEncoder.settings.json` next to the exe if that folder is writable,

@@ -1,5 +1,20 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.6.0-dev.4 — Encoding Finished popup; Bold text option removed
+- **Encoding Finished popup** (`show_finished_popup`, on by default; Settings › When encoding finishes):
+  - `ffenc::finished`: `Tracker` collects finished jobs and hands out one popup when the queue is idle again
+    and at least one job succeeded (single job, batch or queue); failures/cancellations only counted.
+  - Jobs record `final_output` (the published name after keep-both numbering, the remux destination, or the
+    output path); never the temporary partial name.
+  - Go to file: `explorer.exe /select,"<path>"` (from %SystemRoot%), passed raw; paths containing `"` or
+    control characters (invalid in Windows names) or a missing file open the folder instead.
+  - UI `ui::finished` (foreground window, Esc closes, default button focused one frame later and not while a
+    text field has focus; taskbar flash via RequestUserAttention when unfocused).
+  - Tests: `finished::tests` (tracker, quoting, fallback, formatting), `settings::tests::finished_popup_setting_and_old_bold_field`,
+    `tests/overwrite_guard.rs` checks `final_output` is the keep-both name.
+- **Bold text removed** (Settings › Appearance and View menu): `appearance.bold` is gone; old settings files
+  that still have it load fine (ignored, not written back). Fonts: Segoe UI regular only.
+
 ## 0.6.0-dev.3 — layout fixes, app-managed FFmpeg location (branch `ui-experimental`)
 - **Layout:**
   - Resizable dialogs now remember their size (and position, except the always-centered confirmation dialog):
