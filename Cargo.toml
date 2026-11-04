@@ -1,6 +1,6 @@
 [package]
 name = "ffmpeg-encoder"
-version = "0.6.0-dev.2"
+version = "0.6.0-dev.3"
 edition = "2021"
 description = "Portable Windows GUI for FFmpeg encoding tasks (port of the user's PowerShell script v22.0)"
 build = "build.rs"
@@ -26,7 +26,7 @@ rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "t
 
 [target.'cfg(windows)'.dependencies]
 # monitor list for restoring the window layout (already in the tree via eframe/rfd)
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_HiDpi"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_Storage_FileSystem"] }
 
 [build-dependencies]
 embed-resource = "3"

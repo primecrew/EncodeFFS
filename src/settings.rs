@@ -158,6 +158,9 @@ pub struct Settings {
     /// Remember window layout (0.6.0-dev.2; on by default): window place/size, panel sizes and open
     /// sections are saved in their own file next to this one and restored at the next start.
     pub remember_layout: bool,
+    /// App-managed FFmpeg location (0.6.0-dev.3): the folder for the copy the app downloads/updates
+    /// (`<folder>\bin`). Empty = the default `%LOCALAPPDATA%\FFmpegEncoder-Experimental\ffmpeg`.
+    pub managed_ffmpeg_dir: String,
     /// Legacy (0.1.x): last-used values per mode; migrated into presets on first start of 0.2.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, serde_json::Value>,
@@ -197,6 +200,7 @@ impl Default for Settings {
             duration_tolerance_s: 1.5,
             show_splash: true,
             remember_layout: true,
+            managed_ffmpeg_dir: String::new(),
             modes: BTreeMap::new(),
             last_mode: String::new(),
         }
@@ -576,5 +580,23 @@ mod tests {
         assert_eq!(settings_path_in(&exe, &roam), roam.join("settings.json"), "installed: %APPDATA%");
         assert!(INSTALLED_MARKER.starts_with(crate::FILE_STEM));
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn managed_ffmpeg_dir_setting() {
+        // existing settings files (no field) keep the default location
+        let old = Settings::from_json(r#"{"crf": 20}"#).unwrap();
+        assert_eq!(old.managed_ffmpeg_dir, "");
+        assert_eq!(Settings::default().managed_ffmpeg_dir, "");
+        // a chosen folder (spaces, unicode, UNC) survives save/load unchanged
+        let dir = std::env::temp_dir().join(format!("ffenc_mfd_{}", crate::util::unique_id()));
+        let p = dir.join("s.json");
+        for v in [r"E:\Video Tools\FFmpeg ö", r"\\nas\share\ffmpeg"] {
+            let mut s = Settings::default();
+            s.managed_ffmpeg_dir = v.into();
+            s.save_to(&p).unwrap();
+            assert_eq!(Settings::load_from(&p).managed_ffmpeg_dir, v);
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

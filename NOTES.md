@@ -1,5 +1,27 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.6.0-dev.3 — layout fixes, app-managed FFmpeg location (branch `ui-experimental`)
+- **Layout:**
+  - Resizable dialogs now remember their size (and position, except the always-centered confirmation dialog):
+    Settings, FFmpeg updates, Chapter creator, About, Help, Confirm. Stored under `dialogs` in the layout file
+    (`{w, h, pos}`, logical points; lenient per entry; sides outside 60–16000 dropped). Reset clears them.
+  - Panels: during a restore phase (until the first click, the screen size settles, or 6 s) the saved widths are
+    written into egui's panel state every frame and nothing is recorded, so a first frame laid out at another
+    size/scale can't overwrite the saved widths.
+  - A startup log line lists what was restored.
+  - Not resizable, so nothing to remember: form "columns" (egui grids), text boxes, the queue list.
+- **App-managed FFmpeg location** (`managed_ffmpeg_dir`, default "" = `%LOCALAPPDATA%\FFmpegEncoder-Experimental\ffmpeg`):
+  - `ffmpeg::managed`: location override followed by `locate::managed_root()` (so the updater, its
+    `bin.previous` backups, update checks and managed-vs-own detection follow), string validation (Windows rules),
+    folder checks (write probe, `GetDiskFreeSpaceExW`), and `move_copy` (staging folder, size-checked copy,
+    rename into place, verify by running ffmpeg, delete old; rollback on failure).
+  - UI: `ui::managed_loc` (Settings section, Move/Don't move/Cancel dialog, background move).
+  - Import from stable keeps this edition's own location; a stable custom managed folder used as the FFmpeg folder
+    is recognised as the stable copy.
+  - Tests: `ffmpeg::managed::tests` (resolution, location switch, managed-vs-own, validation, folder checks, move,
+    rollback, refused moves), `settings::tests::managed_ffmpeg_dir_setting`, `import_stable` edge cases.
+  - windows-sys feature `Win32_Storage_FileSystem` added.
+
 ## 0.6.0-dev.2 — window layout persistence (branch `ui-experimental`)
 - **Remember window layout** (Settings › Startup; on by default; `remember_layout` in the settings file, older files
   get on) and a **Reset window layout** button (applies immediately). Both have visible labels (screen-reader names)

@@ -48,14 +48,20 @@ pub fn import_into(stable: &StableFound, dest_settings: &Path, stable_managed_bi
         return Err("The stable version's files are the same files this version uses, so there is nothing to import.".into());
     }
     let text = std::fs::read_to_string(&stable.settings).map_err(|e| format!("Couldn't read {}: {e}", stable.settings.display()))?;
-    let s = Settings::from_json(&text).ok_or_else(|| format!("The stable settings file {} couldn't be read (not valid settings).", stable.settings.display()))?;
+    let mut s = Settings::from_json(&text).ok_or_else(|| format!("The stable settings file {} couldn't be read (not valid settings).", stable.settings.display()))?;
     // read the presets before writing anything, so a failure leaves this edition unchanged
     let presets_text = match &stable.presets {
         Some(p) => Some(std::fs::read(p).map_err(|e| format!("Couldn't read {}: {e}", p.display()))?),
         None => None,
     };
     let mut notes = vec![format!("Imported settings from the stable version ({}).", stable.settings.display())];
-    if crate::ffmpeg::locate::is_managed_dir(Path::new(s.ffmpeg_bin_path.trim()), stable_managed_bin) {
+    // the stable version may keep its downloaded FFmpeg in a folder of its own choosing (0.5.2)
+    let stable_custom_bin = (!s.managed_ffmpeg_dir.trim().is_empty())
+        .then(|| crate::ffmpeg::managed::resolve_root(&s.managed_ffmpeg_dir, Path::new("")).join("bin"));
+    // this edition keeps its own app-managed FFmpeg location (never the stable version's folder)
+    s.managed_ffmpeg_dir = Settings::load_from(dest_settings).managed_ffmpeg_dir;
+    let configured = Path::new(s.ffmpeg_bin_path.trim());
+    if crate::ffmpeg::locate::is_managed_dir(configured, stable_managed_bin) || stable_custom_bin.as_deref().is_some_and(|b| crate::ffmpeg::locate::is_managed_dir(configured, b)) {
         notes.push("Your FFmpeg folder is the stable version's downloaded copy. This version uses it as your own folder: it never updates it by itself. Help › Check for FFmpeg updates… can download a separate copy for this version.".into());
     }
     s.save_to(dest_settings)?;
@@ -126,6 +132,13 @@ mod tests {
         assert_eq!(found.presets, None);
         let dest = root.join("FFmpegEncoder-Experimental.settings.json");
         let r = import_into(&found, &dest, Path::new("/stable/managed/bin")).unwrap();
+        // the stable version's own managed-location setting isn't taken over; a custom stable
+        // managed folder configured as FFmpeg folder is recognised as the stable copy too
+        std::fs::write(&dest, r#"{"managed_ffmpeg_dir": "/mine/ffmpeg"}"#).unwrap();
+        std::fs::write(&st, r#"{"ffmpeg_bin_path": "/stable/custom/bin", "managed_ffmpeg_dir": "/stable/custom"}"#).unwrap();
+        let r2 = import_into(&found, &dest, Path::new("/stable/managed/bin")).unwrap();
+        assert!(r2.notes.iter().any(|n| n.contains("stable version's downloaded copy")), "{:?}", r2.notes);
+        assert_eq!(Settings::load_from(&dest).managed_ffmpeg_dir, "/mine/ffmpeg");
         assert!(r.notes.iter().any(|n| n.contains("never updates it")), "{:?}", r.notes);
         assert_eq!(r.presets_to, None);
         // same file: refused

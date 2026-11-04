@@ -366,7 +366,12 @@ and unfinished partial outputs, writes their paths to the log, and skips the sta
     - the window's position, size and maximized state, and which screen it is on;
     - the widths of the preset list and the Source panel, and the height of the queue/log panel;
     - which collapsible sections are open (preset groups, Advanced compressor settings, Audio & subtitles sections,
-      Show differences, Import from text, Files lists).
+      Show differences, Import from text, Files lists);
+    - the size of resizable dialogs (Settings, FFmpeg updates, Chapter creator, About, Help, and the confirmation
+      dialog), and where you moved them (not for the confirmation dialog, which always opens centered) (0.6.0-dev.3).
+  - Not remembered: the field columns in forms (they are not resizable; they follow the text size) and text boxes.
+  - The Log tab shows one line at startup with what was restored (for example
+    `Window layout restored: presets list 376 pt, …`), which helps when something doesn't come back.
   - The last selected preset was already remembered (settings file).
   - Saved about 1.5 seconds after a change and on exit, so a crash loses at most the last moment.
   - A window that would open off-screen (for example on a screen that is no longer connected) opens centered at
@@ -380,7 +385,21 @@ and unfinished partial outputs, writes their paths to the log, and skips the sta
   - Stored in its own file, next to the settings: `FFmpegEncoder-Experimental.layout.json` (portable) or
     `%APPDATA%\FFmpegEncoder-Experimental\layout.json` (installed). If that file is missing, old or damaged, the app
     starts with the defaults; settings are not affected.
-- **Portable or installed:**
+- **App-managed FFmpeg location** (File › Settings, 0.6.0-dev.3):
+  - Where the FFmpeg that the app downloads and updates lives (Help › Check for FFmpeg updates…), with its
+    `bin.previous` backup for Roll back. Your own FFmpeg folder (Settings › Folders) is a separate thing.
+  - Default `%LOCALAPPDATA%\FFmpegEncoder-Experimental\ffmpeg`; existing installs and the portable zip keep it.
+  - Shows the current folder. Type or **Browse…** for a folder, then **Change…**; **Reset to default** goes back.
+    Applies immediately (not with Save) and is stored as `managed_ffmpeg_dir` in the settings file.
+  - If there is a downloaded copy, it asks: **Move it there** (copy, start the copied ffmpeg once to check it, then
+    delete the old copy; on any failure the new folder is cleaned up and nothing changes) or **Don't move** (the old
+    copy stays where it is; the next update downloads a fresh copy into the new folder).
+  - The folder is checked first: a full path (drive or `\\server\share`), no invalid characters or reserved
+    names, not a drive/share root, not a Windows or Program Files folder, not the stable version's data folder,
+    writable, and with enough free space (the copy's size, or about 600 MB for a fresh download). Spaces, non-English
+    letters and network shares are fine.
+  - Not possible while jobs or an FFmpeg update are running. Your FFmpeg folder setting follows the move if it
+    pointed at the managed copy.
   - **Portable zip:** unzip anywhere and run; settings are stored next to the exe.
   - **Installer** (`…-setup.exe`, NSIS, 64-bit):
     - **Just for me** by default (no administrator rights, `%LOCALAPPDATA%\Programs\FFmpeg Encoder Experimental`), or
@@ -390,7 +409,8 @@ and unfinished partial outputs, writes their paths to the log, and skips the sta
     - An installed copy keeps its settings in `%APPDATA%\FFmpegEncoder-Experimental`. A marker file
       `FFmpegEncoder-Experimental.installed` next to the exe tells the app it was installed.
     - Uninstalling keeps your settings unless you tick **Remove my settings and presets**. That also deletes the
-      FFmpeg this edition downloaded, never the stable version's.
+      FFmpeg this edition downloaded, never the stable version's (and never a folder you chose under
+      **App-managed FFmpeg location**).
     - FFmpeg is not bundled.
   - **Silent install:** `setup.exe /S [/ALLUSERS] [/DESKTOP] [/D=C:\path]`.
   - **Silent uninstall:** `uninstall.exe /CURRENTUSER|/ALLUSERS /S [/REMOVESETTINGS]`.

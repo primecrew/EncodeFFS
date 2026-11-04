@@ -125,6 +125,23 @@ impl Panels {
     }
 }
 
+/// Size (and, for dialogs that can be moved, position) of a resizable dialog, egui points.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DialogRect {
+    pub w: f32,
+    pub h: f32,
+    /// Top-left corner; `None` for dialogs that are always centered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pos: Option<[f32; 2]>,
+}
+
+impl DialogRect {
+    pub fn is_sane(&self) -> bool {
+        let side = |v: f32| v.is_finite() && (60.0..=16_000.0).contains(&v);
+        side(self.w) && side(self.h) && self.pos.map_or(true, |[x, y]| x.is_finite() && y.is_finite() && x.abs() < 100_000.0 && y.abs() < 100_000.0)
+    }
+}
+
 /// Everything saved in the layout file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Layout {
@@ -134,11 +151,15 @@ pub struct Layout {
     /// Open (true) / closed (false) state of collapsible sections, by a stable key
     /// (e.g. "settings.compressor_advanced", "presets.group:Video").
     pub sections: BTreeMap<String, bool>,
+    /// Resizable dialogs by key ("settings", "confirm", "chapter_creator", "updates", "about", "help"),
+    /// 0.6.0-dev.3; older files have none.
+    #[serde(default)]
+    pub dialogs: BTreeMap<String, DialogRect>,
 }
 
 impl Default for Layout {
     fn default() -> Self {
-        Layout { version: FORMAT_VERSION, window: None, panels: Panels::default(), sections: BTreeMap::new() }
+        Layout { version: FORMAT_VERSION, window: None, panels: Panels::default(), sections: BTreeMap::new(), dialogs: BTreeMap::new() }
     }
 }
 
@@ -160,7 +181,17 @@ impl Layout {
                 }
             }
         }
-        Layout { version: FORMAT_VERSION, window, panels, sections }
+        let mut dialogs = BTreeMap::new();
+        if let Some(obj) = v.get("dialogs").and_then(|s| s.as_object()) {
+            for (k, val) in obj {
+                if let Ok(d) = serde_json::from_value::<DialogRect>(val.clone()) {
+                    if d.is_sane() {
+                        dialogs.insert(k.clone(), d);
+                    }
+                }
+            }
+        }
+        Layout { version: FORMAT_VERSION, window, panels, sections, dialogs }
     }
 
     pub fn load_from(path: &Path) -> Layout {
@@ -341,6 +372,8 @@ mod tests {
         l.panels = Panels { presets_width: Some(310.5), source_width: Some(260.0), queue_height: Some(180.0) };
         l.sections.insert("settings.compressor_advanced".into(), true);
         l.sections.insert("presets.group:Video".into(), false);
+        l.dialogs.insert("settings".into(), DialogRect { w: 700.0, h: 540.0, pos: Some([120.0, 80.0]) });
+        l.dialogs.insert("confirm".into(), DialogRect { w: 950.0, h: 600.0, pos: None });
         l.save_to(&p).unwrap();
         assert_eq!(Layout::load_from(&p), l);
         assert!(!dir.join(format!("{PORTABLE_FILE}.tmp")).exists());
@@ -367,6 +400,11 @@ mod tests {
         assert_eq!(l.window, None);
         assert_eq!(l.panels, Panels::default(), "a panels object with a bad field is ignored as a whole");
         assert_eq!(l.sections.into_iter().collect::<Vec<_>>(), vec![("a".to_string(), true)]);
+        // dialogs: the good ones survive, broken/tiny ones are dropped; a dev.2 file has none
+        let l = Layout::from_json(r#"{"dialogs": {"settings": {"w": 700, "h": 500, "pos": [10, 20]}, "about": {"w": 5, "h": 500}, "help": "x", "confirm": {"w": 900, "h": 500}}}"#);
+        assert_eq!(l.dialogs.keys().cloned().collect::<Vec<_>>(), vec!["confirm".to_string(), "settings".to_string()]);
+        assert_eq!(l.dialogs["settings"].pos, Some([10.0, 20.0]));
+        assert!(Layout::from_json(r#"{"window": {"x": 1, "y": 2, "w": 900, "h": 700}, "panels": {"presets_width": 300}}"#).dialogs.is_empty());
         // zero / tiny / absurd / NaN-ish values are dropped
         assert_eq!(Layout::from_json(r#"{"window": {"x": 0, "y": 0, "w": 0, "h": 0}}"#).window, None);
         assert_eq!(Layout::from_json(r#"{"window": {"w": 50, "h": 900}}"#).window, None);

@@ -1,7 +1,8 @@
 //! Find ffmpeg/ffprobe. Resolution order:
 //! 1. the configured bin folder (settings)
 //! 2. an `ffmpeg` folder next to the app exe (`ffmpeg\` or `ffmpeg\bin\`)
-//! 3. the app-managed copy in %LOCALAPPDATA%\FFmpegEncoder-Experimental\ffmpeg\bin
+//! 3. the app-managed copy (default %LOCALAPPDATA%\FFmpegEncoder-Experimental\ffmpeg\bin, or the folder
+//!    chosen in Settings › App-managed FFmpeg location)
 //! 4. PATH
 
 use std::path::{Path, PathBuf};
@@ -101,9 +102,10 @@ pub fn stable_managed_bin() -> PathBuf {
     local_app_dir_named(crate::STABLE_DATA_DIR_NAME).join("ffmpeg").join("bin")
 }
 
-/// Root of the app-managed FFmpeg (`...\FFmpegEncoder-Experimental\ffmpeg`).
+/// Root of the app-managed FFmpeg: the folder chosen in Settings, or by default
+/// `...\FFmpegEncoder-Experimental\ffmpeg` (see [`super::managed`]).
 pub fn managed_root() -> PathBuf {
-    local_app_dir().join("ffmpeg")
+    super::managed::current_root()
 }
 
 /// `...\FFmpegEncoder-Experimental\ffmpeg\bin`

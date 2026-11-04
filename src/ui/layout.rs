@@ -9,18 +9,63 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use ffenc::layout::{self as fl, Layout, Monitor, Panels, WindowGeom};
+use ffenc::layout::{self as fl, DialogRect, Layout, Monitor, Panels, WindowGeom};
 
 /// Changes are written this long after the last change (and on exit).
 const DEBOUNCE: Duration = Duration::from_millis(1500);
 /// A normal window geometry counts as settled after this long without change.
 const STABLE_AFTER: Duration = Duration::from_millis(400);
+/// Saved panel sizes are re-applied for at least this long after startup, and until the window
+/// size has been unchanged for `RESTORE_SETTLE` (at most `RESTORE_MAX`).
+const RESTORE_MIN: Duration = Duration::from_millis(1500);
+const RESTORE_SETTLE: Duration = Duration::from_millis(700);
+const RESTORE_MAX: Duration = Duration::from_secs(6);
 
 /// Bumped by "Reset window layout": panel and section ids include it, so egui forgets their
 /// remembered sizes/states and uses the defaults again.
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 /// Open/closed state of remembered sections: seeded from the file at startup, updated as drawn.
 static SECTIONS: Mutex<BTreeMap<String, bool>> = Mutex::new(BTreeMap::new());
+
+/// Sizes/positions of resizable dialogs: seeded from the file at startup, updated as shown.
+static DIALOGS: Mutex<BTreeMap<String, DialogRect>> = Mutex::new(BTreeMap::new());
+
+fn dialogs() -> std::sync::MutexGuard<'static, BTreeMap<String, DialogRect>> {
+    DIALOGS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Give a resizable dialog its remembered size (and position when `movable`) and a stable id.
+pub fn dialog_window<'a>(w: egui::Window<'a>, key: &str, movable: bool) -> egui::Window<'a> {
+    let mut w = w.id(egui::Id::new(("layout_dialog", key, generation())));
+    if let Some(d) = dialogs().get(key).copied() {
+        w = w.default_size([d.w, d.h]);
+        if movable {
+            if let Some([x, y]) = d.pos {
+                w = w.default_pos([x, y]);
+            }
+        }
+    }
+    w
+}
+
+/// Record a dialog's content size (the size egui's `default_size` restores) and its position.
+pub fn record_dialog(key: &str, content: egui::Vec2, outer_min: egui::Pos2, movable: bool) {
+    let d = DialogRect { w: content.x.round(), h: content.y.round(), pos: movable.then_some([outer_min.x.round(), outer_min.y.round()]) };
+    if d.is_sane() {
+        let mut map = dialogs();
+        if map.get(key) != Some(&d) {
+            map.insert(key.to_string(), d);
+        }
+    }
+}
+
+/// Which side a panel is on (to rewrite its remembered rectangle).
+#[derive(Clone, Copy)]
+pub enum Side {
+    Left,
+    Right,
+    Bottom,
+}
 
 fn generation() -> u64 {
     GENERATION.load(Ordering::Relaxed)
@@ -100,6 +145,12 @@ pub struct LayoutRt {
     pub panels: Panels,
     /// Panel sizes to start from (saved values; cleared on reset).
     pub initial: Panels,
+    /// While the window is still settling at startup (size applied late, maximize, DPI change),
+    /// egui may clamp a panel to the small first-frame size; until then the saved sizes are
+    /// re-applied every frame and nothing is recorded. Ends early when the user presses a button.
+    restore_until: Option<Instant>,
+    restore_started: Instant,
+    last_screen: egui::Vec2,
 }
 
 impl LayoutRt {
@@ -110,12 +161,87 @@ impl LayoutRt {
             _ => (Layout::default(), None),
         };
         *sections() = saved.sections.clone();
+        *dialogs() = saved.dialogs.clone();
         let mut cmp = saved.clone();
         if let Some(w) = cmp.window.as_mut() {
             w.monitor = None;
         }
         let stable_normal = cmp.window.clone().map(|w| WindowGeom { maximized: false, ..w });
-        LayoutRt { path, current: cmp.clone(), written: cmp, changed_at: None, startup_pos: pos, frames: 0, stable_normal, pending_normal: None, panels: saved.panels.clone(), initial: saved.panels }
+        LayoutRt { path, current: cmp.clone(), written: cmp, changed_at: None, startup_pos: pos, frames: 0, stable_normal, pending_normal: None, panels: saved.panels.clone(), initial: saved.panels, restore_until: Some(Instant::now() + RESTORE_MIN), restore_started: Instant::now(), last_screen: egui::Vec2::ZERO }
+    }
+
+    /// Short description of what was restored (for the log).
+    pub fn describe(&self) -> String {
+        let p = &self.initial;
+        let f = |v: Option<f32>| v.map_or("default".to_string(), |v| format!("{v:.0}"));
+        format!(
+            "Window layout restored: presets list {}, Source panel {}, queue panel {}, {} section(s), {} dialog size(s).",
+            f(p.presets_width),
+            f(p.source_width),
+            f(p.queue_height),
+            sections().len(),
+            dialogs().len()
+        )
+    }
+
+    /// Still re-applying the saved panel sizes (startup)?
+    pub fn restoring(&self) -> bool {
+        self.restore_until.is_some()
+    }
+
+    /// Call at the start of each frame: ends the startup restore phase once the window has settled
+    /// or the user starts interacting.
+    pub fn begin_frame(&mut self, ctx: &egui::Context) {
+        let Some(until) = self.restore_until else { return };
+        let screen = ctx.screen_rect().size();
+        let now = Instant::now();
+        if (screen - self.last_screen).length() > 0.5 {
+            self.last_screen = screen;
+            self.restore_until = Some(until.max(now + RESTORE_SETTLE));
+        }
+        let pressed = ctx.input(|i| i.pointer.any_down());
+        if pressed || now >= self.restore_until.unwrap_or(now) || self.restore_started.elapsed() >= RESTORE_MAX {
+            self.restore_until = None;
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+    }
+
+    /// During the restore phase, put a panel back to its saved size if egui clamped it to a smaller
+    /// first-frame window (only when the saved size fits now).
+    pub fn seed_panel(&self, ctx: &egui::Context, id: egui::Id, side: Side, saved: Option<f32>, max: f32) {
+        let (Some(want), true) = (saved, self.restoring()) else { return };
+        if want > max {
+            return;
+        }
+        if let Some(mut st) = egui::containers::panel::PanelState::load(ctx, id) {
+            let r = &mut st.rect;
+            let cur = match side {
+                Side::Left | Side::Right => r.width(),
+                Side::Bottom => r.height(),
+            };
+            if (cur - want).abs() > 0.5 {
+                match side {
+                    Side::Left => r.max.x = r.min.x + want,
+                    Side::Right => r.min.x = r.max.x - want,
+                    Side::Bottom => r.min.y = r.max.y - want,
+                }
+                ctx.data_mut(|d| d.insert_persisted(id, st));
+            }
+        }
+    }
+
+    /// Record a panel's measured size (not while the saved sizes are still being restored).
+    pub fn record(&mut self, which: Side, measured: f32, max: f32) {
+        if self.restoring() {
+            return;
+        }
+        let slot = match which {
+            Side::Left => &mut self.panels.presets_width,
+            Side::Right => &mut self.panels.source_width,
+            Side::Bottom => &mut self.panels.queue_height,
+        };
+        Self::record_panel(slot, measured, max);
     }
 
     /// Record a panel's measured size. When the panel sits at its upper limit (small window or large text
@@ -196,7 +322,7 @@ impl LayoutRt {
         if !remember {
             return;
         }
-        let now = Layout { version: fl::FORMAT_VERSION, window: self.window_now(ctx), panels: self.panels.clone().sanitized(), sections: sections().clone() };
+        let now = Layout { version: fl::FORMAT_VERSION, window: self.window_now(ctx), panels: self.panels.clone().sanitized(), sections: sections().clone(), dialogs: dialogs().clone() };
         if now != self.current {
             self.current = now;
             self.changed_at = Some(Instant::now());
@@ -241,6 +367,8 @@ impl LayoutRt {
     pub fn reset(&mut self, ctx: &egui::Context) -> Result<(), String> {
         GENERATION.fetch_add(1, Ordering::Relaxed);
         sections().clear();
+        dialogs().clear();
+        self.restore_until = None;
         self.initial = Panels::default();
         self.panels = Panels::default();
         self.current = Layout::default();

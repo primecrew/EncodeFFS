@@ -148,7 +148,7 @@ pub fn fit<'a>(w: egui::Window<'a>, ctx: &egui::Context, scroll: bool) -> Fitted
     let s = ctx.screen_rect().size();
     let max_h = (s.y - 24.0).max(150.0);
     let w = w.max_width((s.x - 24.0).max(200.0)).max_height(max_h).constrain(true);
-    Fitted { w, scroll: scroll.then_some(max_h - 60.0) }
+    Fitted { w, scroll: scroll.then_some(max_h - 60.0), remember: None }
 }
 
 /// A window from [`fit`]. Its scroll area (when asked for) shrinks to the content, so short
@@ -157,10 +157,33 @@ pub fn fit<'a>(w: egui::Window<'a>, ctx: &egui::Context, scroll: bool) -> Fitted
 pub struct Fitted<'a> {
     w: egui::Window<'a>,
     scroll: Option<f32>,
+    /// Remember this resizable dialog's size (and position when movable) under a layout key.
+    remember: Option<(String, bool)>,
 }
 
 impl<'a> Fitted<'a> {
+    /// Remember the dialog's size across launches (window layout); `movable` also keeps its position
+    /// (not for dialogs that are always centered).
+    pub fn remember(mut self, key: &str, movable: bool) -> Self {
+        self.w = crate::ui::layout::dialog_window(self.w, key, movable);
+        self.remember = Some((key.to_string(), movable));
+        self
+    }
+
     pub fn show<R>(self, ctx: &egui::Context, add: impl FnOnce(&mut Ui) -> R) -> Option<egui::InnerResponse<Option<R>>> {
+        let Some((key, movable)) = self.remember.clone() else { return self.show_inner(ctx, add) };
+        let mut content = None;
+        let r = self.show_inner(ctx, |ui| {
+            content = Some(ui.max_rect().size());
+            add(ui)
+        });
+        if let (Some(r), Some(size)) = (&r, content) {
+            crate::ui::layout::record_dialog(&key, size, r.response.rect.min, movable);
+        }
+        r
+    }
+
+    fn show_inner<R>(self, ctx: &egui::Context, add: impl FnOnce(&mut Ui) -> R) -> Option<egui::InnerResponse<Option<R>>> {
         match self.scroll {
             None => self.w.show(ctx, add),
             Some(h) => {

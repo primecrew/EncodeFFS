@@ -145,7 +145,7 @@ impl ChapterCreator {
             .default_size([680.0, 600.0])
             .resizable(true)
             .collapsible(false)
-            , ctx, false).show(ctx, |ui| {
+            , ctx, false).remember("chapter_creator", true).show(ctx, |ui| {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| self.body(ui, id, spec, src));
             });
         self.open = open;

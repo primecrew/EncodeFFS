@@ -3,6 +3,7 @@
 pub mod chapter_creator;
 pub mod common;
 pub mod layout;
+pub mod managed_loc;
 pub mod modes;
 pub mod presets;
 pub mod source;
@@ -235,6 +236,8 @@ struct LocateDlg {
 
 pub struct App {
     settings: Settings,
+    /// Settings › App-managed FFmpeg location (applied immediately, not with Save).
+    mloc: managed_loc::ManagedLocUi,
     pre: PresetUi,
     presets_path: PathBuf,
     queue: Queue,
@@ -341,6 +344,8 @@ impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, startup: Option<layout::Startup>) -> Self {
         let first_run = !settings::settings_path().exists();
         let mut settings = Settings::load();
+        // where the app-managed FFmpeg lives (before anything looks for FFmpeg)
+        ffenc::ffmpeg::managed::set_location(&settings.managed_ffmpeg_dir);
         // appearance before the first frame, so panels are laid out at the right scale
         let bold_available = install_fonts(&cc.egui_ctx, settings.appearance.bold);
         theme::apply(&cc.egui_ctx, &settings.appearance);
@@ -374,6 +379,7 @@ impl App {
         let layout = layout::LayoutRt::new(startup, settings.remember_layout);
         if settings.remember_layout {
             queue.log(format!("Window layout: {}", layout.path.display()));
+            queue.log(layout.describe());
         }
         let mut app = App {
             settings,
@@ -396,6 +402,7 @@ impl App {
             show_help: false,
             settings_edit: None,
             updater: UpdaterUi::default(),
+            mloc: managed_loc::ManagedLocUi::default(),
             show_about: false,
             first_run_dismissed: false,
             locate: None,
@@ -485,6 +492,7 @@ impl App {
                     self.queue.log(n.clone());
                 }
                 self.settings = Settings::load();
+                ffenc::ffmpeg::managed::set_location(&self.settings.managed_ffmpeg_dir);
                 let (list, path, _, migrated) = load_presets(&mut self.settings, &self.queue);
                 let current = list.iter().position(|p| p.id == self.settings.last_preset && !p.hidden).unwrap_or(0);
                 self.pre = PresetUi::new(list, current);
@@ -1031,7 +1039,7 @@ impl App {
                 .resizable(true)
                 .default_size([900.0_f32.min(ctx.screen_rect().width() - 40.0), 520.0_f32.min(ctx.screen_rect().height() - 40.0)])
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                , ctx, false).show(ctx, |ui| {
+                , ctx, false).remember("confirm", false).show(ctx, |ui| {
                     let n = p.jobs.len();
                     ui.horizontal(|ui| {
                         let head = if n == 0 { "Nothing to run – every job is skipped.".to_string() } else { format!("{n} job{} will be queued with these exact commands:", if n == 1 { "" } else { "s" }) };
@@ -1284,7 +1292,7 @@ impl App {
         // about
         if self.show_about {
             let mut open = true;
-            common::fit(egui::Window::new("About").open(&mut open).collapsible(false).resizable(true).default_width(560.0), ctx, true).show(ctx, |ui| {
+            common::fit(egui::Window::new("About").open(&mut open).collapsible(false).resizable(true).default_width(560.0), ctx, true).remember("about", true).show(ctx, |ui| {
                 ui.heading(ffenc::full_title());
                 ui.label("GUI port of the FFmpeg processing PowerShell script v22.0.");
                 ui.label(format!("Build: {} {}", std::env::consts::OS, std::env::consts::ARCH));
@@ -1327,6 +1335,42 @@ impl App {
         }
 
         self.settings_dialog(ctx);
+        if let Some(o) = self.mloc.poll(ctx) {
+            self.apply_managed_location(ctx, o);
+        }
+    }
+
+    /// Switch the app-managed FFmpeg location (after a move, or without moving).
+    fn apply_managed_location(&mut self, ctx: &egui::Context, o: managed_loc::Outcome) {
+        let managed_loc::Outcome::Switch { setting, old_root, moved, note } = o;
+        let old_bin = old_root.join("bin");
+        ffenc::ffmpeg::managed::set_location(&setting);
+        let new_bin = locate::managed_bin();
+        self.settings.managed_ffmpeg_dir = setting.clone();
+        // a FFmpeg folder that pointed at the old managed copy follows it
+        let follow = |p: &mut String| {
+            if locate::is_managed_dir(Path::new(p.trim()), &old_bin) {
+                *p = new_bin.to_string_lossy().into_owned();
+            }
+        };
+        follow(&mut self.settings.ffmpeg_bin_path);
+        if let Some(ed) = self.settings_edit.as_mut() {
+            ed.managed_ffmpeg_dir = setting;
+            follow(&mut ed.ffmpeg_bin_path);
+        }
+        self.save_settings();
+        let root = new_bin.parent().map(|p| p.display().to_string()).unwrap_or_default();
+        self.queue.log(match note {
+            Some(n) => n,
+            None if moved => format!("App-managed FFmpeg location: {root}"),
+            None => format!("App-managed FFmpeg location is now {root}. The old copy in {} was left as it was.", old_bin.display()),
+        });
+        if !moved && !ffenc::ffmpeg::managed::has_copy(&ffenc::ffmpeg::managed::current_root()) {
+            self.mloc.msg = Some((true, format!("Now using {root}. It has no FFmpeg yet: Help › Check for FFmpeg updates… downloads one there.")));
+        } else if !moved {
+            self.mloc.msg = Some((true, format!("Now using {root}.")));
+        }
+        self.refresh_ffmpeg(ctx);
     }
 
     /// Theme / size shortcuts, then apply the appearance if it changed (live, saved).
@@ -1470,7 +1514,7 @@ impl App {
             return;
         }
         let mut open = true;
-        common::fit(egui::Window::new("Keyboard shortcuts & accessibility").open(&mut open).collapsible(false).resizable(true).default_width(620.0), ctx, true).show(ctx, |ui| {
+        common::fit(egui::Window::new("Keyboard shortcuts & accessibility").open(&mut open).collapsible(false).resizable(true).default_width(620.0), ctx, true).remember("help", true).show(ctx, |ui| {
             egui::Grid::new("keys").num_columns(2).striped(true).spacing([16.0, 6.0]).show(ui, |ui| {
                 for (k, what) in SHORTCUTS {
                     ui.label(RichText::new(*k).strong());
@@ -1497,7 +1541,8 @@ impl App {
         let mut save = false;
         let mut err = None;
         let mut reset_layout = false;
-        common::fit(egui::Window::new("Settings").collapsible(false).resizable(true).default_width(640.0), ctx, false).show(ctx, |ui| {
+        let mut mloc_out = None;
+        common::fit(egui::Window::new("Settings").collapsible(false).resizable(true).default_width(640.0), ctx, false).remember("settings", true).show(ctx, |ui| {
             egui::ScrollArea::vertical().max_height((ctx.screen_rect().height() - 150.0).max(120.0)).show(ui, |ui| {
                 common::section(ui, "Appearance");
                 hint(ui, "Applied and saved immediately (Save/Cancel below don't affect it).");
@@ -1522,6 +1567,16 @@ impl App {
                     common::path_row_nodrop(ui, "Output folder", &mut ed.output_folder, common::Pick::Folder, &d);
                 });
                 hint(ui, "FFmpeg lookup order: this folder -> ffmpeg\\ next to the app -> app-managed copy -> PATH.");
+                common::section(ui, "App-managed FFmpeg location");
+                hint(ui, managed_loc::HELP);
+                let blocked = if self.queue.is_busy() {
+                    Some("Can't change it while jobs are running.")
+                } else if self.updater.busy() {
+                    Some("Can't change it while an FFmpeg update is running.")
+                } else {
+                    None
+                };
+                mloc_out = self.mloc.settings_ui(ui, blocked);
                 common::section(ui, "Encoding defaults (used by built-in presets that are not customised, and by new blank presets)");
                 egui::Grid::new("set_e").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                     let mut v = ffenc::cmd::common::VideoEncode { crf: ed.crf, preset: ed.preset.clone(), tune: None };
@@ -1644,6 +1699,8 @@ impl App {
             let ff_changed = ed.ffmpeg_bin_path != self.settings.ffmpeg_bin_path;
             // appearance is edited live on self.settings, not on the dialog copy
             ed.appearance = self.settings.appearance.clone();
+            // so is the app-managed FFmpeg location ("Reset to script defaults" keeps it)
+            ed.managed_ffmpeg_dir = self.settings.managed_ffmpeg_dir.clone();
             self.settings = ed;
             self.pre.rebase(&self.settings);
             self.save_settings();
@@ -1652,6 +1709,9 @@ impl App {
             }
         } else if keep {
             self.settings_edit = Some(ed);
+        }
+        if let Some(o) = mloc_out {
+            self.apply_managed_location(ctx, o);
         }
     }
 
@@ -1763,7 +1823,9 @@ impl eframe::App for App {
         }
 
         let screen = ctx.screen_rect().size();
+        self.layout.begin_frame(ctx);
         let presets_w = self.layout.initial.presets_width.unwrap_or(240.0);
+        self.layout.seed_panel(ctx, layout::panel_id("presets"), layout::Side::Left, self.layout.initial.presets_width, (screen.x * 0.45).max(200.0));
         let presets_panel = egui::SidePanel::left(layout::panel_id("presets")).resizable(true).default_width(presets_w).width_range(150.0..=(screen.x * 0.45).max(200.0)).show(ctx, |ui| {
             ui.add_space(4.0);
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
@@ -1783,11 +1845,12 @@ impl eframe::App for App {
                 Some(SideEvent::Export { all }) => self.export_presets(all),
             }
         });
-        layout::LayoutRt::record_panel(&mut self.layout.panels.presets_width, presets_panel.response.rect.width(), (screen.x * 0.45).max(200.0));
+        self.layout.record(layout::Side::Left, presets_panel.response.rect.width(), (screen.x * 0.45).max(200.0));
 
         // at large text sizes the window has few points of width: the form comes first
         if self.settings.show_source_panel && !source_panel_too_narrow(ctx) {
             let source_w = self.layout.initial.source_width.unwrap_or(300.0);
+            self.layout.seed_panel(ctx, layout::panel_id("source"), layout::Side::Right, self.layout.initial.source_width, (screen.x * 0.4).max(220.0));
             let r = egui::SidePanel::right(layout::panel_id("source")).resizable(true).default_width(source_w).width_range(180.0..=(screen.x * 0.4).max(220.0)).show(ctx, |ui| {
                 ui.add_space(4.0);
                 let idx = self.pre.current;
@@ -1795,17 +1858,18 @@ impl eframe::App for App {
                 let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
                 self.source.ui(ui, input, ffprobe.as_deref());
             });
-            layout::LayoutRt::record_panel(&mut self.layout.panels.source_width, r.response.rect.width(), (screen.x * 0.4).max(220.0));
+            self.layout.record(layout::Side::Right, r.response.rect.width(), (screen.x * 0.4).max(220.0));
         }
 
         let queue_h = self.layout.initial.queue_height.unwrap_or(220.0_f32.min(screen.y * 0.26));
+        self.layout.seed_panel(ctx, layout::panel_id("queue"), layout::Side::Bottom, self.layout.initial.queue_height, (screen.y * 0.4).max(80.0));
         let r = egui::TopBottomPanel::bottom(layout::panel_id("queue")).resizable(true).default_height(queue_h).height_range(60.0..=(screen.y * 0.4).max(80.0)).show(ctx, |ui| {
             // never let the panel's content force it taller than its cap (large text sizes)
             egui::ScrollArea::vertical().id_salt("queue_panel_scroll").auto_shrink([false, false]).show(ui, |ui| {
                 self.queue_panel(ui);
             });
         });
-        layout::LayoutRt::record_panel(&mut self.layout.panels.queue_height, r.response.rect.height(), (screen.y * 0.4).max(80.0));
+        self.layout.record(layout::Side::Bottom, r.response.rect.height(), (screen.y * 0.4).max(80.0));
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let idx = self.pre.current;

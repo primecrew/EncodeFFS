@@ -1,6 +1,7 @@
 //! Everything that talks to ffmpeg/ffprobe processes.
 
 pub mod locate;
+pub mod managed;
 pub mod probe;
 pub mod progress;
 pub mod runner;
