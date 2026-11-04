@@ -1116,7 +1116,7 @@ dependencies = [
 
 [[package]]
 name = "ffmpeg-encoder"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "chrono",
  "eframe",
@@ -1127,6 +1127,7 @@ dependencies = [
  "sevenz-rust2",
  "sha2",
  "ureq",
+ "windows-sys 0.59.0",
  "zip",
 ]
 

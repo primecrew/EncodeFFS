@@ -20,3 +20,12 @@ pub mod util;
 /// Application version (from Cargo.toml).
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const APP_NAME: &str = "FFmpeg Encoder";
+
+/// Folder name under %APPDATA% / %LOCALAPPDATA%.
+pub const DATA_DIR_NAME: &str = "FFmpegEncoder";
+/// Prefix of the portable files next to the exe.
+pub const FILE_STEM: &str = "FFmpegEncoder";
+/// The experimental edition's folder name (its downloaded FFmpeg is never used or moved by this app).
+pub const OTHER_EDITION_DATA_DIR_NAME: &str = "FFmpegEncoder-Experimental";
+
+pub mod layout;

@@ -490,7 +490,7 @@ impl PresetUi {
                 match heading {
                     Some(h) => {
                         let title = if h == "Favorites" { format!("★ Favorites ({})", idxs.len()) } else { format!("{h} ({})", idxs.len()) };
-                        egui::CollapsingHeader::new(RichText::new(title).strong()).id_salt(("pgroup", h.as_str())).default_open(true).show(ui, |ui| ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| draw(ui)));
+                        crate::ui::layout::section(ui, &format!("presets.group:{h}"), egui::CollapsingHeader::new(RichText::new(title).strong()), true, |ui| ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| draw(ui)));
                     }
                     None => draw(ui),
                 }

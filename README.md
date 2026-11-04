@@ -20,7 +20,7 @@ One `FFmpegEncoder.exe`, no installer, no runtime. Needs `ffmpeg.exe` + `ffprobe
    and deletes the partial output.
 
 FFmpeg lookup order: Settings folder (default `C:\ffmpeg\bin`) → `ffmpeg\` or `ffmpeg\bin\` next to
-the exe → app-managed copy `%LOCALAPPDATA%\FFmpegEncoder\ffmpeg\bin` → `PATH`.
+the exe → app-managed copy (`%LOCALAPPDATA%\FFmpegEncoder\ffmpeg\bin` by default, see *App-managed FFmpeg location*) → `PATH`.
 On start the app checks the build has `libx264` and `aac`.
 
 ## Appearance, text size & keyboard
@@ -306,6 +306,41 @@ Per-job ffmpeg stderr goes to `ffmpeg_error_<name>.log` in the output folder; it
 the Audio & subtitles tool warns. It never blocks a job.
 **Keep temporary files for debugging** (Settings, off by default) keeps the temporary chapter files, Join list files
 and unfinished partial outputs, writes their paths to the log, and skips the startup clean-up.
+
+## Window layout (0.5.2)
+File › Settings › Window layout › **Remember window layout** (on by default) and **Reset window layout**.
+- Saved and restored at the next start:
+  - the window's position, size and maximized state, and which screen it is on;
+  - the widths of the preset list and the Source panel, and the height of the queue/log panel;
+  - which collapsible sections are open (preset groups, Audio & subtitles sections, Show differences,
+    Import from text, Files lists);
+  - the size of resizable dialogs (Settings, FFmpeg updates, Chapter creator, About, Help, and the confirmation
+    dialog), and where you moved them (not the confirmation dialog, which always opens centered).
+- Not remembered: the field columns in forms (they are not resizable; they follow the text size) and text boxes.
+- Saved about 1.5 seconds after a change and on exit. The Log shows one line at startup with what was restored.
+- A window that would open off-screen (for example on a screen that is no longer connected) opens centered at the
+  default size; a window partly off the screen, or bigger than it, is moved/shrunk onto it (minimum 820 × 600).
+- **Reset window layout** puts the window back to the default size centered on its screen and the panels, dialogs
+  and sections back to their defaults, immediately. Turning the option off stops saving and deletes the saved layout.
+- Stored in its own file next to the settings: `FFmpegEncoder.layout.json` (portable) or
+  `%APPDATA%\FFmpegEncoder\layout.json`. If it is missing, old or damaged, the defaults are used; settings are not affected.
+
+## App-managed FFmpeg location (0.5.2)
+File › Settings › **App-managed FFmpeg location**: where the FFmpeg the app downloads and updates lives (with its
+`bin.previous` backup for Roll back). Your own FFmpeg folder (Settings › Folders) is a separate thing.
+- Default `%LOCALAPPDATA%\FFmpegEncoder\ffmpeg`; existing installs keep it.
+- Shows the current folder. Type or **Browse…** for a folder, then **Change…**; **Reset to default** goes back.
+  Applies immediately (not with Save) and is stored as `managed_ffmpeg_dir` in the settings file.
+- If there is a downloaded copy, it asks: **Move it there** (copy, start the copied ffmpeg once to check it, then
+  delete the old copy; on any failure the new folder is cleaned up and nothing changes) or **Don't move** (the old
+  copy stays where it is; the next update downloads a fresh copy into the new folder).
+- The folder is checked first: a full path (drive or `\\server\share`), no invalid characters or reserved names,
+  not a drive/share root, not a Windows or Program Files folder, not the experimental edition's data folder,
+  writable, and enough free space (the copy's size, or about 600 MB for a fresh download). Spaces, non-English
+  letters and network shares are fine.
+- Not possible while jobs or an FFmpeg update are running. Your FFmpeg folder setting follows the move if it
+  pointed at the managed copy. Updates, Roll back, the automatic check and the "managed vs your own folder"
+  distinction all use the chosen location.
 
 ## FFmpeg updates (Help › Check for FFmpeg updates…)
 - **Sources:** BtbN (GitHub, win64 GPL, default) or gyan.dev (essentials). **Channels:** Stable (latest release branch,

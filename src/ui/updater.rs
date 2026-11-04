@@ -92,7 +92,7 @@ impl UpdaterUi {
             return event;
         }
         let mut open = self.open;
-        crate::ui::common::fit(egui::Window::new("FFmpeg updates").open(&mut open).collapsible(false).resizable(true).default_width(620.0), ctx, true).show(ctx, |ui| {
+        crate::ui::common::fit(egui::Window::new("FFmpeg updates").open(&mut open).collapsible(false).resizable(true).default_width(620.0), ctx, true).remember("updates", true).show(ctx, |ui| {
             if ff.is_some_and(|f| !f.is_app_managed()) {
                 hint(ui, "You're using your own FFmpeg folder, so the app never checks for updates by itself. This check runs only because you asked; installing the newest build gives you an app-managed copy (or updates your folder if you choose that).");
             } else if settings.never_check_updates {

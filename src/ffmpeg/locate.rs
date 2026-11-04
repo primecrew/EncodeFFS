@@ -1,7 +1,8 @@
 //! Find ffmpeg/ffprobe. Resolution order:
 //! 1. the configured bin folder (settings)
 //! 2. an `ffmpeg` folder next to the app exe (`ffmpeg\` or `ffmpeg\bin\`)
-//! 3. the app-managed copy in %LOCALAPPDATA%\FFmpegEncoder\ffmpeg\bin
+//! 3. the app-managed copy (default %LOCALAPPDATA%\FFmpegEncoder\ffmpeg\bin, or the folder
+//!    chosen in Settings › App-managed FFmpeg location)
 //! 4. PATH
 
 use std::path::{Path, PathBuf};
@@ -91,9 +92,10 @@ pub fn local_app_dir() -> PathBuf {
     std::env::temp_dir().join("FFmpegEncoder")
 }
 
-/// Root of the app-managed FFmpeg (`...\FFmpegEncoder\ffmpeg`).
+/// Root of the app-managed FFmpeg: the folder chosen in Settings, or by default
+/// `...\FFmpegEncoder\ffmpeg` (see [`super::managed`]).
 pub fn managed_root() -> PathBuf {
-    local_app_dir().join("ffmpeg")
+    super::managed::current_root()
 }
 
 /// `...\FFmpegEncoder\ffmpeg\bin`

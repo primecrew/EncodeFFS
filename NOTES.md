@@ -1,5 +1,26 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.5.2 — window layout, app-managed FFmpeg location
+Functional changes ported from the experimental branch (0.6.0-dev.2/dev.3); no UI restyle, splash or installer.
+- **Window layout** (`remember_layout`, on by default; Settings › Window layout › Remember / Reset):
+  - window position (physical px), inner size (logical px), maximized state and screen work area; preset list /
+    Source panel widths and queue panel height; open sections (stable keys); resizable dialog sizes/positions.
+  - `FFmpegEncoder.layout.json` next to the portable settings or `layout.json` in `%APPDATA%\FFmpegEncoder`;
+    separate from settings, lenient parsing, unusable values dropped; written ~1.5 s after a change and on exit
+    (temp file + rename).
+  - Placement decided before the window is created (`ffenc::layout::placement`): off-screen → centered default;
+    clamped to the screen; maximized restores maximized with its normal size; mixed-DPI re-check.
+  - Panels are re-seeded during a short restore phase so a first frame at another size can't overwrite them.
+  - Not resizable, so not remembered: form columns (egui grids), text boxes, the queue list.
+- **App-managed FFmpeg location** (`managed_ffmpeg_dir`, "" = `%LOCALAPPDATA%\FFmpegEncoder\ffmpeg`):
+  - `ffmpeg::managed`: location override followed by `locate::managed_root()` (updater, `bin.previous` backups,
+    automatic check and managed-vs-own detection follow), Windows path validation, folder checks (write probe,
+    `GetDiskFreeSpaceExW`), `move_copy` (staging folder, size-checked copy, rename, verify by running ffmpeg,
+    delete old; rollback on failure). UI in `ui::managed_loc`.
+- Tests: `layout::tests`, `ffmpeg::managed::tests`, `settings::tests::{remember_layout_default_on_and_saved,
+  managed_ffmpeg_dir_setting}`.
+- New Windows-only dependency `windows-sys` 0.59 (already in the build via eframe/rfd).
+
 ## 0.5.1 — "Turn off Update Check for FFMPEG"
 - **New option:** File › Settings › FFmpeg updates & logs › **Turn off Update Check for FFMPEG** (`never_check_updates`).
   - **Unchecked by default** for new users and on first run, so the once-a-day check at startup stays on.

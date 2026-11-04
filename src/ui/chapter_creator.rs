@@ -145,7 +145,7 @@ impl ChapterCreator {
             .default_size([680.0, 600.0])
             .resizable(true)
             .collapsible(false)
-            , ctx, false).show(ctx, |ui| {
+            , ctx, false).remember("chapter_creator", true).show(ctx, |ui| {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| self.body(ui, id, spec, src));
             });
         self.open = open;
@@ -279,7 +279,7 @@ impl ChapterCreator {
         hint(ui, "Paste a time from your player (seconds, mm:ss, hh:mm:ss.mmm or 1h2m3s); it is normalised to hh:mm:ss.mmm.");
 
         ui.add_space(6.0);
-        egui::CollapsingHeader::new("Import from text").id_salt(format!("{id}_cc_imp")).show(ui, |ui| {
+        crate::ui::layout::section(ui, &format!("chapters.import:{id}"), egui::CollapsingHeader::new("Import from text"), false, |ui| {
             hint(ui, "One chapter per line: \"00:12:30 Title\" (also \"00:12:30 - Title\" or YouTube-style \"0:00 Intro\"). Lines starting with # are ignored.");
             ui.add(egui::TextEdit::multiline(&mut self.import_text).desired_rows(5).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
             ui.horizontal(|ui| {
