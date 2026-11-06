@@ -29,4 +29,5 @@ pub const FILE_STEM: &str = "FFmpegEncoder";
 /// The experimental edition's folder name (its downloaded FFmpeg is never used or moved by this app).
 pub const OTHER_EDITION_DATA_DIR_NAME: &str = "FFmpegEncoder-Experimental";
 
+pub mod job_history;
 pub mod layout;

@@ -292,6 +292,15 @@ Re-encode, Custom pipeline (single file and folder batch) and Batch re-encode ca
   **name suffix**, **faststart**, and free-form **extra input options** (before `-i`) and **extra output options**
   (before the output file; quotes group values with spaces).
 
+## Job history (next release)
+**File › Job history…** lists every **successful** job, newest at the bottom: when it finished, the job,
+the preset it came from, the output file (its final name), how long it took, the form settings (JSON) and
+the exact FFmpeg command. It is kept across restarts in `logs\job-history.log` next to the settings file.
+- Failed or cancelled jobs are never added (they are reported in the Log as before). In a batch, each
+  successful file gets its own entry.
+- **Clear job history…** (asks first) deletes only that file — never your videos, presets, settings or FFmpeg.
+- It's a record to read or copy from; nothing is re-run or turned into a preset automatically.
+
 ## Encoding Finished popup (0.5.3)
 - When jobs finish **successfully**, a small window **Encoding Finished** shows the output file's final name (after
   "keep both" numbering), its folder, size and how long it took, with **Go to file** (Explorer opens with the file
@@ -379,9 +388,11 @@ File › Settings › **App-managed FFmpeg location**: where the FFmpeg the app 
 - Downloads over HTTPS (rustls), verifies SHA-256 (BtbN: GitHub asset digest; gyan: published `.sha256`), extracts
   only `ffmpeg.exe`/`ffprobe.exe`/`ffplay.exe` (zip or 7z), tests the new ffmpeg has libx264+aac, then swaps
   files atomically with restore-on-failure.
-- Default target is the app-managed folder (the Settings path is switched to it). Updating your configured folder
-  in place is optional and needs a confirmation tick. Blocked while jobs run.
-- The previous build is kept in `<bin>.previous`; **Help › Roll back FFmpeg** swaps back (one generation).
+- Updates always go into the app-managed folder (the Settings path is switched to it). **Your own FFmpeg
+  folder is never modified** (next release; earlier versions offered an optional in-place update). Blocked
+  while jobs run.
+- The previous managed build is kept in `<bin>.previous`; **Help › Roll back FFmpeg** swaps back (one
+  generation, app-managed copy only).
 - **Automatic check:** when the app starts it looks for a newer FFmpeg at most once a day and shows a notice if
   there is one. Nothing installs without a click.
   - It only runs for the **app-managed copy** (the FFmpeg the app downloaded). With **your own FFmpeg folder**

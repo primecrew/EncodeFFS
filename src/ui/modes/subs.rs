@@ -99,7 +99,7 @@ impl Mode for SubsMode {
         self.dprobe.update(cx.egui, cx.ffprobe, &st.dest);
         egui::Grid::new("m8").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             path_row(ui, "Subtitle source", &mut st.source, Pick::File("Video", VIDEO_EXTS), &cx.settings.input_folder);
-            ui.label("Tracks to copy");
+            crate::ui::common::row_label(ui, "Tracks to copy");
             ui.vertical(|ui| {
                 if self.sprobe.busy() {
                     ui.spinner();
@@ -126,7 +126,7 @@ impl Mode for SubsMode {
             if path_row(ui, "Destination video", &mut st.dest, Pick::File("Video", VIDEO_EXTS), &cx.settings.input_folder) {
                 st.regen_name();
             }
-            ui.label("Existing subtitles");
+            crate::ui::common::row_label(ui, "Existing subtitles");
             ui.vertical(|ui| {
                 if let Some(i) = self.dprobe.info() {
                     let subs = i.subtitle_infos();
@@ -142,7 +142,7 @@ impl Mode for SubsMode {
                 ui.checkbox(&mut st.keep_existing, "Keep subtitle tracks already in the destination");
             });
             ui.end_row();
-            ui.label("Container");
+            crate::ui::common::row_label(ui, "Container");
             ui.horizontal(|ui| {
                 let before = st.container.clone();
                 ui.radio_value(&mut st.container, "mkv".to_string(), "MKV (recommended)");
@@ -162,7 +162,7 @@ impl Mode for SubsMode {
             if output_rows_sfx(ui, &mut st.out_dir, &mut st.out_name, &mut st.suffix, &cx.settings.output_folder) {
                 st.regen_name();
             }
-            ui.label("Video/audio");
+            crate::ui::common::row_label(ui, "Video/audio");
             ui.checkbox(&mut st.copy_only, "Copy without re-encoding (recommended)");
             ui.end_row();
             if !st.copy_only {
@@ -171,7 +171,7 @@ impl Mode for SubsMode {
                 range_ui(ui, &mut st.range_convert);
             }
             if st.container == "mp4" {
-                ui.label("MP4 subtitles");
+                crate::ui::common::row_label_tip(ui, "MP4 subtitles", "MP4 only supports text subtitles as mov_text. Converting is the safe choice; copying as-is can fail for other formats (e.g. ASS, PGS).");
                 egui::ComboBox::from_id_salt("m8_mp4").selected_text(match st.mp4_handling {
                     Mp4SubHandling::ConvertMovText => "Convert to mov_text",
                     Mp4SubHandling::TryCopy => "Try copying as-is",

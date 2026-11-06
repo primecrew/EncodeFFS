@@ -257,7 +257,7 @@ fn path_row_impl(ui: &mut Ui, label: &str, value: &mut String, pick: Pick, fallb
 /// Output folder + file name rows.
 pub fn output_rows(ui: &mut Ui, dir: &mut String, name: &mut String, fallback_dir: &str) {
     path_row_nodrop(ui, "Output folder", dir, Pick::Folder, fallback_dir);
-    ui.label("Output file name");
+    row_label(ui, "Output file name");
     ui.add(egui::TextEdit::singleline(name).desired_width(f32::INFINITY));
     ui.end_row();
 }
@@ -265,7 +265,7 @@ pub fn output_rows(ui: &mut Ui, dir: &mut String, name: &mut String, fallback_di
 /// Output folder + name + suffix rows. Returns true when the suffix changed.
 pub fn output_rows_sfx(ui: &mut Ui, dir: &mut String, name: &mut String, suffix: &mut String, fallback_dir: &str) -> bool {
     output_rows(ui, dir, name, fallback_dir);
-    ui.label("Name suffix");
+    row_label(ui, "Name suffix");
     let r = ui.horizontal(|ui| {
         let c = ui.add(egui::TextEdit::singleline(suffix).desired_width(160.0)).changed();
         hint(ui, "added to the input name for the automatic output name");
@@ -306,7 +306,7 @@ pub fn num_u32(ui: &mut Ui, v: &mut u32, range: std::ops::RangeInclusive<u32>, s
 }
 
 pub fn passthrough_ui(ui: &mut Ui, id: &str, p: &mut Passthrough) {
-    ui.label("Passthrough");
+    row_label_tip(ui, "Passthrough", "Copy the video and/or audio stream unchanged instead of re-encoding it (fast, no quality loss); filters and encoder settings for a copied stream are ignored.");
     egui::ComboBox::from_id_salt(id).width(300.0).selected_text(p.label()).show_ui(ui, |ui| {
         for v in Passthrough::ALL {
             ui.selectable_value(p, v, v.label());
@@ -317,13 +317,13 @@ pub fn passthrough_ui(ui: &mut Ui, id: &str, p: &mut Passthrough) {
 
 /// CRF / preset / tune rows (inside a Grid).
 pub fn video_encode_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, show_tune: bool) {
-    ui.label("CRF");
+    row_label(ui, "CRF");
     ui.horizontal(|ui| {
         num_u32(ui, &mut v.crf, 0..=51, "");
         hint(ui, "lower = better quality / bigger file");
     });
     ui.end_row();
-    ui.label("Preset");
+    row_label_tip(ui, "Preset", "x264 speed preset: slower presets compress better (smaller file at the same CRF) but take longer. Does not change the quality target.");
     egui::ComboBox::from_id_salt(format!("{id}_preset")).selected_text(v.preset.clone()).show_ui(ui, |ui| {
         for (i, p) in PRESETS.iter().enumerate() {
             ui.selectable_value(&mut v.preset, p.to_string(), format!("{}: {}", i + 1, p));
@@ -331,7 +331,7 @@ pub fn video_encode_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, show_tune: bo
     });
     ui.end_row();
     if show_tune {
-        ui.label("Tune");
+        row_label_tip(ui, "Tune", "Optional x264 tuning for a kind of content (e.g. film, animation, grain). Leave at none if unsure.");
         let txt = v.tune.clone().unwrap_or_else(|| "none".into());
         egui::ComboBox::from_id_salt(format!("{id}_tune")).selected_text(txt).show_ui(ui, |ui| {
             ui.selectable_value(&mut v.tune, None, "none");
@@ -344,7 +344,7 @@ pub fn video_encode_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, show_tune: bo
 }
 
 pub fn bitrate_ui(ui: &mut Ui, label: &str, k: &mut u32) {
-    ui.label(label);
+    row_label(ui, label);
     ui.horizontal(|ui| {
         num_u32(ui, k, 8..=1024, " kbps");
         for b in [128, 160, 192, 256, 320] {
@@ -359,13 +359,13 @@ pub fn bitrate_ui(ui: &mut Ui, label: &str, k: &mut u32) {
 /// Bitrate + gain + compressor rows.
 pub fn audio_encode_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode) {
     bitrate_ui(ui, "AAC bitrate", &mut a.bitrate_k);
-    ui.label("Gain");
+    row_label_tip(ui, "Gain", "Volume change applied to the audio, in decibels (+6 dB is roughly twice as loud). 0 = unchanged.");
     ui.horizontal(|ui| {
         num_f64(ui, &mut a.gain_db, -30.0..=30.0, 0.1, " dB");
         hint(ui, "-30..+30");
     });
     ui.end_row();
-    ui.label("Compressor");
+    row_label_tip(ui, "Compressor", "Evens out loud and quiet parts (FFmpeg acompressor) so a gain boost does not clip.");
     ui.vertical(|ui| {
         egui::ComboBox::from_id_salt(format!("{id}_comp"))
             .selected_text(a.compressor.label())
@@ -391,29 +391,29 @@ pub fn audio_encode_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode) {
 
 pub fn compressor_params_ui(ui: &mut Ui, id: &str, c: &mut CompressorParams) {
     egui::Grid::new(id).num_columns(2).show(ui, |ui| {
-        ui.label("Threshold");
+        row_label_tip(ui, "Threshold", "Level above which the compressor starts reducing the volume.");
         num_f64(ui, &mut c.threshold_db, -60.0..=0.0, 0.1, " dB");
         ui.end_row();
-        ui.label("Ratio");
+        row_label_tip(ui, "Ratio", "How strongly levels above the threshold are reduced (4:1 = 4 dB over becomes 1 dB over).");
         num_f64(ui, &mut c.ratio, 1.0..=20.0, 0.05, ":1");
         ui.end_row();
-        ui.label("Knee");
+        row_label_tip(ui, "Knee", "Softens the transition around the threshold (1 = hard, higher = gentler).");
         num_f64(ui, &mut c.knee, 1.0..=8.0, 0.05, "");
         ui.end_row();
-        ui.label("Makeup");
+        row_label_tip(ui, "Makeup", "Gain added after compression to make up for the reduced level.");
         num_f64(ui, &mut c.makeup_db, -12.0..=12.0, 0.1, " dB");
         ui.end_row();
-        ui.label("Attack");
+        row_label_tip(ui, "Attack", "How quickly the compressor reacts when the level rises above the threshold.");
         num_f64(ui, &mut c.attack_ms, 0.01..=2000.0, 0.5, " ms");
         ui.end_row();
-        ui.label("Release");
+        row_label_tip(ui, "Release", "How quickly the compressor lets go after the level drops below the threshold.");
         num_f64(ui, &mut c.release_ms, 1.0..=9000.0, 1.0, " ms");
         ui.end_row();
     });
 }
 
 pub fn range_ui(ui: &mut Ui, v: &mut bool) {
-    ui.label("Colour range");
+    row_label(ui, "Colour range");
     ui.vertical(|ui| {
         ui.checkbox(v, "Convert full-range to limited-range BT.709 and tag it");
         hint(ui, "Use for full-range PC/capture sources. Skip if the source is already limited/video range (avoids grey blacks).");
@@ -422,7 +422,7 @@ pub fn range_ui(ui: &mut Ui, v: &mut bool) {
 }
 
 pub fn faststart_ui(ui: &mut Ui, v: &mut bool, enabled: bool) {
-    ui.label("Faststart");
+    row_label(ui, "Faststart");
     ui.add_enabled(enabled, egui::Checkbox::new(v, "Move index to the front for faster streaming (MP4 only)"));
     ui.end_row();
 }
@@ -504,4 +504,30 @@ pub fn copy_button(ui: &mut Ui, label: &str, tooltip: &str) -> egui::Response {
         p.galley(text_pos, galley, vis.text_color());
     }
     named(resp, egui::WidgetType::Button, tooltip)
+}
+
+/// Label in the first column of a form grid, aligned to the **top** of its row (egui's Grid
+/// centres cells vertically, so a label next to a tall control would float in the middle).
+/// The label takes its normal space in the grid (so row heights are unchanged) but is drawn at
+/// the top of the row, where the cursor is when the row starts. Hover / accessibility use the
+/// drawn position.
+pub fn row_label(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> egui::Response {
+    let text: egui::WidgetText = text.into();
+    let row_top = ui.cursor().top();
+    let galley = text.into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body);
+    let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+    let drawn = egui::Rect::from_min_size(egui::pos2(rect.left(), row_top.min(rect.top())), galley.size());
+    let resp = ui.interact(drawn, ui.id().with(("row_label", rect.left_top().x as i32, row_top as i32)), egui::Sense::hover());
+    if ui.is_rect_visible(drawn) {
+        let color = ui.style().visuals.text_color();
+        ui.painter().galley(drawn.min, galley.clone(), color);
+    }
+    let t = galley.text().to_string();
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &t));
+    resp
+}
+
+/// [`row_label`] with a hover explanation (shown on the label) for options without their own help text.
+pub fn row_label_tip(ui: &mut Ui, text: &str, tip: &str) -> egui::Response {
+    row_label(ui, text).on_hover_text(tip)
 }

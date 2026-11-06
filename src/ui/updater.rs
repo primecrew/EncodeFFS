@@ -99,7 +99,7 @@ impl UpdaterUi {
                 hint(ui, "Automatic update checks are off (File › Settings › “Turn off Update Check for FFMPEG”). This check runs only because you asked for it.");
             }
             egui::Grid::new("upd").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                ui.label("Installed");
+                crate::ui::common::row_label(ui, "Installed");
                 ui.vertical(|ui| {
                     match (ff, ff_version) {
                         (Some(f), Some(v)) => {
@@ -115,7 +115,7 @@ impl UpdaterUi {
                     }
                 });
                 ui.end_row();
-                ui.label("Source");
+                crate::ui::common::row_label(ui, "Source");
                 let mut changed = false;
                 ui.horizontal(|ui| {
                     for s in UpdateSource::ALL {
@@ -123,7 +123,7 @@ impl UpdaterUi {
                     }
                 });
                 ui.end_row();
-                ui.label("Channel");
+                crate::ui::common::row_label(ui, "Channel");
                 ui.horizontal(|ui| {
                     for c in UpdateChannel::ALL {
                         changed |= ui.radio_value(&mut self.channel, c, c.label()).changed();
@@ -136,7 +136,7 @@ impl UpdaterUi {
                     let _ = settings.save();
                     self.start_check(ctx);
                 }
-                ui.label("Newest");
+                crate::ui::common::row_label(ui, "Newest");
                 ui.vertical(|ui| {
                     if self.check.is_some() {
                         ui.horizontal(|ui| {
@@ -173,21 +173,17 @@ impl UpdaterUi {
             let custom_active = ff.map(|f| f.source != FfSource::Managed && f.source != FfSource::SystemPath && f.bin_dir != managed_bin()).unwrap_or(false);
             let managed = managed_bin();
             ui.label(RichText::new("Install to").strong());
-            ui.radio_value(&mut self.in_place, false, format!("App-managed copy (recommended): {}", managed.display()));
+            // never write into the user's own FFmpeg installation: updates only go to the app-managed copy
+            self.in_place = false;
+            ui.label(format!("App-managed copy: {}", managed.display()));
             if custom_active {
-                hint(ui, "The app will switch to the managed copy (Settings › FFmpeg folder is updated). Your current folder is left untouched.");
                 let cur = ff.map(|f| f.bin_dir.clone()).unwrap_or(configured);
-                ui.radio_value(&mut self.in_place, true, format!("Update in place: {}", cur.display()));
-                if self.in_place {
-                    ui.checkbox(&mut self.confirm_in_place, "I understand ffmpeg/ffprobe/ffplay.exe in that folder will be replaced (old ones moved to a .previous folder)");
-                }
-            } else {
-                self.in_place = false;
+                hint(ui, format!("Your own FFmpeg in {} is never changed. The app will switch to the managed copy (Settings › FFmpeg folder is updated); you can switch back any time.", cur.display()));
             }
             ui.separator();
 
             // ---- action row
-            let target = if self.in_place { ff.map(|f| f.bin_dir.clone()).unwrap_or_else(managed_bin) } else { managed_bin() };
+            let target = managed_bin();
             if let Some(st) = self.stage.lock().unwrap().clone().filter(|_| self.install.is_some()) {
                 match st {
                     Stage::Downloading { done, total } => {

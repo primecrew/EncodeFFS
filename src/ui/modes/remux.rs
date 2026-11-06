@@ -94,7 +94,7 @@ impl Mode for RemuxMode {
             if path_row(ui, "Source folder", &mut self.st.src_dir, Pick::Folder, &cx.settings.input_folder) && PathBuf::from(self.st.src_dir.trim()).is_dir() {
                 refresh = true;
             }
-            ui.label("Output folder");
+            crate::ui::common::row_label(ui, "Output folder");
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     let w = (ui.available_width() - 80.0).max(120.0);
