@@ -616,7 +616,7 @@ impl PresetUi {
             Dialog::New { name, from } => {
                 crate::ui::common::fit(egui::Window::new("New preset").collapsible(false).resizable(false).anchor(center, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
                     egui::Grid::new("np").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-                        ui.label("Start from");
+                        crate::ui::common::row_label(ui, "Start from");
                         ui.vertical(|ui| {
                             let is_copy = matches!(from, NewFrom::Copy(_));
                             if ui.radio(is_copy, "Copy of an existing preset").clicked() && !is_copy {
@@ -646,7 +646,7 @@ impl PresetUi {
                             }
                         });
                         ui.end_row();
-                        ui.label("Name");
+                        crate::ui::common::row_label(ui, "Name");
                         ui.add(egui::TextEdit::singleline(name).hint_text("e.g. 1080p archive").desired_width(260.0));
                         ui.end_row();
                     });

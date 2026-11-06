@@ -421,7 +421,7 @@ impl Mode for FrameserveMode {
             });
             ui.end_row();
 
-            ui.label("Bit depth");
+            crate::ui::common::row_label(ui, "Bit depth");
             ui.horizontal_wrapped(|ui| {
                 ui.radio_value(&mut st.bits, BitDepth::Eight, "8-bit (plays everywhere)");
                 let ten_ok = !matches!(st.color, Color::Yv12 | Color::Rgb32);
@@ -451,7 +451,7 @@ impl Mode for FrameserveMode {
             }).response.labelled_by(l.id);
             ui.end_row();
 
-            ui.label("Frame rate");
+            crate::ui::common::row_label_tip(ui, "Frame rate", "Normally the frame rate of the signpost file is used. Force one only if the editor exported the wrong rate.");
             ui.horizontal_wrapped(|ui| {
                 ui.checkbox(&mut st.assume_fps, "Force a frame rate (AssumeFPS)");
                 if st.assume_fps {
@@ -468,7 +468,7 @@ impl Mode for FrameserveMode {
             });
             ui.end_row();
 
-            ui.label("Trim");
+            crate::ui::common::row_label(ui, "Trim");
             ui.horizontal_wrapped(|ui| {
                 ui.checkbox(&mut st.trim, "Only part of the timeline (frames)");
                 if st.trim {
@@ -480,7 +480,7 @@ impl Mode for FrameserveMode {
             });
             ui.end_row();
 
-            ui.label("Keep the .avs file");
+            crate::ui::common::row_label(ui, "Keep the .avs file");
             ui.vertical(|ui| {
                 ui.radio_value(&mut st.place, Place::Temp, "No – temporary file in %TEMP%, deleted after the job");
                 ui.radio_value(&mut st.place, Place::NextToSignpost, "Save it next to the signpost");
@@ -561,7 +561,7 @@ impl Mode for FrameserveMode {
         section(ui, "Video (libx264)");
         egui::Grid::new("fs_v").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             video_encode_ui(ui, "fs", &mut st.video, true);
-            ui.label("Resize");
+            crate::ui::common::row_label(ui, "Resize");
             ui.horizontal_wrapped(|ui| {
                 ui.checkbox(&mut st.resize, "New vertical resolution");
                 if st.resize {
@@ -574,7 +574,7 @@ impl Mode for FrameserveMode {
                 }
             });
             ui.end_row();
-            ui.label("Encoder format");
+            crate::ui::common::row_label(ui, "Encoder format");
             hint(ui, format!("{} (follows the colour format and bit depth above)", st.color.pix_fmt(st.bits)));
             ui.end_row();
         });

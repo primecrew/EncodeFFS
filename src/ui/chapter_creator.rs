@@ -78,7 +78,7 @@ impl ChapterCreator {
     /// Rows for a two-column `Grid`, then (outside the grid) the creator window.
     pub fn grid_rows(&mut self, ui: &mut Ui, id: &str, spec: &mut Spec, src: &Source) {
         let (det, col, none) = detection(src);
-        ui.label("Source chapters");
+        crate::ui::common::row_label(ui, "Source chapters");
         ui.horizontal(|ui| {
             ui.label(RichText::new(det).color(col));
             if none && *spec.mode == ChapterMode::Off && ui.button("Create chapters…").clicked() {
@@ -90,7 +90,7 @@ impl ChapterCreator {
         });
         ui.end_row();
 
-        ui.label("Chapters");
+        crate::ui::common::row_label(ui, "Chapters");
         ui.horizontal(|ui| {
             mode_combo(ui, &format!("{id}_mode"), spec.mode);
             if ui.button("Chapter creator…").on_hover_text("Auto / manual chapters, import a list, preview and validate").clicked() {
@@ -99,7 +99,7 @@ impl ChapterCreator {
         });
         ui.end_row();
         if spec.mode.auto() {
-            ui.label("Interval");
+            crate::ui::common::row_label(ui, "Interval");
             num_f64(ui, spec.interval_min, 0.1..=600.0, 0.1, " min");
             ui.end_row();
         }
@@ -112,7 +112,7 @@ impl ChapterCreator {
             ui.end_row();
         }
         if spec.mode.manual() {
-            ui.label("Manual chapters");
+            crate::ui::common::row_label(ui, "Manual chapters");
             ui.horizontal(|ui| {
                 let bad = spec.manual.iter().filter(|m| chapters::parse_hms(&m.time).is_err()).count();
                 ui.label(format!("{} entr{}", spec.manual.len(), if spec.manual.len() == 1 { "y" } else { "ies" }));
@@ -190,7 +190,7 @@ impl ChapterCreator {
         ui.add_space(6.0);
         ui.label(RichText::new("Manual chapters").strong());
         egui::Grid::new(format!("{id}_cc_grid")).num_columns(5).striped(true).spacing([8.0, 4.0]).show(ui, |ui| {
-            ui.label("#");
+            crate::ui::common::row_label(ui, "#");
             ui.label("Time (hh:mm:ss[.mmm])");
             ui.label("Title");
             ui.label("");
@@ -200,7 +200,7 @@ impl ChapterCreator {
             let mut swap = None;
             let n = spec.manual.len();
             for (i, c) in spec.manual.iter_mut().enumerate() {
-                ui.label(format!("{}", i + 1));
+                crate::ui::common::row_label(ui, format!("{}", i + 1));
                 let bad = !c.time.trim().is_empty() && chapters::parse_hms(&c.time).is_err();
                 let mut te = egui::TextEdit::singleline(&mut c.time).hint_text("00:15:30");
                 if bad {
@@ -357,7 +357,7 @@ impl ChapterCreator {
                     }
                     ui.end_row();
                     for (i, c) in list.iter().enumerate() {
-                        ui.label(format!("{}", i + 1));
+                        crate::ui::common::row_label(ui, format!("{}", i + 1));
                         ui.monospace(chapters::fmt_ms(c.start_ms));
                         ui.monospace(chapters::fmt_ms(c.end_ms));
                         ui.monospace(chapters::fmt_ms(c.end_ms - c.start_ms));

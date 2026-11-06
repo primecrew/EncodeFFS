@@ -134,7 +134,7 @@ impl Mode for ReencodeMode {
             self.probe.status_ui(ui, describe_video);
             ui.end_row();
 
-            ui.label("Duration");
+            crate::ui::common::row_label_tip(ui, "Duration", "Length used for progress and automatic chapters. Override it only when ffprobe reports a wrong duration.");
             ui.horizontal(|ui| {
                 ui.checkbox(&mut st.override_duration, "Override ffprobe duration");
                 if st.override_duration {
@@ -144,7 +144,7 @@ impl Mode for ReencodeMode {
             });
             ui.end_row();
 
-            ui.label("Trim");
+            crate::ui::common::row_label(ui, "Trim");
             ui.horizontal(|ui| {
                 ui.label("start");
                 num_f64(ui, &mut st.trim_start, 0.0..=1.0e7, 0.1, " s");
@@ -165,7 +165,7 @@ impl Mode for ReencodeMode {
             if output_rows_sfx(ui, &mut st.out_dir, &mut st.out_name, &mut st.suffix, &cx.settings.output_folder) {
                 st.regen_name();
             }
-            ui.label("Container");
+            crate::ui::common::row_label(ui, "Container");
             let before = st.container.clone();
             egui::ComboBox::from_id_salt("m1_cont").selected_text(st.container.clone()).show_ui(ui, |ui| {
                 for c in ["auto", "mp4", "mkv", "mov"] {
@@ -184,7 +184,7 @@ impl Mode for ReencodeMode {
             let pix = crate::ui::codecs_ui::source_pix_fmt(self.probe.info());
             egui::Grid::new("m1v").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                 crate::ui::codecs_ui::video_codec_ui(ui, "m1", &mut st.video, cx.encoders.as_ref(), pix.as_deref());
-                ui.label("Resize");
+                crate::ui::common::row_label(ui, "Resize");
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut st.resize, "New vertical resolution");
                     if st.resize {
@@ -206,7 +206,7 @@ impl Mode for ReencodeMode {
                 });
                 ui.end_row();
                 range_ui(ui, &mut st.range_convert);
-                ui.label("Deinterlace");
+                crate::ui::common::row_label(ui, "Deinterlace");
                 let interlaced = summary.as_ref().map(|s| s.interlaced).unwrap_or(false);
                 ui.vertical(|ui| {
                     ui.add_enabled(interlaced, egui::Checkbox::new(&mut st.deinterlace, "bwdif double-rate deinterlace (recommended)"));

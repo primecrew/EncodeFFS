@@ -1,5 +1,20 @@
 # Notes / changes vs PowerShell script v22.0
 
+## Unreleased (next release)
+- **Job history** (`src/job_history.rs`, File › Job history…): persistent `logs/job-history.log`; the form's
+  values are attached to the job ids when queued (`Tracker::register`), and an entry is appended only when a
+  job ends `Done` (failed/cancelled are dropped; batch = one entry per successful file). Clear removes just
+  that file. Replaces the idea of a transient "Last run" preset.
+- **Top-aligned option rows**: `ui::common::row_label` draws a grid row's label at the top of the row
+  (egui's Grid centres cells vertically and can't be configured); the label keeps its normal space, so row
+  heights don't change. Used for the first-column labels of the form, settings, updater and dialog grids.
+- **Hover help** (`row_label_tip`) for options without their own help text: passthrough, x264 preset/tune,
+  gain, compressor and its parameters, override duration, extra input/output options, frameserver frame
+  rate, MP4 subtitles, commentary name, fallback sample rate, keep ffmpeg_error logs.
+- **Your own FFmpeg is never modified**: the updater installs only into the app-managed copy (the
+  "Update in place" option is gone; the app switches to the managed copy instead) and Roll back is offered
+  only for the app-managed copy.
+
 ## 0.5.4-codecs.1 — Codecs edition (branch `codecs`, experimental, side by side with stable)
 - Identity: `FFmpegEncoder-Codecs.exe`, title “(Codecs)”, `DATA_DIR_NAME`/`FILE_STEM` `FFmpegEncoder-Codecs`
   (`src/lib.rs`); path helpers `roaming_dir_named` / `local_app_dir_named`; other editions' FFmpeg folders are

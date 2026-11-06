@@ -225,7 +225,7 @@ fn head(ui: &mut Ui, t: &str) {
 fn kv(ui: &mut Ui, id: &str, rows: &[(String, String)]) {
     egui::Grid::new(id).num_columns(2).spacing([8.0, 2.0]).show(ui, |ui| {
         for (k, v) in rows {
-            ui.label(RichText::new(k).weak());
+            crate::ui::common::row_label(ui, RichText::new(k).weak());
             ui.label(v);
             ui.end_row();
         }

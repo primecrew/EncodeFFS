@@ -97,7 +97,7 @@ impl Mode for CommentaryMode {
                 let p = PathBuf::from(st.video.trim());
                 set_video(st, &p);
             }
-            ui.label("Track name");
+            crate::ui::common::row_label(ui, "Track name");
             ui.text_edit_singleline(&mut st.title);
             ui.end_row();
             bitrate_ui(ui, "Commentary bitrate", &mut st.bitrate_k);

@@ -32,7 +32,7 @@ fn info_toggle(ui: &mut Ui, id: &str, name: &str, text: &str) {
 
 /// Video rows inside a 2-column Grid. `enc` = encoders of the current FFmpeg (None = unknown yet).
 pub fn video_codec_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&Encoders>, src_pix_fmt: Option<&str>) {
-    ui.label("Video codec");
+    crate::ui::common::row_label(ui, "Video codec");
     ui.vertical(|ui| {
         let before = v.codec;
         egui::ComboBox::from_id_salt(format!("{id}_codec")).width(300.0).selected_text(v.codec.label()).show_ui(ui, |ui| {
@@ -65,7 +65,7 @@ pub fn video_codec_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&E
     match v.codec {
         VideoCodec::H264 => video_encode_ui(ui, id, v, true),
         VideoCodec::Hevc | VideoCodec::Av1 => {
-            ui.label("CRF");
+            crate::ui::common::row_label(ui, "CRF");
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     num_u32(ui, &mut v.crf, v.codec.crf_range(), "");
@@ -77,7 +77,7 @@ pub fn video_codec_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&E
                 });
             });
             ui.end_row();
-            ui.label("Preset");
+            crate::ui::common::row_label_tip(ui, "Preset", "Encoder speed preset: slower presets compress better (smaller file at the same CRF) but take longer. Does not change the quality target.");
             if v.codec == VideoCodec::Hevc {
                 egui::ComboBox::from_id_salt(format!("{id}_x265p")).selected_text(v.preset.clone()).show_ui(ui, |ui| {
                     for p in X265_PRESETS {
@@ -91,7 +91,7 @@ pub fn video_codec_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&E
                 });
             }
             ui.end_row();
-            ui.label("10-bit");
+            crate::ui::common::row_label(ui, "10-bit");
             ui.vertical(|ui| {
                 ui.checkbox(&mut v.ten_bit, "10-bit output (yuv420p10le)");
                 hint(ui, "Smoother gradients, less banding, often smaller files. Some older TVs/phones can't play 10-bit.");
@@ -101,7 +101,7 @@ pub fn video_codec_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&E
             });
             ui.end_row();
             if v.codec == VideoCodec::Hevc {
-                ui.label("Tune");
+                crate::ui::common::row_label_tip(ui, "Tune", "Optional x265 tuning for a kind of content (e.g. grain, animation). Leave at none if unsure.");
                 let txt = v.tune.clone().unwrap_or_else(|| "none".into());
                 egui::ComboBox::from_id_salt(format!("{id}_x265t")).selected_text(txt).show_ui(ui, |ui| {
                     ui.selectable_value(&mut v.tune, None, "none");
@@ -111,7 +111,7 @@ pub fn video_codec_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&E
                 });
                 ui.end_row();
             } else {
-                ui.label("Film grain");
+                crate::ui::common::row_label(ui, "Film grain");
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
                         num_u32(ui, &mut v.film_grain, 0..=FILM_GRAIN_MAX, "");
@@ -127,7 +127,7 @@ pub fn video_codec_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&E
 
 /// Audio rows inside a 2-column Grid. `allow_copy` = false where audio is mixed (join).
 pub fn audio_codec_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode, enc: Option<&Encoders>, allow_copy: bool) {
-    ui.label("Audio codec");
+    crate::ui::common::row_label(ui, "Audio codec");
     ui.vertical(|ui| {
         egui::ComboBox::from_id_salt(format!("{id}_acodec")).width(300.0).selected_text(a.codec.label()).show_ui(ui, |ui| {
             for c in AudioCodec::ALL {
@@ -154,7 +154,7 @@ pub fn audio_codec_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode, enc: Option<&E
     match a.codec {
         AudioCodec::Aac => audio_encode_ui(ui, id, a),
         AudioCodec::Ac3 => {
-            ui.label("AC3 bitrate");
+            crate::ui::common::row_label(ui, "AC3 bitrate");
             ui.horizontal(|ui| {
                 for b in AC3_BITRATES {
                     ui.radio_value(&mut a.ac3_bitrate_k, b, format!("{b} kbps"));

@@ -44,4 +44,5 @@ pub fn full_title() -> String {
     format!("{APP_NAME} {APP_VERSION} ({EDITION})")
 }
 
+pub mod job_history;
 pub mod layout;

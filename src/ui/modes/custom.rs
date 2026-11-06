@@ -125,7 +125,7 @@ impl Mode for CustomMode {
         let st = &mut self.st;
         section(ui, "Input & output");
         egui::Grid::new("cu_io").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("Input type");
+            crate::ui::common::row_label(ui, "Input type");
             ui.horizontal(|ui| {
                 let a = ui.radio_value(&mut st.o.batch, false, "Single file").changed();
                 let b = ui.radio_value(&mut st.o.batch, true, "Every video in a folder").changed();
@@ -156,7 +156,7 @@ impl Mode for CustomMode {
                 });
                 ui.end_row();
                 path_row_nodrop(ui, "Output folder", &mut st.out_dir, Pick::Folder, &cx.settings.output_folder);
-                ui.label("Name suffix");
+                crate::ui::common::row_label(ui, "Name suffix");
                 ui.text_edit_singleline(&mut st.o.suffix);
                 ui.end_row();
             } else {
@@ -171,7 +171,7 @@ impl Mode for CustomMode {
                     st.regen_name();
                 }
             }
-            ui.label("Container");
+            crate::ui::common::row_label(ui, "Container");
             let before = st.o.container.clone();
             egui::ComboBox::from_id_salt("cu_cont").selected_text(st.o.container.clone()).show_ui(ui, |ui| {
                 for c in CONTAINERS {
@@ -182,7 +182,7 @@ impl Mode for CustomMode {
                 st.regen_name();
             }
             ui.end_row();
-            ui.label("Trim");
+            crate::ui::common::row_label(ui, "Trim");
             ui.horizontal(|ui| {
                 ui.label("start");
                 num_f64(ui, &mut st.o.trim_start, 0.0..=1.0e7, 0.1, " s");
@@ -212,7 +212,7 @@ impl Mode for CustomMode {
         let o = &mut st.o;
         section(ui, "Video");
         egui::Grid::new("cu_v").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("Video");
+            crate::ui::common::row_label(ui, "Video");
             egui::ComboBox::from_id_salt("cu_va").width(260.0).selected_text(o.video.label()).show_ui(ui, |ui| {
                 for v in VideoAction::ALL {
                     ui.selectable_value(&mut o.video, v, v.label());
@@ -221,7 +221,7 @@ impl Mode for CustomMode {
             ui.end_row();
             if o.video == VideoAction::X264 {
                 crate::ui::codecs_ui::video_codec_ui(ui, "cu", &mut o.video_encode, cx.encoders.as_ref(), None);
-                ui.label("Resize");
+                crate::ui::common::row_label(ui, "Resize");
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut o.resize, "New vertical resolution");
                     if o.resize {
@@ -235,7 +235,7 @@ impl Mode for CustomMode {
                 });
                 ui.end_row();
                 range_ui(ui, &mut o.range_convert);
-                ui.label("Deinterlace");
+                crate::ui::common::row_label(ui, "Deinterlace");
                 ui.checkbox(&mut o.deinterlace, "bwdif double-rate, only when ffprobe reports interlaced video");
                 ui.end_row();
             }
@@ -243,7 +243,7 @@ impl Mode for CustomMode {
 
         section(ui, "Audio");
         egui::Grid::new("cu_a").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("Audio");
+            crate::ui::common::row_label(ui, "Audio");
             egui::ComboBox::from_id_salt("cu_aa").width(300.0).selected_text(o.audio.label()).show_ui(ui, |ui| {
                 for v in AudioAction::ALL {
                     ui.selectable_value(&mut o.audio, v, v.label());
@@ -252,7 +252,7 @@ impl Mode for CustomMode {
             ui.end_row();
             if o.audio.needs_file() {
                 if o.batch {
-                    ui.label("Audio file");
+                    crate::ui::common::row_label(ui, "Audio file");
                     hint(ui, "Batch: uses the file with the same name next to each video (.wav, .flac, .m4a, .mp3 …); videos without one are skipped.");
                     ui.end_row();
                 } else {
@@ -260,7 +260,7 @@ impl Mode for CustomMode {
                 }
             }
             if matches!(o.audio, AudioAction::AddTrack | AudioAction::Mix | AudioAction::Replace) {
-                ui.label("Track title");
+                crate::ui::common::row_label(ui, "Track title");
                 ui.add(egui::TextEdit::singleline(&mut o.track_title).hint_text(cx.settings.commentary_name.as_str()).desired_width(240.0));
                 ui.end_row();
             }
@@ -288,7 +288,7 @@ impl Mode for CustomMode {
         };
         section(ui, "Subtitles, chapters & extras");
         egui::Grid::new("cu_s").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("Subtitles");
+            crate::ui::common::row_label(ui, "Subtitles");
             egui::ComboBox::from_id_salt("cu_sa").width(300.0).selected_text(o.subs.label()).show_ui(ui, |ui| {
                 for v in SubAction::ALL {
                     ui.selectable_value(&mut o.subs, v, v.label());
@@ -297,7 +297,7 @@ impl Mode for CustomMode {
             ui.end_row();
             if o.subs == SubAction::Import {
                 if o.batch {
-                    ui.label("Subtitle file");
+                    crate::ui::common::row_label(ui, "Subtitle file");
                     hint(ui, "Batch: uses the .srt/.ass/.vtt with the same name next to each video; videos without one are skipped.");
                     ui.end_row();
                 } else {
@@ -318,7 +318,7 @@ impl Mode for CustomMode {
             }
             let mp4 = matches!(o.container.as_str(), "mp4" | "mov" | "m4v" | "m4a");
             faststart_ui(ui, &mut o.faststart, mp4);
-            ui.label("Extra input options");
+            crate::ui::common::row_label_tip(ui, "Extra input options", "Additional FFmpeg options added before the input file (-i), exactly as typed (advanced).");
             ui.vertical(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut o.input_args).hint_text("e.g. -hwaccel auto").desired_width(f32::INFINITY));
                 if let Err(e) = custom::split_args(&o.input_args) {
@@ -326,7 +326,7 @@ impl Mode for CustomMode {
                 }
             });
             ui.end_row();
-            ui.label("Extra output options");
+            crate::ui::common::row_label_tip(ui, "Extra output options", "Additional FFmpeg options added before the output file, exactly as typed (advanced).");
             ui.vertical(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut o.output_args).hint_text("e.g. -metadata comment=\"my game\" -af loudnorm").desired_width(f32::INFINITY));
                 if let Err(e) = custom::split_args(&o.output_args) {

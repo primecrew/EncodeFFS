@@ -333,10 +333,10 @@ impl Mode for JoinMode {
         section(ui, "Chapters & output");
         let mut rename = false;
         egui::Grid::new("joino").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("Chapters");
+            crate::ui::common::row_label(ui, "Chapters");
             ui.checkbox(&mut self.st.chapters_per_file, "One chapter per source file (titled with the file name)");
             ui.end_row();
-            ui.label("Container");
+            crate::ui::common::row_label(ui, "Container");
             ui.horizontal(|ui| {
                 for c in CONTAINERS {
                     rename |= ui.radio_value(&mut self.st.container, c.to_string(), *c).changed();

@@ -232,6 +232,13 @@ pub struct App {
     settings: Settings,
     /// "Encoding Finished" popup.
     finished: finished::FinishedUi,
+    /// Job history (successful jobs, persisted; see `ffenc::job_history`).
+    history: ffenc::job_history::Tracker,
+    /// Form values of the preview that is open (logged when its jobs succeed).
+    preview_origin: Option<ffenc::job_history::Origin>,
+    /// Job history window: its text while open.
+    history_view: Option<String>,
+    confirm_clear_history: bool,
     /// Settings › App-managed FFmpeg location (applied immediately, not with Save).
     mloc: managed_loc::ManagedLocUi,
     pre: PresetUi,
@@ -432,6 +439,10 @@ impl App {
             updater: UpdaterUi::default(),
             mloc: managed_loc::ManagedLocUi::default(),
             finished: finished::FinishedUi::default(),
+            history: Default::default(),
+            preview_origin: None,
+            history_view: None,
+            confirm_clear_history: false,
             show_about: false,
             first_run_dismissed: false,
             locate: None,
@@ -542,6 +553,62 @@ impl App {
         }
     }
 
+    /// File › Job history: the successful-jobs log, with Clear.
+    fn history_window(&mut self, ctx: &egui::Context) {
+        let Some(text) = self.history_view.as_ref() else { return };
+        let path = ffenc::job_history::path_in(&settings::logs_dir());
+        let (mut open, mut clear, mut close) = (true, false, false);
+        egui::Window::new("Job history").open(&mut open).default_size([760.0, 460.0]).resizable(true).show(ctx, |ui| {
+            hint(ui, format!("Every successful job: preset, output file, time taken, settings and the FFmpeg command. Failed or cancelled jobs are not listed (see the Log). Saved in {}", path.display()));
+            ui.horizontal(|ui| {
+                if ui.button("Open file").on_hover_text("Open the job history file in your text editor.").clicked() && path.exists() {
+                    open_path(&path);
+                }
+                if ui.add_enabled(!text.is_empty(), egui::Button::new("Clear job history…")).on_hover_text("Empty this list. Only the history file is deleted; your videos, presets, settings and FFmpeg are not touched.").clicked() {
+                    clear = true;
+                }
+                close = ui.button("Close").clicked();
+            });
+            ui.separator();
+            egui::ScrollArea::both().auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
+                if text.is_empty() {
+                    ui.label("No successful jobs recorded yet.");
+                } else {
+                    ui.add(egui::Label::new(egui::RichText::new(text.as_str()).monospace()).selectable(true));
+                }
+            });
+        });
+        if clear {
+            self.confirm_clear_history = true;
+        }
+        if self.confirm_clear_history {
+            let (mut yes, mut no) = (false, false);
+            egui::Modal::new(egui::Id::new("clear_history")).show(ctx, |ui| {
+                ui.label("Clear the job history?");
+                hint(ui, "This deletes only the job history list. It cannot be undone.");
+                ui.horizontal(|ui| {
+                    yes = ui.button("Clear").clicked();
+                    no = ui.button("Cancel").clicked();
+                });
+            });
+            if yes {
+                match ffenc::job_history::clear(&path) {
+                    Ok(()) => {
+                        self.queue.log("Job history cleared.");
+                        self.history_view = Some(String::new());
+                    }
+                    Err(e) => self.error = Some(format!("Could not clear {}: {e}", path.display())),
+                }
+            }
+            if yes || no {
+                self.confirm_clear_history = false;
+            }
+        }
+        if !open || close {
+            self.history_view = None;
+        }
+    }
+
     fn start_preview(&mut self, ctx: &egui::Context) {
         let pending = self.pending_run.take();
         let Some(ff) = self.ff.clone() else {
@@ -568,6 +635,9 @@ impl App {
         match self.pre.editor(idx, &self.settings).mode.build(&cx) {
             Ok(plan) => {
                 self.preview = Some(Preview::new(plan, ff.ffmpeg.clone(), self.settings.when_exists));
+                let preset_name = self.pre.list[idx].name.clone();
+                let values = self.pre.editor(idx, &self.settings).mode.save();
+                self.preview_origin = Some(ffenc::job_history::Origin { preset_name, values });
             }
             Err(e) => {
                 // double-click / Run right after switching presets: the form probes its input first
@@ -591,6 +661,10 @@ impl App {
             ui.menu_button("File", |ui| {
                 if ui.button("Settings…").clicked() {
                     self.settings_edit = Some(self.settings.clone());
+                    ui.close_menu();
+                }
+                if ui.button("Job history…").on_hover_text("List of every successful job with its settings and output file (kept across restarts; can be cleared).").clicked() {
+                    self.history_view = Some(ffenc::job_history::read(&ffenc::job_history::path_in(&settings::logs_dir())));
                     ui.close_menu();
                 }
                 if ui.button("Open output folder").clicked() {
@@ -728,8 +802,9 @@ impl App {
                     self.updater.open_and_check(ctx, &self.settings);
                     ui.close_menu();
                 }
-                let can_rb = self.ff.as_ref().map(|f| install::has_backup(&f.bin_dir)).unwrap_or(false);
-                if ui.add_enabled(can_rb, egui::Button::new("Roll back FFmpeg to previous version…")).clicked() {
+                // only the app-managed copy can be rolled back; the user's own FFmpeg is never touched
+                let can_rb = self.ff.as_ref().map(|f| locate::is_managed_dir(&f.bin_dir, &locate::managed_bin()) && install::has_backup(&f.bin_dir)).unwrap_or(false);
+                if ui.add_enabled(can_rb, egui::Button::new("Roll back FFmpeg to previous version…")).on_disabled_hover_text("Available only when the app-managed FFmpeg is in use and has a previous version.").clicked() {
                     self.rollback_confirm = true;
                     ui.close_menu();
                 }
@@ -1054,13 +1129,17 @@ impl App {
                     self.queue.log(format!("Skipped {skipped} job(s) whose output already exists."));
                 }
                 if !p.jobs.is_empty() {
-                    self.queue.enqueue(&p.program, p.jobs, p.plan.group, self.settings.keep_logs_on_success);
+                    let ids = self.queue.enqueue(&p.program, p.jobs, p.plan.group, self.settings.keep_logs_on_success);
+                    if let Some(o) = self.preview_origin.take() {
+                        self.history.register(&ids, o);
+                    }
                 }
                 self.save_settings();
             }
         }
         if cancel {
             self.preview = None;
+            self.preview_origin = None;
         }
 
         // first run / FFmpeg not found
@@ -1153,7 +1232,7 @@ impl App {
         if self.rollback_confirm {
             let mut go = false;
             let mut no = false;
-            let bin = self.ff.as_ref().map(|f| f.bin_dir.clone());
+            let bin = self.ff.as_ref().map(|f| f.bin_dir.clone()).filter(|b| locate::is_managed_dir(b, &locate::managed_bin()));
             common::fit(egui::Window::new("Roll back FFmpeg").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
                 if let Some(b) = &bin {
                     ui.label(format!("Swap the binaries in\n{}\nwith the previous version in\n{}?", b.display(), install::backup_dir_for(b).display()));
@@ -1228,7 +1307,19 @@ impl App {
             let shared = self.queue.shared.clone();
             let s = shared.lock().unwrap();
             self.finished.watch(ctx, &s.jobs, self.settings.show_finished_popup);
+            let entries = self.history.update(&s.jobs, &|| chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
+            drop(s);
+            if !entries.is_empty() {
+                let path = ffenc::job_history::path_in(&settings::logs_dir());
+                if let Err(e) = ffenc::job_history::append(&path, &entries) {
+                    self.queue.log(format!("Could not write the job history {}: {e}", path.display()));
+                }
+                if self.history_view.is_some() {
+                    self.history_view = Some(ffenc::job_history::read(&path));
+                }
+            }
         }
+        self.history_window(ctx);
         self.finished.show(ctx);
         self.settings_dialog(ctx);
         if let Some(o) = self.mloc.poll(ctx) {
@@ -1351,14 +1442,14 @@ impl App {
         use ffenc::settings::{ThemeChoice, MONO_MAX, MONO_MIN, SCALE_MAX, SCALE_MIN, SCALE_STEPS};
         egui::Grid::new("set_look").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
             let a = &mut self.settings.appearance;
-            ui.label("Theme");
+            crate::ui::common::row_label(ui, "Theme");
             ui.horizontal_wrapped(|ui| {
                 for th in ThemeChoice::ALL {
                     ui.radio_value(&mut a.theme, th, th.label());
                 }
             });
             ui.end_row();
-            ui.label("Text size");
+            crate::ui::common::row_label(ui, "Text size");
             ui.vertical(|ui| {
                 let mut v = self.scale_edit.unwrap_or(a.scale) * 100.0;
                 let r = ui.add(egui::Slider::new(&mut v, SCALE_MIN * 100.0..=SCALE_MAX * 100.0).step_by(5.0).suffix(" %").text("whole interface"));
@@ -1380,7 +1471,7 @@ impl App {
                 hint(ui, "Scales all text, buttons, icons, lists and dialogs. Shortcuts: Ctrl + plus / minus, Ctrl+0, Ctrl + mouse wheel.");
             });
             ui.end_row();
-            ui.label("Code / log text");
+            crate::ui::common::row_label(ui, "Code / log text");
             ui.vertical(|ui| {
                 let mut m = a.mono_scale * 100.0;
                 let r = ui.add(egui::Slider::new(&mut m, MONO_MIN * 100.0..=MONO_MAX * 100.0).step_by(5.0).suffix(" %").text("of the text size"));
@@ -1401,7 +1492,7 @@ impl App {
         common::fit(egui::Window::new("Keyboard shortcuts & accessibility").open(&mut open).collapsible(false).resizable(true).default_width(620.0), ctx, true).remember("help", true).show(ctx, |ui| {
             egui::Grid::new("keys").num_columns(2).striped(true).spacing([16.0, 6.0]).show(ui, |ui| {
                 for (k, what) in SHORTCUTS {
-                    ui.label(RichText::new(*k).strong());
+                    crate::ui::common::row_label(ui, RichText::new(*k).strong());
                     ui.label(*what);
                     ui.end_row();
                 }
@@ -1466,31 +1557,31 @@ impl App {
                     ed.crf = v.crf;
                     ed.preset = v.preset;
                     common::bitrate_ui(ui, "Audio bitrate", &mut ed.audio_bitrate_k);
-                    ui.label("Gain");
+                    crate::ui::common::row_label(ui, "Gain");
                     common::num_f64(ui, &mut ed.gain_db, -30.0..=30.0, 0.1, " dB");
                     ui.end_row();
-                    ui.label("Trim start / end");
+                    crate::ui::common::row_label(ui, "Trim start / end");
                     ui.horizontal(|ui| {
                         common::num_f64(ui, &mut ed.trim_start, 0.0..=1e7, 0.1, " s");
                         common::num_f64(ui, &mut ed.trim_end, 0.0..=1e7, 0.1, " s");
                     });
                     ui.end_row();
-                    ui.label("Chapter interval");
+                    crate::ui::common::row_label(ui, "Chapter interval");
                     common::num_f64(ui, &mut ed.chapter_interval_min, 0.1..=600.0, 0.1, " min");
                     ui.end_row();
-                    ui.label("Length tolerance");
+                    crate::ui::common::row_label(ui, "Length tolerance");
                     ui.horizontal_wrapped(|ui| {
                         common::num_f64(ui, &mut ed.duration_tolerance_s, 0.0..=60.0, 0.1, " s");
                         common::hint(ui, "Audio & subtitles: added tracks this close to the video's length count as matching (no warning).");
                     });
                     ui.end_row();
-                    ui.label("Commentary name");
+                    crate::ui::common::row_label_tip(ui, "Commentary name", "Default title given to an added commentary audio track.");
                     ui.text_edit_singleline(&mut ed.commentary_name);
                     ui.end_row();
-                    ui.label("Fallback sample rate");
+                    crate::ui::common::row_label_tip(ui, "Fallback sample rate", "Audio sample rate used when ffprobe cannot read the source's rate.");
                     common::num_u32(ui, &mut ed.fallback_sample_rate, 8000..=384000, " Hz");
                     ui.end_row();
-                    ui.label("Advanced compressor");
+                    crate::ui::common::row_label(ui, "Advanced compressor");
                     common::compressor_params_ui(ui, "set_comp", &mut ed.compressor);
                     ui.end_row();
                 });
@@ -1499,14 +1590,14 @@ impl App {
                 hint(ui, FINISHED_POPUP_HELP);
                 common::section(ui, "FFmpeg updates & logs");
                 egui::Grid::new("set_u").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                    ui.label("Source");
+                    crate::ui::common::row_label(ui, "Source");
                     ui.horizontal(|ui| {
                         for s in ffenc::updater::UpdateSource::ALL {
                             ui.radio_value(&mut ed.update_source, s, s.label());
                         }
                     });
                     ui.end_row();
-                    ui.label("Channel");
+                    crate::ui::common::row_label(ui, "Channel");
                     ui.horizontal(|ui| {
                         for c in ffenc::updater::UpdateChannel::ALL {
                             ui.radio_value(&mut ed.update_channel, c, c.label());
@@ -1528,9 +1619,9 @@ impl App {
                     });
                     ui.end_row();
                     ui.label("");
-                    ui.checkbox(&mut ed.keep_logs_on_success, "Keep ffmpeg_error*.log files when a job succeeds");
+                    ui.checkbox(&mut ed.keep_logs_on_success, "Keep ffmpeg_error*.log files when a job succeeds").on_hover_text("FFmpeg's detailed log for each job is normally deleted after a successful encode and kept only when it fails. Turn on to keep it for successful jobs too (for troubleshooting).");
                     ui.end_row();
-                    ui.label("When the output file exists");
+                    crate::ui::common::row_label(ui, "When the output file exists");
                     ui.vertical(|ui| {
                         for w in WhenExists::ALL {
                             ui.radio_value(&mut ed.when_exists, w, w.label());
