@@ -379,7 +379,7 @@ impl Mode for FrameserveMode {
 
         section(ui, "AviSynth script");
         egui::Grid::new("fs_script").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            let l = ui.label("Colour format");
+            let l = crate::ui::common::row_label(ui, "Colour format");
             ui.vertical(|ui| {
                 ui.horizontal_wrapped(|ui| {
                     let r = egui::ComboBox::from_id_salt("fs_color").width(330.0).selected_text(st.color.label()).show_ui(ui, |ui| {
@@ -406,7 +406,7 @@ impl Mode for FrameserveMode {
             });
             ui.end_row();
 
-            let l = ui.label("Colour matrix");
+            let l = crate::ui::common::row_label(ui, "Colour matrix");
             ui.vertical(|ui| {
                 let enabled = st.color != Color::None;
                 ui.add_enabled_ui(enabled, |ui| {
@@ -432,7 +432,7 @@ impl Mode for FrameserveMode {
             });
             ui.end_row();
 
-            let l = ui.label("Signpost format");
+            let l = crate::ui::common::row_label(ui, "Signpost format");
             ui.vertical(|ui| {
                 egui::ComboBox::from_id_salt("fs_pt").width(220.0).selected_text(st.pixel_type.label()).show_ui(ui, |ui| {
                     for p in PixelType::ALL {
@@ -443,7 +443,7 @@ impl Mode for FrameserveMode {
             });
             ui.end_row();
 
-            let l = ui.label("Audio");
+            let l = crate::ui::common::row_label(ui, "Audio");
             egui::ComboBox::from_id_salt("fs_audio").width(330.0).selected_text(st.audio_mode.label()).show_ui(ui, |ui| {
                 for a in AudioMode::ALL {
                     ui.selectable_value(&mut st.audio_mode, a, a.label());
@@ -592,7 +592,7 @@ impl Mode for FrameserveMode {
             if output_rows_sfx(ui, &mut st.out_dir, &mut st.out_name, &mut st.suffix, &cx.settings.output_folder) {
                 st.regen_name();
             }
-            let l = ui.label("Container");
+            let l = crate::ui::common::row_label(ui, "Container");
             let before = st.container.clone();
             egui::ComboBox::from_id_salt("fs_cont").selected_text(st.container.clone()).show_ui(ui, |ui| {
                 ui.selectable_value(&mut st.container, "mp4".to_string(), "mp4 (plays everywhere)");
