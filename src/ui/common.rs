@@ -220,7 +220,7 @@ pub fn path_row_nodrop(ui: &mut Ui, label: &str, value: &mut String, pick: Pick,
 
 fn path_row_impl(ui: &mut Ui, label: &str, value: &mut String, pick: Pick, fallback_dir: &str, droppable: bool) -> bool {
     let mut changed = false;
-    ui.label(label);
+    row_label(ui, label);
     ui.horizontal(|ui| {
         let w = (ui.available_width() - 80.0).max(120.0);
         let mut te = egui::TextEdit::singleline(value).desired_width(w);
@@ -535,4 +535,53 @@ pub fn row_label(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> egui::Respon
 /// [`row_label`] with a hover explanation (shown on the label) for options without their own help text.
 pub fn row_label_tip(ui: &mut Ui, text: &str, tip: &str) -> egui::Response {
     row_label(ui, text).on_hover_text(tip)
+}
+
+#[cfg(test)]
+mod row_label_tests {
+    use super::*;
+
+    /// Two rows (tall control in both, the 2nd is the grid's last row): labels sit at their row's
+    /// top, the grid has the same height as with plain labels, and nothing grows across frames.
+    #[test]
+    fn row_labels_are_top_aligned_and_stable() {
+        fn frame(ctx: &egui::Context, top: bool) -> (Vec<f32>, Vec<f32>, f32) {
+            let (mut labels, mut rows, mut h) = (vec![], vec![], 0.0);
+            let _ = ctx.run(egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))), ..Default::default() }, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let r = egui::Grid::new("g").num_columns(2).show(ui, |ui| {
+                        for name in ["First", "Last"] {
+                            rows.push(ui.cursor().top());
+                            let l = if top { row_label(ui, name) } else { ui.label(name) };
+                            labels.push(l.rect.top());
+                            ui.vertical(|ui| {
+                                for _ in 0..4 {
+                                    ui.label("line");
+                                }
+                            });
+                            ui.end_row();
+                        }
+                    });
+                    h = r.response.rect.height();
+                });
+            });
+            (labels, rows, h)
+        }
+        let plain = egui::Context::default();
+        let ctx = egui::Context::default();
+        let mut last = None;
+        for _ in 0..6 {
+            frame(&plain, false);
+            last = Some((frame(&ctx, true), frame(&plain, false)));
+        }
+        let ((labels, rows, h), (plain_labels, _, plain_h)) = last.unwrap();
+        assert_eq!(h, plain_h, "row sizing unchanged");
+        for i in 0..2 {
+            assert!((labels[i] - rows[i]).abs() < 0.5, "row {i} label at the row top: {} vs {}", labels[i], rows[i]);
+            assert!(plain_labels[i] > rows[i] + 10.0, "plain labels are centred (the problem being fixed)");
+        }
+        // stable across more frames
+        let again = frame(&ctx, true);
+        assert_eq!(again.2, h);
+    }
 }

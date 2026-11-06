@@ -7,7 +7,8 @@
   that file. Replaces the idea of a transient "Last run" preset.
 - **Top-aligned option rows**: `ui::common::row_label` draws a grid row's label at the top of the row
   (egui's Grid centres cells vertically and can't be configured); the label keeps its normal space, so row
-  heights don't change. Used for the first-column labels of the form, settings, updater and dialog grids.
+  heights don't change (unit test `row_labels_are_top_aligned_and_stable`, incl. a grid's last row). Used for
+  every option label in the first column of the form, settings, updater, path-row and dialog grids.
 - **Hover help** (`row_label_tip`) for options without their own help text: passthrough, x264 preset/tune,
   gain, compressor and its parameters, override duration, extra input/output options, frameserver frame
   rate, MP4 subtitles, commentary name, fallback sample rate, keep ffmpeg_error logs.
