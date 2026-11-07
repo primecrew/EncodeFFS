@@ -214,6 +214,9 @@ impl Mode for BatchMode {
     }
 
     fn build(&mut self, _cx: &Ctx) -> Result<Plan, String> {
+        if self.st.bs.passthrough.encodes_video() {
+            ffenc::cmd::common::parse_output_fps(&self.st.bs.video.output_fps)?;
+        }
         if self.scan.is_some() {
             return Err("Still scanning the folder.".into());
         }

@@ -250,6 +250,9 @@ impl Mode for ReencodeMode {
     fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
         let st = &self.st;
         let input = check_input(&st.input, VIDEO_EXTS, "input video")?;
+        if st.passthrough.encodes_video() {
+            ffenc::cmd::common::parse_output_fps(&st.video.output_fps)?;
+        }
         let info = self.probe.require("Input video")?;
         let v = info.video_summary()?;
         let output = check_output(&st.out_dir, &st.out_name)?;

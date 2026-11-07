@@ -346,6 +346,9 @@ impl Mode for CustomMode {
 
     fn build(&mut self, _cx: &Ctx) -> Result<Plan, String> {
         let st = &self.st;
+        if st.o.video == VideoAction::X264 {
+            ffenc::cmd::common::parse_output_fps(&st.o.video_encode.output_fps)?;
+        }
         if st.out_dir.trim().is_empty() {
             return Err("Choose an output folder.".into());
         }

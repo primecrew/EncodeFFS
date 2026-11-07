@@ -108,7 +108,7 @@ pub fn kinds() -> Vec<(&'static str, &'static str)> {
 
 /// Defaults derived from settings, shared by several modes.
 pub fn default_video(s: &Settings) -> ffenc::cmd::common::VideoEncode {
-    ffenc::cmd::common::VideoEncode { crf: s.crf, preset: s.preset.clone(), tune: None }
+    ffenc::cmd::common::VideoEncode { crf: s.crf, preset: s.preset.clone(), tune: None, ..Default::default() }
 }
 
 pub fn default_audio(s: &Settings) -> ffenc::cmd::common::AudioEncode {

@@ -67,10 +67,59 @@ pub struct VideoEncode {
     pub preset: String,
     /// None = no -tune.
     pub tune: Option<String>,
+    /// Output frame rate ("" = same as source, the default). A positive number ("5", "29.97") or a
+    /// fraction ("30000/1001"). Added as the `fps` filter at the end of the video filter chain, so
+    /// FFmpeg drops or duplicates frames: duration, audio and sync stay the same (no speed change).
+    pub output_fps: String,
 }
 impl Default for VideoEncode {
     fn default() -> Self {
-        VideoEncode { crf: 22, preset: "slow".into(), tune: None }
+        VideoEncode { crf: 22, preset: "slow".into(), tune: None, output_fps: String::new() }
+    }
+}
+
+/// Highest output frame rate accepted.
+pub const MAX_OUTPUT_FPS: f64 = 1000.0;
+
+/// Check an output frame rate: Ok(None) = same as source, Ok(Some(rate)) = the trimmed rate to pass
+/// to FFmpeg, Err = a plain message (zero, negative, NaN, infinite, not a number, …).
+pub fn parse_output_fps(s: &str) -> Result<Option<String>, String> {
+    let t = s.trim();
+    if t.is_empty() {
+        return Ok(None);
+    }
+    let bad = || format!("Output frame rate “{t}” is not valid. Use a positive number like 5, 29.97 or 30000/1001, or leave it empty for the same as the source.");
+    let value = if let Some((n, d)) = t.split_once('/') {
+        let (n, d) = (n.trim().parse::<u64>().map_err(|_| bad())?, d.trim().parse::<u64>().map_err(|_| bad())?);
+        if n == 0 || d == 0 {
+            return Err(bad());
+        }
+        n as f64 / d as f64
+    } else {
+        if !t.chars().all(|c| c.is_ascii_digit() || c == '.') {
+            return Err(bad()); // no signs, exponents, "inf" or "NaN"
+        }
+        t.parse::<f64>().map_err(|_| bad())?
+    };
+    if !value.is_finite() || value <= 0.0 {
+        return Err(bad());
+    }
+    if value > MAX_OUTPUT_FPS {
+        return Err(format!("Output frame rate {t} is too high (at most {MAX_OUTPUT_FPS} fps)."));
+    }
+    Ok(Some(t.replace(' ', "")))
+}
+
+/// The video filter chain with `fps=RATE` appended when an output frame rate is set (unchanged for
+/// "same as source" or an invalid value, which the forms reject before building).
+pub fn with_output_fps(filter: Option<&str>, v: &VideoEncode) -> Option<String> {
+    let base = filter.filter(|f| !f.is_empty());
+    match parse_output_fps(&v.output_fps) {
+        Ok(Some(r)) => Some(match base {
+            Some(f) => format!("{f},fps={r}"),
+            None => format!("fps={r}"),
+        }),
+        _ => base.map(str::to_string),
     }
 }
 
@@ -82,8 +131,9 @@ pub fn x264_args(v: &VideoEncode, filter: Option<&str>, range_tags: bool) -> Vec
     a.push("-preset".into());
     a.push(v.preset.clone());
     a.push_all(["-pix_fmt", "yuv420p"]);
-    if let Some(f) = filter.filter(|f| !f.is_empty()) {
-        a.push_all(["-vf", f]);
+    if let Some(f) = with_output_fps(filter, v) {
+        a.push("-vf".into());
+        a.push(f);
     }
     if range_tags {
         a.extend(color_tag_args());
@@ -380,7 +430,7 @@ mod tests {
 
     #[test]
     fn x264() {
-        let v = VideoEncode { crf: 20, preset: "fast".into(), tune: Some("film".into()) };
+        let v = VideoEncode { crf: 20, preset: "fast".into(), tune: Some("film".into()), ..Default::default() };
         assert_eq!(
             x264_args(&v, Some("bwdif"), true),
             vec!["-c:v", "libx264", "-crf", "20", "-preset", "fast", "-pix_fmt", "yuv420p", "-vf", "bwdif",

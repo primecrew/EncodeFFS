@@ -245,7 +245,11 @@ pub fn build(pr: &JoinParams) -> Result<BuiltCommand, String> {
             if has_v && (w == 0 || h == 0) {
                 return Err("The first video has no usable resolution.".into());
             }
-            let fps = fps_arg(fv.as_ref().and_then(|v| v.fps).unwrap_or(30.0));
+            // every file is normalised to one rate: the typed output frame rate, else the first file's
+            let fps = match parse_output_fps(&pr.video.output_fps)? {
+                Some(r) => r,
+                None => fps_arg(fv.as_ref().and_then(|v| v.fps).unwrap_or(30.0)),
+            };
             let rate = fa.as_ref().and_then(|a| a.sample_rate).unwrap_or(48000);
             let layout = if fa.as_ref().and_then(|a| a.channels) == Some(1) { "mono" } else { "stereo" };
             let mut g: Vec<String> = vec![];
@@ -282,7 +286,8 @@ pub fn build(pr: &JoinParams) -> Result<BuiltCommand, String> {
             a.push(g.join(";"));
             if has_v {
                 a.push_all(["-map", "[vc]"]);
-                a.extend(x264_args(&pr.video, None, false));
+                // the output rate is already in the graph above
+                a.extend(x264_args(&VideoEncode { output_fps: String::new(), ..pr.video.clone() }, None, false));
             }
             if has_a {
                 a.push("-map".into());
@@ -395,5 +400,13 @@ anullsrc=r=44100:cl=stereo,atrim=duration=4[a1];\
         );
         assert!(s.contains("-map [vc] -c:v libx264 -crf 22 -preset slow -pix_fmt yuv420p -map [aout] -c:a aac -b:a 192k -map_chapters 2 /o/j.mkv"), "{s}");
         assert!(b.side_files.iter().all(|f| !f.0.to_string_lossy().contains("concat")), "no list file for the filter method");
+        // a typed output frame rate replaces the first file's rate in the graph (no extra -vf / -r)
+        pr.video.output_fps = "5".into();
+        let b5 = build(&pr).unwrap();
+        let g5 = &b5.args[b5.args.iter().position(|x| x == "-filter_complex").unwrap() + 1];
+        assert_eq!(g5.matches("fps=5,").count(), 2, "{g5}");
+        assert!(!g5.contains("30000/1001") && !b5.args.iter().any(|a| a == "-vf" || a == "-r"));
+        pr.video.output_fps = "-5".into();
+        assert!(build(&pr).is_err(), "invalid rate rejected");
     }
 }

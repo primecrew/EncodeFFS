@@ -5,6 +5,13 @@
   from the stored preset (as on first open): input/output files cleared, unsaved option edits dropped,
   folders/defaults from Settings. Asks first only when the form has unsaved option edits. Presets, other
   forms, Settings, job history, the queue (running/queued jobs) and FFmpeg are not touched.
+- **Output frame rate** (`VideoEncode::output_fps`, `parse_output_fps`, `with_output_fps`): typed field in the
+  video section of Re-encode, Batch re-encode, Custom pipeline (re-encode video), Join (re-encode) and
+  Frameserver. Empty = same as source (default; commands unchanged). A rate (5, 29.97, 30000/1001) appends
+  `fps=RATE` to the end of the `-vf` chain (Join: replaces the first file's rate in its filter graph), so
+  frames are dropped/duplicated and duration, audio and sync stay the same (tested 30 → 5 fps: 20 frames in
+  4 s, same duration). Zero, negative, NaN, `inf`, exponents and > 1000 are rejected. Not offered for stream
+  copy / remux. Stored in presets and job history; old presets load as "same as source".
 - **Job history** (`src/job_history.rs`, File › Job history…): persistent `logs/job-history.log`; the form's
   values are attached to the job ids when queued (`Tracker::register`), and an entry is appended only when a
   job ends `Done` (failed/cancelled are dropped; batch = one entry per successful file). Clear removes just

@@ -93,7 +93,7 @@ fn join_three_clips_both_methods() {
             output: output.clone(),
             method,
             chapters_per_file: true,
-            video: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: None },
+            video: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: None, ..Default::default() },
             audio: AudioEncode::default(),
             faststart: true,
             list_file: join::temp_list_path(),

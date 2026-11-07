@@ -1593,7 +1593,7 @@ impl App {
                 mloc_out = self.mloc.settings_ui(ui, blocked);
                 common::section(ui, "Encoding defaults (used by built-in presets that are not customised, and by new blank presets)");
                 egui::Grid::new("set_e").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                    let mut v = ffenc::cmd::common::VideoEncode { crf: ed.crf, preset: ed.preset.clone(), tune: None };
+                    let mut v = ffenc::cmd::common::VideoEncode { crf: ed.crf, preset: ed.preset.clone(), tune: None, ..Default::default() };
                     common::video_encode_ui(ui, "set", &mut v, false);
                     ed.crf = v.crf;
                     ed.preset = v.preset;

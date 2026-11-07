@@ -153,7 +153,7 @@ fn all_modes_end_to_end() {
         trim_start: 1.0,
         trim_end: 0.5,
         passthrough: Passthrough::None,
-        video: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: Some("film".into()) },
+        video: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: Some("film".into()), ..Default::default() },
         audio: AudioEncode { bitrate_k: 128, gain_db: 3.0, compressor: CompressorPreset::Medium, ..Default::default() },
         range_convert: true,
         resize: Some(resize_dims(320, 240, 120).unwrap()),
@@ -191,7 +191,7 @@ fn all_modes_end_to_end() {
             trim_start: 0.0,
             trim_end: 1.0,
             passthrough: pt,
-            video: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: None },
+            video: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: None, ..Default::default() },
             audio: AudioEncode { gain_db: -2.0, ..Default::default() },
             range_convert: true,
             resize: None,
@@ -215,7 +215,7 @@ fn all_modes_end_to_end() {
         trim_start: 0.0,
         trim_end: 0.0,
         passthrough: Passthrough::None,
-        video: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: None },
+        video: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: None, ..Default::default() },
         audio: AudioEncode::default(),
         range_convert: false,
         resize: None,
@@ -317,7 +317,7 @@ fn all_modes_end_to_end() {
         })
         .collect();
     let bs = batch::BatchSettings {
-        video: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: None },
+        video: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: None, ..Default::default() },
         trim_start: 0.5,
         faststart: true,
         audio: AudioEncode { gain_db: 2.0, compressor: CompressorPreset::Light, ..Default::default() },
@@ -349,7 +349,7 @@ fn all_modes_end_to_end() {
         dest_streams: dst.subtitle_infos(),
         keep_existing: true,
         copy_only,
-        video: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: None },
+        video: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: None, ..Default::default() },
         audio_bitrate_k: 128,
         range_convert: false,
         mp4_handling: subs::Mp4SubHandling::ConvertMovText,
@@ -418,7 +418,7 @@ fn all_modes_end_to_end() {
         trim_start: 0.0,
         trim_end: 0.0,
         passthrough: Passthrough::None,
-        video: VideoEncode { crf: 18, preset: "veryslow".into(), tune: None },
+        video: VideoEncode { crf: 18, preset: "veryslow".into(), tune: None, ..Default::default() },
         audio: AudioEncode::default(),
         range_convert: false,
         resize: Some((3840, 2880)),
@@ -469,7 +469,7 @@ fn custom_pipelines_end_to_end() {
         let j = probe_json(&env, &output);
         (output, j)
     };
-    let base = CustomOptions { video_encode: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: None }, ..Default::default() };
+    let base = CustomOptions { video_encode: VideoEncode { crf: 30, preset: "ultrafast".into(), tune: None, ..Default::default() }, ..Default::default() };
 
     // 1. default re-encode -> mp4: trim, resize, auto chapters, faststart, extra in/out args, both tracks kept
     let o = CustomOptions {
