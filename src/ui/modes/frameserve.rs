@@ -619,6 +619,7 @@ impl Mode for FrameserveMode {
     }
 
     fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
+        ffenc::cmd::common::parse_output_fps(&self.st.video.output_fps)?;
         if let Some(s) = &self.status {
             if s.demuxer == Some(false) {
                 return Err(avisynth::advice(s).into_iter().find(|a| a.0 == Level::Error).map(|a| a.1).unwrap_or_default());

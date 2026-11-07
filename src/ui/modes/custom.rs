@@ -349,6 +349,9 @@ impl Mode for CustomMode {
             crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&self.st.o.video_encode), None)?;
         }
         let st = &self.st;
+        if st.o.video == VideoAction::X264 {
+            ffenc::cmd::common::parse_output_fps(&st.o.video_encode.output_fps)?;
+        }
         if st.out_dir.trim().is_empty() {
             return Err("Choose an output folder.".into());
         }

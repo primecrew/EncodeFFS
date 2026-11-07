@@ -123,6 +123,10 @@ pub fn video_codec_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&E
             }
         }
     }
+    // H.264 shows it in video_encode_ui
+    if v.codec != VideoCodec::H264 {
+        super::common::output_fps_ui(ui, &mut v.output_fps);
+    }
 }
 
 /// Audio rows inside a 2-column Grid. `allow_copy` = false where audio is mixed (join).

@@ -340,7 +340,26 @@ pub fn video_encode_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, show_tune: bo
             }
         });
         ui.end_row();
+        output_fps_ui(ui, &mut v.output_fps);
     }
+}
+
+/// "Output frame rate" row (re-encoding forms only).
+pub fn output_fps_ui(ui: &mut Ui, fps: &mut String) {
+    row_label_tip(ui, "Output frame rate", "Frame rate of the new video. Empty = same as the source (default). A lower rate (e.g. 5 fps for a screen-recorded meeting) drops frames, so motion is less smooth; it often makes the file smaller, but not in proportion. The length, audio and sync stay the same.");
+    ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            named(ui.add(egui::TextEdit::singleline(fps).hint_text("same as source").desired_width(110.0)), egui::WidgetType::TextEdit, "Output frame rate (fps, empty = same as source)");
+            ui.label("fps");
+            if fps.trim().is_empty() {
+                hint(ui, "(empty = same as source)");
+            }
+        });
+        if let Err(e) = ffenc::cmd::common::parse_output_fps(fps) {
+            ui.colored_label(crate::ui::theme::c().err, e);
+        }
+    });
+    ui.end_row();
 }
 
 pub fn bitrate_ui(ui: &mut Ui, label: &str, k: &mut u32) {

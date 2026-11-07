@@ -97,8 +97,9 @@ fn mp4_like_ext(ext: &str) -> bool {
 pub fn video_args(v: &VideoEncode, filter: Option<&str>, range_tags: bool, output: &Path) -> Vec<String> {
     let mut a: Vec<String> = Vec::new();
     let vf = |a: &mut Vec<String>| {
-        if let Some(f) = filter.filter(|f| !f.is_empty()) {
-            a.push_all(["-vf", f]);
+        if let Some(f) = super::common::with_output_fps(filter, v) {
+            a.push("-vf".into());
+            a.push(f);
         }
         if range_tags {
             a.extend(color_tag_args());

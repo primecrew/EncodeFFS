@@ -326,6 +326,15 @@ commands as 0.5.3 (`tests/h264_unchanged.rs`).
 with no input/output files (folders come from Settings). If you changed the preset's options without saving,
 it asks first. Running and queued jobs, presets, Settings and the job history are not changed.
 
+## Output frame rate (0.5.4)
+In the **Video** section of Re-encode, Batch re-encode, Custom pipeline (when re-encoding video), Join
+(re-encode) and Frameserver, **Output frame rate** is empty by default = same as the source. Type a rate
+(e.g. `5` for a screen-recorded meeting, `29.97`, `30000/1001`) to change it. FFmpeg drops or repeats frames
+so the length, audio and sync stay the same. A lower rate makes motion less smooth and often makes the file
+smaller, but not in proportion. Stream-copy modes (Remux, passthrough video) can't change the frame rate.
+In Frameserver, the existing "Frame rate (AssumeFPS)" option is about the *source* timeline; Output frame
+rate is for the encoded file.
+
 ## Job history (0.5.4)
 **File › Job history…** lists every **successful** job, newest at the bottom: when it finished, the job,
 the preset it came from, the output file (its final name), how long it took, the form settings (JSON) and

@@ -359,6 +359,7 @@ impl Mode for JoinMode {
     fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
         if self.st.method == JoinMethod::Reencode {
             crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&self.st.video), Some(&self.st.audio))?;
+            ffenc::cmd::common::parse_output_fps(&self.st.video.output_fps)?;
         }
         if self.st.files.len() < 2 {
             return Err("Add at least two files to join.".into());
