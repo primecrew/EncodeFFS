@@ -292,7 +292,12 @@ Re-encode, Custom pipeline (single file and folder batch) and Batch re-encode ca
   **name suffix**, **faststart**, and free-form **extra input options** (before `-i`) and **extra output options**
   (before the output file; quotes group values with spaces).
 
-## Job history (next release)
+## File › New (0.5.4)
+**File › New** (Ctrl+N) starts a new job with the selected preset: the form goes back to the preset's settings
+with no input/output files (folders come from Settings). If you changed the preset's options without saving,
+it asks first. Running and queued jobs, presets, Settings and the job history are not changed.
+
+## Job history (0.5.4)
 **File › Job history…** lists every **successful** job, newest at the bottom: when it finished, the job,
 the preset it came from, the output file (its final name), how long it took, the form settings (JSON) and
 the exact FFmpeg command. It is kept across restarts in `logs\job-history.log` next to the settings file.
@@ -389,7 +394,7 @@ File › Settings › **App-managed FFmpeg location**: where the FFmpeg the app 
   only `ffmpeg.exe`/`ffprobe.exe`/`ffplay.exe` (zip or 7z), tests the new ffmpeg has libx264+aac, then swaps
   files atomically with restore-on-failure.
 - Updates always go into the app-managed folder (the Settings path is switched to it). **Your own FFmpeg
-  folder is never modified** (next release; earlier versions offered an optional in-place update). Blocked
+  folder is never modified** (0.5.4; earlier versions offered an optional in-place update). Blocked
   while jobs run.
 - The previous managed build is kept in `<bin>.previous`; **Help › Roll back FFmpeg** swaps back (one
   generation, app-managed copy only).

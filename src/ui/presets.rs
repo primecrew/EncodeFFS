@@ -240,6 +240,16 @@ impl PresetUi {
         true
     }
 
+    /// File › New: a fresh form for the selected preset, exactly as the preset defines it
+    /// (input/output files cleared, unsaved option edits dropped, folders from Settings).
+    /// Only this form is replaced: the stored presets, other forms, settings and the queue are
+    /// untouched.
+    pub fn new_job(&mut self, s: &Settings) {
+        let p = self.list[self.current].clone();
+        let e = make_editor(&p, s, None).or_else(|| make_editor(&Preset { kind: "custom".into(), ..p.clone() }, s, None)).expect("custom kind exists");
+        self.editors.insert(p.id, e);
+    }
+
     /// Throw away edits (keeps the files of the current run).
     pub fn revert_current(&mut self, s: &Settings) {
         let idx = self.current;
@@ -952,6 +962,43 @@ mod tests {
             let p2 = Preset { values: v.clone(), ..p.clone() };
             assert_eq!(canonical_values(&p2, &s).unwrap(), v, "{}", p.kind);
         }
+    }
+
+    #[test]
+    fn file_new_gives_a_fresh_form_and_keeps_everything_else() {
+        let s = Settings { output_folder: "/my/out".into(), input_folder: "/my/in".into(), crf: 19, ..Settings::default() };
+        let s_before = serde_json::to_value(&s).unwrap();
+        let mut pu = ui_with(presets::factory_all());
+        // a user preset with its own saved values
+        let mine = Preset { id: "pmine".into(), name: "Mine".into(), builtin: None, values: json!({"trim_start": 3.0}), ..pu.list[0].clone() };
+        pu.list.push(mine);
+        let fresh_builtin = make_editor(&pu.list[0].clone(), &s, None).unwrap().mode.save();
+        // another form with a file that must survive
+        set(pu.editor(1, &s), "video", json!("/v/other.mkv"), &s);
+        let other = pu.editor(1, &s).mode.save();
+        // the finished job's form: file, output name and an option edit
+        set(pu.editor(0, &s), "input", json!("/v/a.mkv"), &s);
+        set(pu.editor(0, &s), "trim_start", json!(12.5), &s);
+        assert!(pu.modified("builtin-reencode"));
+        let list_before = serde_json::to_value(&pu.list).unwrap();
+        pu.new_job(&s);
+        let v = pu.editor(0, &s).mode.save();
+        assert_eq!(v, fresh_builtin, "same as a freshly opened preset");
+        assert_eq!(v["input"], json!(""));
+        assert_eq!(v["out_dir"], json!("/my/out"), "output folder preference kept");
+        assert_eq!(v["video"]["crf"], json!(19), "Settings defaults kept");
+        assert!(!pu.modified("builtin-reencode"));
+        assert!(pu.drafts().get("builtin-reencode").is_none(), "nothing left to persist as a draft");
+        assert_eq!(serde_json::to_value(&pu.list).unwrap(), list_before, "stored presets untouched");
+        assert_eq!(pu.editor(1, &s).mode.save(), other, "other forms untouched");
+        assert_eq!(serde_json::to_value(&s).unwrap(), s_before, "settings untouched");
+        // a user preset comes back with its own saved values
+        pu.current = pu.list.len() - 1;
+        let i = pu.current;
+        set(pu.editor(i, &s), "input", json!("/v/b.mkv"), &s);
+        pu.new_job(&s);
+        let v = pu.editor(i, &s).mode.save();
+        assert_eq!((v["trim_start"].clone(), v["input"].clone()), (json!(3.0), json!("")));
     }
 
     #[test]

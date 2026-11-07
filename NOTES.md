@@ -1,6 +1,10 @@
 # Notes / changes vs PowerShell script v22.0
 
-## Unreleased (next release)
+## 0.5.4 — File › New, job history, top-aligned rows, hover help, own FFmpeg never modified
+- **File › New (Ctrl+N)** (`PresetUi::new_job`): replaces the selected preset's form with a fresh one built
+  from the stored preset (as on first open): input/output files cleared, unsaved option edits dropped,
+  folders/defaults from Settings. Asks first only when the form has unsaved option edits. Presets, other
+  forms, Settings, job history, the queue (running/queued jobs) and FFmpeg are not touched.
 - **Job history** (`src/job_history.rs`, File › Job history…): persistent `logs/job-history.log`; the form's
   values are attached to the job ids when queued (`Tracker::register`), and an entry is appended only when a
   job ends `Done` (failed/cancelled are dropped; batch = one entry per successful file). Clear removes just
