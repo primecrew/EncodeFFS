@@ -239,6 +239,8 @@ pub struct App {
     /// Job history window: its text while open.
     history_view: Option<String>,
     confirm_clear_history: bool,
+    /// File › New asked to confirm discarding unsaved preset edits.
+    confirm_new: bool,
     /// Settings › App-managed FFmpeg location (applied immediately, not with Save).
     mloc: managed_loc::ManagedLocUi,
     pre: PresetUi,
@@ -321,6 +323,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("F5", "Run selected preset (opens the confirmation with the full command)"),
     ("Enter / Space", "In the confirmation: Run (focused first) · elsewhere: press the focused button"),
     ("Esc", "Close the confirmation / dialog"),
+    ("Ctrl+N", "File › New: start a new job with the selected preset (clears its files and option edits)"),
     ("Ctrl+O", "Open file(s) for the selected preset (folder for folder presets)"),
     ("Ctrl+S", "Save preset (built-in presets: Save as new preset)"),
     ("Ctrl+F", "Search presets"),
@@ -443,6 +446,7 @@ impl App {
             preview_origin: None,
             history_view: None,
             confirm_clear_history: false,
+            confirm_new: false,
             show_about: false,
             first_run_dismissed: false,
             locate: None,
@@ -550,6 +554,48 @@ impl App {
         match std::fs::write(&f, pstore::to_json(&list)) {
             Ok(()) => self.queue.log(format!("Exported {} preset(s) to {}", list.len(), f.display())),
             Err(e) => self.error = Some(format!("Could not write {}: {e}", f.display())),
+        }
+    }
+
+    /// File › New (Ctrl+N): fresh form for the selected preset; asks first only when the form has
+    /// unsaved option edits (input/output files alone are not worth a prompt).
+    fn file_new(&mut self) {
+        if self.pre.modified(&self.pre.cur().id.clone()) {
+            self.confirm_new = true;
+        } else {
+            self.do_file_new();
+        }
+    }
+
+    fn do_file_new(&mut self) {
+        self.pre.new_job(&self.settings);
+        self.pending_run = None;
+        self.queue.log(format!("New job: “{}” reset to its preset settings.", self.pre.cur().name));
+        self.save_settings();
+    }
+
+    fn new_confirm_dialog(&mut self, ctx: &egui::Context) {
+        if !self.confirm_new {
+            return;
+        }
+        let (mut yes, mut no) = (false, false);
+        let name = self.pre.cur().name.clone();
+        egui::Modal::new(egui::Id::new("confirm_new")).show(ctx, |ui| {
+            ui.label(format!("Start a new job with “{name}”?"));
+            hint(ui, "Your unsaved changes to this preset's options will be discarded (use Save or Save as new preset first to keep them). Running and queued jobs are not affected.");
+            ui.horizontal(|ui| {
+                yes = ui.button("Discard changes and start new").clicked();
+                no = ui.button("Cancel").clicked();
+            });
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                no = true;
+            }
+        });
+        if yes {
+            self.do_file_new();
+        }
+        if yes || no {
+            self.confirm_new = false;
         }
     }
 
@@ -663,6 +709,14 @@ impl App {
                     self.settings_edit = Some(self.settings.clone());
                     ui.close_menu();
                 }
+                if ui.add(egui::Button::new("New").shortcut_text(ctx.format_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::N))))
+                    .on_hover_text("Start a new job with the selected preset: clears the files and options of the form back to the preset's settings. Running and queued jobs, presets and Settings are not changed.")
+                    .clicked()
+                {
+                    self.file_new();
+                    ui.close_menu();
+                }
+                ui.separator();
                 if ui.button("Job history…").on_hover_text("List of every successful job with its settings and output file (kept across restarts; can be cleared).").clicked() {
                     self.history_view = Some(ffenc::job_history::read(&ffenc::job_history::path_in(&settings::logs_dir())));
                     ui.close_menu();
@@ -1320,6 +1374,7 @@ impl App {
             }
         }
         self.history_window(ctx);
+        self.new_confirm_dialog(ctx);
         self.finished.show(ctx);
         self.settings_dialog(ctx);
         if let Some(o) = self.mloc.poll(ctx) {
@@ -1778,6 +1833,9 @@ impl eframe::App for App {
             self.start_preview(ctx);
         }
         // Ctrl+O open file(s), Ctrl+F search presets, F1 help
+        if self.preview.is_none() && self.pre.dialog.is_none() && !self.confirm_new && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
+            self.file_new();
+        }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::O)) && self.preview.is_none() {
             self.open_files(ctx);
         }
