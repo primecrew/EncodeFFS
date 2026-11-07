@@ -1,0 +1,2 @@
+151abc9f24fae22a52d5a5b8e3e9a55644ae5b2f79c0ac730a17d3242de70a15  FFmpegEncoder-0.5.4-win64.zip
+681e409084cce262261ff6ba9cdf96da068e0bbfde9c9793626f97eb57dd6301  FFmpegEncoder-0.5.4-setup.exe
