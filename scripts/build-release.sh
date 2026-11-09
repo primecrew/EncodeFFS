@@ -5,14 +5,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# ---- edition identity (stable edition, master)
-APP_NAME="FFmpeg Encoder"
-APP_ID="FFmpegEncoder"                        # Add/Remove Programs key; the experimental edition uses FFmpegEncoderExperimental
-APP_DIRNAME="FFmpeg Encoder"                 # install folder name
-FILE_STEM="FFmpegEncoder"                     # exe / zip / setup names
-DATA_DIR="FFmpegEncoder"                      # %APPDATA% / %LOCALAPPDATA% folder (src/lib.rs DATA_DIR_NAME)
+# ---- edition identity (slideshow edition, branch `slideshow`; portable zip only)
+APP_NAME="FFmpeg Encoder (Slideshow)"
+APP_ID="FFmpegEncoderSlideshow"
+APP_DIRNAME="FFmpeg Encoder (Slideshow)"
+FILE_STEM="FFmpegEncoder-Slideshow"
+DATA_DIR="FFmpegEncoder-Slideshow"
 PUBLISHER="FFmpeg Encoder"
-OUT_DIR="${OUT_DIR:-dist}"
+OUT_DIR="${OUT_DIR:-dist-slideshow}"
+INSTALLER="${INSTALLER:-0}"
 TARGET=x86_64-pc-windows-gnu
 
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -41,7 +42,12 @@ with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as f:
     f.write("NOTES.md", "NOTES.md")
 PY
 
-# ---- installer
+# ---- installer (off by default for the slideshow edition)
+if [ "$INSTALLER" != 1 ]; then
+  ( cd "$OUT_DIR" && sha256sum "$(basename "$ZIP")" > "$FILE_STEM-$VERSION-SHA256SUMS.txt" )
+  ls -la "$OUT_DIR"
+  exit 0
+fi
 command -v makensis >/dev/null || { echo "makensis not found (apt install nsis)" >&2; exit 1; }
 SETUP="$OUT_DIR/$FILE_STEM-$VERSION-setup.exe"
 makensis -V2 -INPUTCHARSET UTF8 \

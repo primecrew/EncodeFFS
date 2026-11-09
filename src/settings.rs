@@ -10,7 +10,8 @@ use crate::cmd::common::CompressorParams;
 use crate::ffmpeg::locate::exe_dir;
 use crate::updater::{UpdateChannel, UpdateSource};
 
-pub const PORTABLE_FILE: &str = "FFmpegEncoder.settings.json";
+pub const PORTABLE_FILE: &str = "FFmpegEncoder-Slideshow.settings.json";
+pub const STABLE_PORTABLE_FILE: &str = "FFmpegEncoder.settings.json";
 
 /// Colour theme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -213,23 +214,36 @@ fn dir_writable(dir: &Path) -> bool {
     }
 }
 
-/// %APPDATA%\FFmpegEncoder (Linux: ~/.config/FFmpegEncoder)
-pub fn roaming_dir() -> PathBuf {
+/// `%APPDATA%\<name>` (Linux: ~/.config/<name>).
+pub fn roaming_dir_named(name: &str) -> PathBuf {
+    if let Some(d) = std::env::var_os("FFENC_ROAMING_BASE") {
+        return PathBuf::from(d).join(name);
+    }
     if let Some(d) = std::env::var_os("APPDATA") {
-        return PathBuf::from(d).join("FFmpegEncoder");
+        return PathBuf::from(d).join(name);
     }
     if let Some(d) = std::env::var_os("XDG_CONFIG_HOME") {
-        return PathBuf::from(d).join("FFmpegEncoder");
+        return PathBuf::from(d).join(name);
     }
     if let Some(h) = std::env::var_os("HOME") {
-        return PathBuf::from(h).join(".config/FFmpegEncoder");
+        return PathBuf::from(h).join(".config").join(name);
     }
-    std::env::temp_dir().join("FFmpegEncoder")
+    std::env::temp_dir().join(name)
+}
+
+/// This edition's %APPDATA% folder (`FFmpegEncoder-Slideshow`).
+pub fn roaming_dir() -> PathBuf {
+    roaming_dir_named(crate::DATA_DIR_NAME)
+}
+
+/// Where the stable version may keep its settings (portable next to this exe, then %APPDATA%\FFmpegEncoder).
+pub fn stable_settings_candidates() -> Vec<PathBuf> {
+    vec![exe_dir().join(STABLE_PORTABLE_FILE), roaming_dir_named(crate::STABLE_DATA_DIR_NAME).join("settings.json")]
 }
 
 /// Marker file the installer puts next to the exe (0.5.3): an installed copy keeps its settings in
 /// %APPDATA%, never next to the exe.
-pub const INSTALLED_MARKER: &str = "FFmpegEncoder.installed";
+pub const INSTALLED_MARKER: &str = "FFmpegEncoder-Slideshow.installed";
 
 /// Where settings live: next to the exe if that folder is writable (portable),
 /// otherwise %APPDATA%\FFmpegEncoder\settings.json. Installed copies (marker file next to the

@@ -341,7 +341,15 @@ const NEVER_CHECK_HELP: &str = "Unchecked (the default): when the app starts it 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, startup: Option<layout::Startup>) -> Self {
         let first_run = !settings::settings_path().exists();
+        let imported = if first_run {
+            ffenc::import_stable::find().map(|f| ffenc::import_stable::import_into(&f, &settings::settings_path(), &locate::stable_managed_bin()))
+        } else {
+            None
+        };
         let mut settings = Settings::load();
+        if let Some(Err(e)) = &imported {
+            eprintln!("import from stable failed: {e}");
+        }
         // where the app-managed FFmpeg lives (before anything looks for FFmpeg)
         ffenc::ffmpeg::managed::set_location(&settings.managed_ffmpeg_dir);
         // appearance before the first frame, so panels are laid out at the right scale
@@ -349,7 +357,7 @@ impl App {
         theme::apply(&cc.egui_ctx, &settings.appearance);
         let applied = Some(settings.appearance.clone());
         let ctx = cc.egui_ctx.clone();
-        let queue = Queue::new(Some(settings::logs_dir().join("FFmpegEncoder.log")), move || ctx.request_repaint());
+        let queue = Queue::new(Some(settings::logs_dir().join(format!("{}.log", ffenc::FILE_STEM))), move || ctx.request_repaint());
         queue.log(format!("{} {} started. Settings: {}", ffenc::APP_NAME, ffenc::APP_VERSION, settings::settings_path().display()));
         queue.set_keep_temp(settings.keep_temp_files);
         let registry = settings::logs_dir().join("partial-outputs.txt");
@@ -416,7 +424,10 @@ impl App {
             ff_task: None,
             preview: None,
             error: None,
-            info: None,
+            info: match &imported {
+                Some(Ok(r)) => Some(("Imported from the stable version".into(), format!("This is the Slideshow build; it keeps its own settings, separate from the stable version. Your stable FFmpeg Encoder settings and presets were copied in:\n\n{}\n\nThe stable version's files were only read, not changed.", r.notes.join("\n")))),
+                _ => None,
+            },
             drop_note: None,
             started: std::time::Instant::now(),
             sim_drop_done: false,
@@ -519,7 +530,7 @@ impl App {
                 self.pre.list.extend(new);
                 if n > 0 {
                     let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-                    let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+                    let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
                     self.pre.select(first, &cx);
                 }
                 self.save_presets();
@@ -663,7 +674,7 @@ impl App {
                 _ => {}
             }
         }
-        let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx };
+        let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
         match self.pre.editor(idx, &self.settings).mode.build(&cx) {
             Ok(plan) => {
                 self.preview = Some(Preview::new(plan, ff.ffmpeg.clone(), self.settings.when_exists));
@@ -1331,7 +1342,7 @@ impl App {
         let act = self.pre.dialogs(ctx);
         if !matches!(act, Action::None) {
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
             let r = self.pre.apply(act, &cx);
             if let Err(e) = r {
                 self.error = Some(e);
@@ -1445,7 +1456,7 @@ impl App {
     /// Files from a drop or Ctrl+O into the selected preset.
     fn route_paths(&mut self, ctx: &egui::Context, dropped: Vec<PathBuf>) {
         let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-        let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+        let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
         let idx = self.pre.current;
         let ed = self.pre.editor(idx, &self.settings);
         let paths = if ed.mode.wants_folders() { dropped.clone() } else { ffenc::util::expand_dropped(&dropped) };
@@ -1843,7 +1854,7 @@ impl eframe::App for App {
         let presets_panel = egui::SidePanel::left(layout::panel_id("presets")).resizable(true).default_width(presets_w).width_range(150.0..=(screen.x * 0.45).max(200.0)).show(ctx, |ui| {
             ui.add_space(4.0);
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
             match self.pre.sidebar(ui, &cx) {
                 None => {}
                 Some(SideEvent::Selected) => self.save_settings(),
@@ -1939,7 +1950,7 @@ impl eframe::App for App {
             }
             egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                 let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-                let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+                let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
                 self.pre.editor(idx, &self.settings).mode.ui(ui, &cx);
                 ui.add_space(10.0);
                 if ui.add_sized([180.0, 32.0], egui::Button::new(RichText::new("Preview & run…").strong())).clicked() {

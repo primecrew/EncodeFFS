@@ -19,6 +19,7 @@ pub mod custom;     // composable "custom" preset type
 pub mod join;       // join / stitch files
 pub mod tracks;     // audio & subtitles tool (0.4)
 pub mod frameserve; // AviSynth frameserving (0.5)
+pub mod slideshow;  // Create Slideshow (slideshow branch)
 
 use std::path::PathBuf;
 

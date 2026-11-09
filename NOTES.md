@@ -1,5 +1,20 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.5.4-slideshow.1 — Create Slideshow (branch `slideshow`, portable only)
+- Identity: `FFmpegEncoder-Slideshow.exe`, title “(Slideshow)”, data folder `FFmpegEncoder-Slideshow`
+  (side by side with stable/codecs). First start copies stable settings/presets in (read only).
+- New built-in **Create Slideshow** (`src/cmd/slideshow.rs`, `src/ui/modes/slideshow.rs`):
+  - Camera reel (thumbnails + reorder: drag / ⬆⬇ / sort by name / modified / reverse).
+  - Duration: Per image (default 5 s), Fixed total, Match audio (requires audio).
+  - Crossfade math: total = N×D − (N−1)×fade. Fade must be shorter than D.
+  - Transitions (need `xfade`): Fade (default), fade black/white, dissolve, wipe/slide L/R; else hard cut.
+  - Detects `xfade` via `ffmpeg -filters` (cached in `FfmpegCheck`); missing → warn + hard-cut fallback.
+  - Sizes: Auto; 1920×1080 (default); 1920×1024; 1280×720; 1024×768; 800×600; 640×480. Aspect preserved
+    (letterbox/pillarbox). Smaller images: black border (default) or bicubic upscale.
+  - Encode defaults: libx264 CRF 18 medium, yuv420p, 30 fps, MP4; optional AAC audio.
+  - Uses `fps=` filter (not `-r`) so duration stays correct.
+- Portable zip only (`dist-slideshow/`). No installer.
+
 ## 0.5.4 — File › New, job history, top-aligned rows, hover help, own FFmpeg never modified
 - **File › New (Ctrl+N)** (`PresetUi::new_job`): replaces the selected preset's form with a fresh one built
   from the stored preset (as on first open): input/output files cleared, unsaved option edits dropped,

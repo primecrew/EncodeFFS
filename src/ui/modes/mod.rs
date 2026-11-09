@@ -19,6 +19,7 @@ pub mod reencode;
 pub mod remux;
 pub mod replace_audio;
 pub mod still;
+pub mod slideshow;
 pub mod subs;
 pub mod tracks;
 
@@ -27,6 +28,8 @@ pub struct Ctx<'a> {
     pub settings: &'a Settings,
     pub ffprobe: Option<&'a Path>,
     pub egui: &'a egui::Context,
+    /// Cached from `ffmpeg -filters` (None = not checked yet).
+    pub has_xfade: Option<bool>,
 }
 
 /// Jobs to preview and queue.
@@ -83,6 +86,7 @@ pub fn all_modes() -> Vec<Box<dyn Mode>> {
         Box::new(reencode::ReencodeMode::default()),
         Box::new(tracks::TracksMode::default()),
         Box::new(still::StillMode::default()),
+        Box::new(slideshow::SlideshowMode::default()),
         Box::new(commentary::CommentaryMode::default()),
         Box::new(extract::ExtractMode::default()),
         Box::new(replace_audio::ReplaceAudioMode::default()),

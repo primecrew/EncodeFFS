@@ -292,6 +292,19 @@ Re-encode, Custom pipeline (single file and folder batch) and Batch re-encode ca
   **name suffix**, **faststart**, and free-form **extra input options** (before `-i`) and **extra output options**
   (before the output file; quotes group values with spaces).
 
+## Create Slideshow (Slideshow edition)
+**Create Slideshow** turns a set of still images into an H.264/AAC MP4.
+- **Camera reel:** thumbnails of every image in order. Drag a frame or use ⬆⬇ to reorder; Sort by name /
+  modified date / Reverse. Add files, a folder, or drop them on the window (jpg/png/bmp/webp/tif; gif is skipped).
+- **Duration:** Per image length (default 5 s), Fixed total length, or Match audio length (needs an audio file).
+  With a crossfade of F seconds and N images: total = N×D − (N−1)×F.
+- **Transitions:** None (hard cut), Fade, Fade through black/white, Dissolve, Wipe/Slide left/right.
+  Needs FFmpeg’s `xfade` filter — the app checks `ffmpeg -filters` and warns / falls back to hard cuts if it is missing.
+- **Size:** Auto, 1920×1080 (default), 1920×1024, 1280×720, 1024×768, 800×600, 640×480. Images keep aspect
+  ratio (black bars). Smaller than the canvas: black border (default) or bicubic upscale.
+- **Encode:** libx264 CRF 18, preset medium, 30 fps, MP4; optional AAC audio. Separate settings folder
+  (`FFmpegEncoder-Slideshow`); first start can import from the stable version.
+
 ## File › New (0.5.4)
 **File › New** (Ctrl+N) starts a new job with the selected preset: the form goes back to the preset's settings
 with no input/output files (folders come from Settings). If you changed the preset's options without saving,

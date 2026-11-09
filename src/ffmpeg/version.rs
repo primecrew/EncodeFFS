@@ -155,6 +155,8 @@ pub struct FfmpegCheck {
     pub configuration: String,
     pub has_libx264: bool,
     pub has_aac: bool,
+    /// True when `ffmpeg -filters` lists the xfade filter (needed for crossfades).
+    pub has_xfade: bool,
 }
 
 /// Run `ffmpeg -version` and `ffmpeg -encoders`.
@@ -173,11 +175,22 @@ pub fn check_ffmpeg(ffmpeg: &Path) -> Result<FfmpegCheck, String> {
     let ver = run(&["-hide_banner", "-version"]).or_else(|_| run(&["-version"]))?;
     let ver_full = run(&["-version"]).unwrap_or_else(|_| ver.clone());
     let enc = run(&["-hide_banner", "-encoders"])?;
+    let filters = run(&["-hide_banner", "-filters"]).unwrap_or_default();
     Ok(FfmpegCheck {
         version: version_from_output(&ver_full).unwrap_or_else(|| "unknown".into()),
         configuration: configuration_from_output(&ver_full).unwrap_or_default(),
         has_libx264: has_encoder(&enc, "libx264"),
         has_aac: has_encoder(&enc, "aac"),
+        has_xfade: has_filter(&filters, "xfade"),
+    })
+}
+
+/// True when `ffmpeg -filters` lists `name` as a filter (word boundary).
+pub fn has_filter(filters_out: &str, name: &str) -> bool {
+    filters_out.lines().any(|l| {
+        let l = l.trim();
+        // " .S. xfade             VV->V      Cross fade…"
+        l.split_whitespace().nth(1) == Some(name)
     })
 }
 
@@ -202,6 +215,14 @@ mod tests {
         assert_eq!(v.date, Some((2026, 10, 29)));
         let v = parse_version("7.1.5-0+deb13u1");
         assert_eq!(v.semver, Some((7, 1, 5)));
+    }
+
+    #[test]
+    fn has_filter_parses() {
+        let f = "Filters:\n .S. xfade             VV->V      Cross fade\n ... scale             V->V       Scale\n";
+        assert!(has_filter(f, "xfade"));
+        assert!(!has_filter(f, "xfade_opencl"));
+        assert!(!has_filter("", "xfade"));
     }
 
     #[test]
