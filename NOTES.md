@@ -1,4 +1,6 @@
-# Notes / changes vs PowerShell script v22.0
+# Developer notes
+
+Detailed implementation notes. The user-facing history is in [CHANGELOG.md](CHANGELOG.md).
 
 ## 0.6.0-dev.4 — Encoding Finished popup; Bold text option removed
 - **Encoding Finished popup** (`show_finished_popup`, on by default; Settings › When encoding finishes):
@@ -428,8 +430,7 @@
   or restarting keeps the chosen file, and the file is carried to the next preset you open.
 - 0.1.x remembered values (`modes` in the settings file) are migrated once into the built-in presets.
 - Built-in types gained a **name suffix** field; Re-encode gained a **container** choice (auto = script behaviour).
-- First run, or no working ffmpeg/ffprobe: a dialog asks for the FFmpeg folder (pre-filled `C:\ffmpeg\bin`,
-  Browse, validation; the parent of `bin` also works), with Download newest FFmpeg / Skip for now. Help › Locate FFmpeg folder… reopens it.
+- First run, or no working ffmpeg/ffprobe: a dialog asks for the FFmpeg folder (Browse, validation; the parent of `bin` also works), with Download newest FFmpeg / Skip for now. Help › Locate FFmpeg folder… reopens it.
 - Custom pipeline details: video is mapped as `0:V?` (real video, not cover art); data streams are not mapped; attachments
   are kept only in Matroska; trim start is applied to the extra audio/subtitle inputs too (they're assumed aligned with the
   main file); a corrupt presets file is moved aside to `*.bad-<time>`, never overwritten.
@@ -469,7 +470,7 @@ Behaviour follows the script unless listed here. Each change fixes a bug or an i
 - Overwrite warnings are shown in the preview before anything runs.
 
 ## FFmpeg updater
-- Default install target is an app-managed folder, not your `C:\ffmpeg\bin`; in-place update needs a tick.
+- Default install target is an app-managed folder, not a copy of FFmpeg you installed yourself; in-place update needs a tick.
 - gyan.dev has no “release full” zip any more (404); Stable uses `ffmpeg-release-essentials.zip`, Latest uses
   `ffmpeg-git-essentials.7z` (7z support built in). Both verified against gyan's `.sha256`.
 - BtbN “Stable” = newest `ffmpeg-nX.Y-latest-win64-gpl-X.Y.zip` in the `latest` release; verified with GitHub's asset digest.

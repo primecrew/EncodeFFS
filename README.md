@@ -1,23 +1,28 @@
-# FFmpeg Encoder
+# FFmpeg Encoder (Experimental UI)
 
-> **Experimental edition (branch `ui-experimental`, version 0.6.0-dev.x).** This is a test version, separate from
-> the stable 0.5.x line on `master`, and safe to install next to it:
-> - It is `FFmpegEncoder-Experimental.exe`, and the window title ends in “(Experimental)”.
-> - It keeps its own settings, presets, logs and downloaded FFmpeg (`%APPDATA%` / `%LOCALAPPDATA%\FFmpegEncoder-Experimental`;
->   portable: `FFmpegEncoder-Experimental.settings.json` / `.presets.json` next to the exe).
-> - It never reads or writes the stable version's files, except when you choose **File › Import settings from
->   stable version…** (also offered on the first start). That copies them; the stable files are only read.
-> - The installer has its own Add/Remove Programs entry (`FFmpegEncoderExperimental`).
-> See “Experimental edition” below.
+> **This branch (`ui-experimental`) is retired.** It was a UI-prototype edition (`FFmpegEncoder-Experimental.exe`, 0.6.0-dev.x) kept separate from the stable 0.5.x line. It is not developed further. Use **stable** (`master`) for the supported build, or the **Codecs** / **Slideshow** branches for those experiments.
 
-Portable Windows GUI (Rust + egui) that replaces the PowerShell script v22.0.
-One `FFmpegEncoder.exe`, no installer, no runtime. Needs `ffmpeg.exe` + `ffprobe.exe`
-(the app can download them for you).
+Windows desktop app for everyday FFmpeg jobs: re-encode or batch-re-encode video, join/stitch clips, remux MKV to MP4, work with audio and subtitles, add chapters, make a video from a still image, run a custom pipeline, or feed an AviSynth frameserver script. Pick a preset, choose files, preview the exact ffmpeg command, and run the job in a queue.
+
+**Requirements:** Windows 10 or 11 (64-bit). You need `ffmpeg.exe` and `ffprobe.exe` — use a copy you already have (for example `C:\ffmpeg\bin`), or let the app download a build for you. No extra runtime.
+
+**Install:** this edition had its own installer and portable zip (`FFmpegEncoder-Experimental.exe`). It keeps its own settings under `%APPDATA%\FFmpegEncoder-Experimental` (or `FFmpegEncoder-Experimental.settings.json` next to a portable exe) and does not write the stable edition's files, except when you choose **File › Import settings from stable version…**.
+
+**Editions** (separate branches and exes; not mixed together):
+
+- **Stable** (`master`) — the supported build; installer and portable zip.
+- **Codecs** (`codecs`, experimental) — optional HEVC/AV1 video and AC3 audio.
+- **Slideshow** (`slideshow`, experimental) — Create Slideshow; portable zip only.
+- **Experimental UI** (`ui-experimental`, this branch) — retired UI prototype.
+
+**Accessibility:** System, Dark, Light, and High contrast themes; text size 75–300%; a visible keyboard focus ring; and screen-reader names through UI Automation (AccessKit).
+
+Version history is in [CHANGELOG.md](CHANGELOG.md). Developer-facing notes are in [NOTES.md](NOTES.md).
 
 ## Run
-1. Copy `FFmpegEncoder.exe` anywhere (e.g. `C:\Apps\FFmpegEncoder\`) and run it.
+1. Copy the exe anywhere (for example `C:\Apps\FFmpegEncoder\`) and run it.
 2. First start (and whenever no working ffmpeg/ffprobe is found) asks for the folder holding `ffmpeg.exe` and
-   `ffprobe.exe`, pre-filled with `C:\ffmpeg\bin`, with Browse… and live validation (the parent of a
+   `ffprobe.exe`, with Browse… and live validation (the parent of a
    `bin` folder is accepted too). Secondary buttons: **Download newest FFmpeg** and **Skip for now**.
    Later: Help › Locate FFmpeg folder… or File › Settings.
 3. Pick a preset in the **preset panel** on the left, choose a file (Browse… or drag-and-drop – see below) and
@@ -29,7 +34,7 @@ One `FFmpegEncoder.exe`, no installer, no runtime. Needs `ffmpeg.exe` + `ffprobe
 4. The queue shows progress per job and can cancel one or all. Cancel sends `q` to ffmpeg, kills it after 4 s,
    and deletes the partial output.
 
-FFmpeg lookup order: Settings folder (default `C:\ffmpeg\bin`) → `ffmpeg\` or `ffmpeg\bin\` next to
+FFmpeg lookup order: Settings folder (empty on first run, then whatever you picked) → `ffmpeg\` or `ffmpeg\bin\` next to
 the exe → app-managed copy `%LOCALAPPDATA%\FFmpegEncoder\ffmpeg\bin` → `PATH`.
 On start the app checks the build has `libx264` and `aac`.
 
@@ -318,9 +323,9 @@ Re-encode, Custom pipeline (single file and folder batch) and Batch re-encode ca
 Stored as JSON. Portable first: `FFmpegEncoder.settings.json` next to the exe if that folder is writable,
 otherwise `%APPDATA%\FFmpegEncoder\settings.json`. Logs go to `logs\` next to the settings file
 (app log rotates at 5 MB). **Help › Open settings file / Open logs folder** jump there.
-File › Settings… edits the defaults (script values: CRF 22, preset slow, AAC 192k, chapters 5 min, compressor
--18 dB / 2:1 / knee 4 / +2 dB / 20 ms / 250 ms, commentary name, fallback 48000 Hz, input `D:\Videos\Inbox`,
-output `D:\Videos\Out`). Built-in presets you haven't customised follow these defaults.
+File › Settings… edits the defaults (CRF 22, preset slow, AAC 192k, chapters 5 min, compressor
+-18 dB / 2:1 / knee 4 / +2 dB / 20 ms / 250 ms, commentary name, fallback 48000 Hz). Input and output folders are
+remembered at the app level; on first run they follow the Windows Videos folder. Built-in presets you haven't customised follow the encode defaults.
 
 Per-job ffmpeg stderr goes to `ffmpeg_error_<name>.log` in the output folder; it is deleted on success unless
 “keep logs on success” is ticked.
