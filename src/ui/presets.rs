@@ -20,7 +20,7 @@ pub struct Editor {
 
 impl Editor {
     pub fn values(&self) -> Value {
-        presets::strip_run_fields(self.mode.save(), self.mode.run_fields())
+        presets::strip_folder_fields(presets::strip_run_fields(self.mode.save(), self.mode.run_fields()))
     }
     pub fn modified(&self) -> bool {
         self.values() != self.baseline
@@ -39,7 +39,8 @@ impl Editor {
 pub fn canonical_values(p: &Preset, s: &Settings) -> Option<Value> {
     let mut m = new_mode(&p.kind)?;
     m.load(&p.values, s);
-    Some(presets::strip_run_fields(m.save(), m.run_fields()))
+    apply_app_folders(&mut *m, s);
+    Some(presets::strip_folder_fields(presets::strip_run_fields(m.save(), m.run_fields())))
 }
 
 /// A stored built-in differs from the shipped one: other name/type, or values
@@ -50,13 +51,43 @@ pub fn builtin_differs(p: &Preset, s: &Settings) -> bool {
     p.name != f.name || p.kind != f.kind || (!p.values.is_null() && canonical_values(p, s) != canonical_values(&f, s))
 }
 
+pub fn apply_app_folders(mode: &mut dyn Mode, s: &Settings) {
+    let mut v = mode.save();
+    let Some(obj) = v.as_object_mut() else { return };
+    let mut changed = false;
+    if obj.contains_key("out_dir") && obj["out_dir"] != Value::String(s.output_folder.clone()) {
+        obj.insert("out_dir".into(), Value::String(s.output_folder.clone()));
+        changed = true;
+    }
+    if obj.contains_key("in_dir") && obj["in_dir"] != Value::String(s.input_folder.clone()) {
+        obj.insert("in_dir".into(), Value::String(s.input_folder.clone()));
+        changed = true;
+    }
+    if obj.contains_key("src_dir") && obj["src_dir"] != Value::String(s.input_folder.clone()) {
+        obj.insert("src_dir".into(), Value::String(s.input_folder.clone()));
+        changed = true;
+    }
+    if changed {
+        mode.load(&v, s);
+    }
+}
+
+pub fn take_app_folders(mode: &dyn Mode) -> (Option<String>, Option<String>) {
+    let v = mode.save();
+    let out = v.get("out_dir").and_then(|x| x.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let inp = v.get("in_dir").or_else(|| v.get("src_dir")).and_then(|x| x.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    (inp, out)
+}
+
 pub fn make_editor(p: &Preset, s: &Settings, draft: Option<&Value>) -> Option<Editor> {
     let mut mode = new_mode(&p.kind)?;
     mode.load(&p.values, s);
-    let baseline = presets::strip_run_fields(mode.save(), mode.run_fields());
+    apply_app_folders(&mut *mode, s);
+    let baseline = presets::strip_folder_fields(presets::strip_run_fields(mode.save(), mode.run_fields()));
     if let Some(d) = draft {
         let merged = presets::overlay(mode.save(), d);
         mode.load(&merged, s);
+        apply_app_folders(&mut *mode, s);
     }
     Some(Editor { mode, baseline })
 }
@@ -250,12 +281,20 @@ impl PresetUi {
         self.editors.insert(p.id, e);
     }
 
+    /// Keep every open form's input/output folders in line with the app-level settings.
+    pub fn apply_app_folders_all(&mut self, s: &Settings) {
+        for e in self.editors.values_mut() {
+            apply_app_folders(&mut *e.mode, s);
+        }
+    }
+
     /// Throw away edits (keeps the files of the current run).
     pub fn revert_current(&mut self, s: &Settings) {
         let idx = self.current;
         let e = self.editor(idx, s);
         let merged = presets::overlay(e.mode.save(), &e.baseline.clone());
         e.mode.load(&merged, s);
+        apply_app_folders(&mut *e.mode, s);
     }
 
     /// Switch to another preset, carrying the current input file over when the
@@ -1252,11 +1291,60 @@ mod tests {
     }
 
     #[test]
+
+    #[test]
+    fn folders_are_app_level_ignored_on_presets_and_kept_across_new_and_switch() {
+        let s = Settings { output_folder: "/app/out".into(), input_folder: "/app/in".into(), ..Settings::default() };
+        let mut pu = ui_with(presets::factory_all());
+        // a user preset that still has baked-in folder fields (older save)
+        let mine = Preset {
+            id: "pmine".into(),
+            name: "Mine".into(),
+            builtin: None,
+            values: json!({"trim_start": 3.0, "out_dir": "/old/out", "in_dir": "/old/in"}),
+            ..pu.list[0].clone()
+        };
+        pu.list.push(mine);
+        let v = make_editor(&pu.list[pu.list.len() - 1], &s, None).unwrap().mode.save();
+        assert_eq!(v["out_dir"], json!("/app/out"), "saved preset out_dir is ignored");
+        assert_eq!(v["trim_start"], json!(3.0), "encode settings still apply");
+
+        // File > New keeps the remembered folders, not the preset's
+        pu.current = pu.list.len() - 1;
+        set(pu.editor(pu.current, &s), "input", json!("/v/a.mkv"), &s);
+        set(pu.editor(pu.current, &s), "out_dir", json!("/should-not-stick"), &s);
+        apply_app_folders(&mut *pu.editor(pu.current, &s).mode, &s);
+        pu.new_job(&s);
+        let v = pu.editor(pu.current, &s).mode.save();
+        assert_eq!(v["out_dir"], json!("/app/out"));
+        assert_eq!(v["input"], json!(""));
+        assert_eq!(v["trim_start"], json!(3.0));
+
+        // switching presets keeps the app folders
+        let other = make_editor(&pu.list[1], &s, None).unwrap().mode.save();
+        assert_eq!(other["out_dir"], json!("/app/out"));
+
+        // export omits folder fields
+        let exp = pu.export_copy(pu.current, &s);
+        assert!(exp.values.get("out_dir").is_none(), "export must omit out_dir, got {}", exp.values);
+        assert!(exp.values.get("in_dir").is_none());
+        assert_eq!(exp.values["trim_start"], json!(3.0));
+
+        // changing output folder does not dirty the preset
+        let id0 = pu.list[0].id.clone();
+        assert!(!pu.modified(&id0));
+        set(pu.editor(0, &s), "out_dir", json!("/other/out"), &s);
+        assert!(!pu.modified(&id0), "folder is not a preset field");
+    }
+
+    #[test]
     fn export_resolves_defaults() {
         let s = Settings { crf: 19, ..Settings::default() };
         let pu = ui_with(presets::factory_all());
         let p = pu.export_copy(0, &s);
         assert_eq!(p.values["video"]["crf"], json!(19));
+        assert!(p.values.get("out_dir").is_none(), "export omits output folder");
+        assert!(p.values.get("in_dir").is_none());
         assert!(pu.list[0].values.is_null(), "stored preset untouched");
     }
 

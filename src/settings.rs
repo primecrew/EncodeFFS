@@ -102,6 +102,88 @@ fn lenient_default<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOw
     Ok(serde_json::from_value::<T>(v).unwrap_or_default())
 }
 
+/// Environment override for tests (`FFENC_VIDEOS_DIR`).
+pub const VIDEOS_DIR_ENV: &str = "FFENC_VIDEOS_DIR";
+
+/// The user's Videos folder: Windows Known Folder `FOLDERID_Videos`, else
+/// `%USERPROFILE%\Videos` or `~/Videos` (or `$HOME` if that does not exist).
+pub fn default_videos_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os(VIDEOS_DIR_ENV) {
+        if !d.is_empty() {
+            return PathBuf::from(d);
+        }
+    }
+    if let Some(p) = known_folder_videos() {
+        return p;
+    }
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from);
+    if let Some(h) = home {
+        let videos = h.join("Videos");
+        if videos.is_dir() || !h.join("Videos").exists() {
+            // Prefer ~/Videos even if it does not exist yet (Windows first-run).
+            return videos;
+        }
+        return h;
+    }
+    std::env::temp_dir()
+}
+
+pub fn default_videos_dir_string() -> String {
+    default_videos_dir().to_string_lossy().into_owned()
+}
+
+fn known_folder_videos() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        return known_folder_videos_win();
+    }
+    #[cfg(not(windows))]
+    {
+        if let Some(d) = std::env::var_os("XDG_VIDEOS_DIR") {
+            if !d.is_empty() {
+                return Some(PathBuf::from(d));
+            }
+        }
+        None
+    }
+}
+
+/// `SHGetKnownFolderPath(FOLDERID_Videos)` — no extra windows-sys features required.
+#[cfg(windows)]
+fn known_folder_videos_win() -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    #[repr(C)]
+    struct Guid {
+        d1: u32,
+        d2: u16,
+        d3: u16,
+        d4: [u8; 8],
+    }
+    // FOLDERID_Videos = {18989B1D-99B5-455B-841C-AB7C74E4DDFC}
+    const FOLDERID_VIDEOS: Guid = Guid { d1: 0x1898_9B1D, d2: 0x99B5, d3: 0x455B, d4: [0x84, 0x1C, 0xAB, 0x7C, 0x74, 0xE4, 0xDD, 0xFC] };
+    extern "system" {
+        fn SHGetKnownFolderPath(rfid: *const Guid, dw_flags: u32, h_token: isize, path: *mut *mut u16) -> i32;
+        fn CoTaskMemFree(pv: *mut core::ffi::c_void);
+    }
+    unsafe {
+        let mut p: *mut u16 = std::ptr::null_mut();
+        if SHGetKnownFolderPath(&FOLDERID_VIDEOS, 0, 0, &mut p) != 0 || p.is_null() {
+            return None;
+        }
+        let mut len = 0usize;
+        while *p.add(len) != 0 {
+            len += 1;
+        }
+        let s = std::ffi::OsString::from_wide(std::slice::from_raw_parts(p, len));
+        CoTaskMemFree(p.cast());
+        Some(PathBuf::from(s))
+    }
+}
+
+fn nonempty_field(v: &serde_json::Value, key: &str) -> Option<String> {
+    v.get(key).and_then(|x| x.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -168,9 +250,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            ffmpeg_bin_path: r"C:\ffmpeg\bin".into(),
-            input_folder: r"D:\Videos\Inbox".into(),
-            output_folder: r"D:\Videos\Out".into(),
+            ffmpeg_bin_path: String::new(),
+            input_folder: default_videos_dir_string(),
+            output_folder: default_videos_dir_string(),
             crf: 22,
             audio_bitrate_k: 192,
             chapter_interval_min: 5.0,
@@ -349,6 +431,49 @@ impl Settings {
         self.save_to(&settings_path())
     }
 
+    /// If input/output folders are unset (empty), seed them once from the user's last
+    /// draft or saved preset so upgrading does not drop a remembered folder; otherwise
+    /// use the Videos folder. Existing non-empty settings are left alone.
+    pub fn migrate_app_folders(&mut self, presets: &[crate::presets::Preset]) {
+        let need_out = self.output_folder.trim().is_empty();
+        let need_in = self.input_folder.trim().is_empty();
+        if !need_out && !need_in {
+            return;
+        }
+        let mut outputs = Vec::new();
+        let mut inputs = Vec::new();
+        let mut consider = |v: &serde_json::Value| {
+            if let Some(s) = nonempty_field(v, "out_dir") {
+                outputs.push(s);
+            }
+            if let Some(s) = nonempty_field(v, "in_dir").or_else(|| nonempty_field(v, "src_dir")) {
+                inputs.push(s);
+            }
+        };
+        if let Some(d) = self.drafts.get(&self.last_preset) {
+            consider(d);
+        }
+        if let Some(p) = presets.iter().find(|p| p.id == self.last_preset) {
+            consider(&p.values);
+        }
+        for (id, d) in &self.drafts {
+            if id != &self.last_preset {
+                consider(d);
+            }
+        }
+        for p in presets {
+            if p.id != self.last_preset {
+                consider(&p.values);
+            }
+        }
+        if need_out {
+            self.output_folder = outputs.into_iter().next().unwrap_or_else(default_videos_dir_string);
+        }
+        if need_in {
+            self.input_folder = inputs.into_iter().next().unwrap_or_else(default_videos_dir_string);
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.crf > 51 {
             return Err("CRF must be 0..51".into());
@@ -379,11 +504,11 @@ impl Settings {
 mod tests {
     use super::*;
     #[test]
-    fn defaults_match_script() {
+    fn defaults_are_generic_first_run() {
         let s = Settings::default();
-        assert_eq!(s.ffmpeg_bin_path, r"C:\ffmpeg\bin");
-        assert_eq!(s.input_folder, r"D:\Videos\Inbox");
-        assert_eq!(s.output_folder, r"D:\Videos\Out");
+        assert!(s.ffmpeg_bin_path.is_empty(), "FFmpeg path is detected, not hardcoded");
+        assert_eq!(s.input_folder, default_videos_dir_string());
+        assert_eq!(s.output_folder, default_videos_dir_string());
         assert_eq!((s.crf, s.audio_bitrate_k, s.preset.as_str()), (22, 192, "slow"));
         assert_eq!(s.chapter_interval_min, 5.0);
         assert_eq!(s.compressor, CompressorParams::default());
@@ -595,5 +720,65 @@ mod tests {
         assert!(INSTALLED_MARKER.starts_with(crate::FILE_STEM));
         assert_ne!(INSTALLED_MARKER, "FFmpegEncoder-Experimental.installed");
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn migrate_app_folders_seeds_from_last_preset_and_leaves_existing() {
+        let vids = default_videos_dir_string();
+        // already set: unchanged
+        let mut s = Settings { output_folder: r"D:\Videos\Out".into(), input_folder: r"D:\Videos\Inbox".into(), ffmpeg_bin_path: r"C:\ffmpeg\bin".into(), ..Settings::default() };
+        s.migrate_app_folders(&[]);
+        assert_eq!(s.output_folder, r"D:\Videos\Out");
+        assert_eq!(s.input_folder, r"D:\Videos\Inbox");
+        assert_eq!(s.ffmpeg_bin_path, r"C:\ffmpeg\bin");
+
+        // empty: Videos when nothing to seed from
+        let mut s = Settings { output_folder: String::new(), input_folder: String::new(), ..Settings::default() };
+        s.migrate_app_folders(&[]);
+        assert_eq!(s.output_folder, vids);
+        assert_eq!(s.input_folder, vids);
+
+        // empty: seed from last preset draft first, then saved preset values
+        let mut s = Settings {
+            output_folder: String::new(),
+            input_folder: String::new(),
+            last_preset: "builtin-reencode".into(),
+            drafts: [("builtin-reencode".into(), serde_json::json!({"out_dir": "/draft/out", "in_dir": "/draft/in"}))].into(),
+            ..Settings::default()
+        };
+        let presets = vec![crate::presets::Preset {
+            id: "builtin-reencode".into(),
+            values: serde_json::json!({"out_dir": "/preset/out", "src_dir": "/preset/src"}),
+            ..crate::presets::factory("builtin-reencode").unwrap()
+        }];
+        s.migrate_app_folders(&presets);
+        assert_eq!(s.output_folder, "/draft/out");
+        assert_eq!(s.input_folder, "/draft/in");
+
+        let mut s = Settings {
+            output_folder: String::new(),
+            input_folder: String::new(),
+            last_preset: "builtin-reencode".into(),
+            ..Settings::default()
+        };
+        s.migrate_app_folders(&presets);
+        assert_eq!(s.output_folder, "/preset/out");
+        assert_eq!(s.input_folder, "/preset/src");
+    }
+
+    #[test]
+    fn videos_dir_env_override() {
+        let dir = std::env::temp_dir().join(format!("ffenc_vid_{}", crate::util::unique_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // safety: this test is single-threaded in this module's default harness for this fn
+        // we only check that a non-empty override is honoured when set at call time
+        let old = std::env::var_os(VIDEOS_DIR_ENV);
+        std::env::set_var(VIDEOS_DIR_ENV, &dir);
+        assert_eq!(default_videos_dir(), dir);
+        match old {
+            Some(v) => std::env::set_var(VIDEOS_DIR_ENV, v),
+            None => std::env::remove_var(VIDEOS_DIR_ENV),
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -338,6 +338,15 @@ pub fn prepare_import(existing: &[Preset], imported: Vec<Preset>, known_kinds: &
     (out, skipped)
 }
 
+
+/// Form keys that hold the app-level input/output folders (not part of a preset).
+pub const APP_FOLDER_FIELDS: &[&str] = &["out_dir", "in_dir", "src_dir"];
+
+/// Drop input/output folder keys so presets describe only how to encode.
+pub fn strip_folder_fields(v: Value) -> Value {
+    strip_run_fields(v, APP_FOLDER_FIELDS)
+}
+
 /// Remove per-run keys (input files, typed output names) from a form's JSON.
 pub fn strip_run_fields(mut v: Value, fields: &[&str]) -> Value {
     if let Value::Object(m) = &mut v {
