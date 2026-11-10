@@ -1,0 +1,2 @@
+9185185d067a7954c31d5b138e60134924054cde9f21c9862272ce22300cf56a  FFmpegEncoder-0.6.0-rc.1-win64.zip
+16218b1767e320548561f40cab3235c1ae9ad524aeb3cdeac24f8e5c1ce9aeac  FFmpegEncoder-0.6.0-rc.1-setup.exe
