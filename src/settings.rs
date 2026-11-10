@@ -101,6 +101,122 @@ fn lenient_default<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOw
     Ok(serde_json::from_value::<T>(v).unwrap_or_default())
 }
 
+/// Thumbnail size in the Create Slideshow image list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SlideshowThumbSize {
+    Small,
+    Medium,
+    Large,
+}
+
+impl SlideshowThumbSize {
+    pub const ALL: [SlideshowThumbSize; 3] = [SlideshowThumbSize::Small, SlideshowThumbSize::Medium, SlideshowThumbSize::Large];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SlideshowThumbSize::Small => "Small",
+            SlideshowThumbSize::Medium => "Medium",
+            SlideshowThumbSize::Large => "Large",
+        }
+    }
+
+    /// Display width of the thumbnail box, in points (height is 3/4 of this).
+    pub fn pixels(self) -> f32 {
+        match self {
+            SlideshowThumbSize::Small => 48.0,
+            SlideshowThumbSize::Medium => 80.0,
+            SlideshowThumbSize::Large => 128.0,
+        }
+    }
+
+    /// Decode size (a little larger than the display size for sharpness).
+    pub fn decode_side(self) -> u32 {
+        match self {
+            SlideshowThumbSize::Small => 64,
+            SlideshowThumbSize::Medium => 120,
+            SlideshowThumbSize::Large => 192,
+        }
+    }
+}
+
+impl Default for SlideshowThumbSize {
+    fn default() -> Self {
+        SlideshowThumbSize::Medium
+    }
+}
+
+/// Create Slideshow list display (filenames, thumbnails, pop-out). Stored next to the
+/// main settings file so toggling a view option does not dirty the preset.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SlideshowUi {
+    pub show_filenames: bool,
+    pub show_thumbnails: bool,
+    pub thumb_size: SlideshowThumbSize,
+    pub list_popped_out: bool,
+    pub popout_w: f32,
+    pub popout_h: f32,
+}
+
+impl Default for SlideshowUi {
+    fn default() -> Self {
+        SlideshowUi {
+            show_filenames: true,
+            show_thumbnails: true,
+            thumb_size: SlideshowThumbSize::Medium,
+            list_popped_out: false,
+            popout_w: 520.0,
+            popout_h: 640.0,
+        }
+    }
+}
+
+impl SlideshowUi {
+    pub fn sanitized(mut self) -> Self {
+        self.popout_w = self.popout_w.clamp(360.0, 4000.0);
+        self.popout_h = self.popout_h.clamp(240.0, 4000.0);
+        if !self.popout_w.is_finite() {
+            self.popout_w = 520.0;
+        }
+        if !self.popout_h.is_finite() {
+            self.popout_h = 640.0;
+        }
+        self
+    }
+
+    pub fn load() -> Self {
+        Self::load_from(&slideshow_ui_path())
+    }
+
+    pub fn load_from(path: &Path) -> Self {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<SlideshowUi>(&t).ok())
+            .unwrap_or_default()
+            .sanitized()
+    }
+
+    pub fn save(&self) -> std::io::Result<()> {
+        self.save_to(&slideshow_ui_path())
+    }
+
+    pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(path, serde_json::to_string_pretty(&self.clone().sanitized()).unwrap_or_else(|_| "{}".into()))
+    }
+}
+
+/// `slideshow-ui.json` next to the main settings file.
+pub fn slideshow_ui_path() -> PathBuf {
+    match settings_path().parent() {
+        Some(dir) => dir.join("slideshow-ui.json"),
+        None => roaming_dir().join("slideshow-ui.json"),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -593,5 +709,27 @@ mod tests {
         assert!(INSTALLED_MARKER.starts_with(crate::FILE_STEM));
         assert_ne!(INSTALLED_MARKER, "FFmpegEncoder-Experimental.installed");
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn slideshow_ui_defaults_and_roundtrip() {
+        assert_eq!(SlideshowUi::default().show_filenames, true);
+        assert_eq!(SlideshowUi::default().thumb_size, SlideshowThumbSize::Medium);
+        let dir = std::env::temp_dir().join(format!("ffenc_ssui_{}", crate::util::unique_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("slideshow-ui.json");
+        let u = SlideshowUi { show_filenames: false, list_popped_out: true, popout_w: 800.0, popout_h: 900.0, ..Default::default() };
+        u.save_to(&p).unwrap();
+        let got = SlideshowUi::load_from(&p);
+        assert_eq!(got.show_filenames, false);
+        assert!(got.list_popped_out);
+        assert_eq!(got.popout_w, 800.0);
+        let bad = SlideshowUi { popout_w: f32::NAN, popout_h: 20.0, ..Default::default() }.sanitized();
+        assert_eq!(bad.popout_w, 520.0);
+        assert_eq!(bad.popout_h, 240.0);
+        std::fs::write(&p, r#"{"show_filenames": 1}"#).unwrap();
+        let fallback = SlideshowUi::load_from(&p);
+        assert_eq!(fallback, SlideshowUi::default());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

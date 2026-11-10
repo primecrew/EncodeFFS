@@ -1,5 +1,23 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.5.4-slideshow.2 — Vertical image list, pop-out, additive transitions
+- Image list: the long horizontal camera reel is replaced by a vertical list (index, optional
+  thumbnail + filename, dimensions and per-image duration). Drag the grip or a row to reorder
+  (accent drop line); Sort by name / modified date / Reverse, ⬆ ⬇ and Remove stay. Click to
+  select; Arrow keys / Home / End move the selection, Alt+↑ / Alt+↓ (or Ctrl) reorder, Delete
+  removes the selected row. Buttons have AccessKit names.
+- **Pop out** opens the list in a separate resizable window (`show_viewport_immediate` when the
+  backend allows a real OS window; otherwise a floating egui window), with **Pop in**. Size and
+  open/closed state are remembered in `slideshow-ui.json` next to the settings file, along with
+  show-filename / show-thumbnail / thumbnail size (Small / Medium / Large). These do not dirty
+  the preset and survive File › New.
+- Transitions are **additive**: each image is fully visible for its display time `D`, then each
+  transition adds `T` between images. `total = N×D + (N−1)×T` (no extra hold before the first or
+  after the last). Example: 3 images of 5 s with a 2 s fade last 19 s. xfade offsets are
+  `(k+1)×D + k×T`; clip lengths are `D+T` (first/last) and `D+2T` (middle). The old “fade must
+  be shorter than D” rule is gone. Fixed total / Match audio: `D = (Total − (N−1)×T) / N`,
+  rejected when that is ≤ 0. Without xfade: hard cuts at `N×D` (transition time is not added).
+
 ## 0.5.4-slideshow.1 — Create Slideshow (branch `slideshow`, portable only)
 - Identity: `FFmpegEncoder-Slideshow.exe`, title “(Slideshow)”, data folder `FFmpegEncoder-Slideshow`
   (side by side with stable/codecs). First start copies stable settings/presets in (read only).

@@ -72,12 +72,39 @@ fn encode_with_and_without_xfade() {
     // hard cuts: total = 3*2 = 6
     run("cuts.mp4", Transition::None, true);
     if has_xfade {
-        // with fade 0.5: total = 6 - 2*0.5 = 5
+        // additive fade 0.5: total = 6 + 2*0.5 = 7
         run("fade.mp4", Transition::Fade, true);
+
+        // 3 images, 5 s each, 2 s fade → 3*5 + 2*2 = 19 s
+        let out19 = dir.join("fade19.mp4");
+        let pr = SlideshowParams {
+            images: imgs.clone(),
+            audio: None,
+            audio_duration_s: None,
+            output: out19.clone(),
+            duration_mode: DurationMode::PerImage,
+            per_image_s: 5.0,
+            fixed_total_s: 60.0,
+            transition: Transition::Fade,
+            fade_s: 2.0,
+            has_xfade: true,
+            size: OutputSize::S640x480,
+            small: SmallImage::BlackBorder,
+            fps: 30,
+            video: VideoEncode { crf: 28, preset: "ultrafast".into(), ..Default::default() },
+            audio_bitrate_k: 128,
+            faststart: true,
+        };
+        let t = timing(&pr).unwrap();
+        assert!((t.total_s - 19.0).abs() < 1e-9, "timing should be 19 s, got {}", t.total_s);
+        let cmd = build(&pr).unwrap();
+        let st = Command::new(&ffmpeg).args(["-hide_banner", "-loglevel", "error"]).args(&cmd.args).output().unwrap();
+        assert!(st.status.success(), "fade19: {}", String::from_utf8_lossy(&st.stderr));
+        let dur = probe_dur(&ffprobe, &out19);
+        assert!((dur - 19.0).abs() < 0.35, "3 images × 5 s + 2 fades × 2 s: got {dur}, want 19");
     } else {
-        // force fallback path
-        let out = run("fallback.mp4", Transition::Fade, false);
-        let _ = out;
+        // force fallback path: transition time is not added (3*2 = 6)
+        let _ = run("fallback.mp4", Transition::Fade, false);
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -1116,7 +1116,7 @@ dependencies = [
 
 [[package]]
 name = "ffmpeg-encoder"
-version = "0.5.4-slideshow.1"
+version = "0.5.4-slideshow.2"
 dependencies = [
  "chrono",
  "eframe",

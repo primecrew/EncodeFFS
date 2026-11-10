@@ -294,12 +294,17 @@ Re-encode, Custom pipeline (single file and folder batch) and Batch re-encode ca
 
 ## Create Slideshow (Slideshow edition)
 **Create Slideshow** turns a set of still images into an H.264/AAC MP4.
-- **Camera reel:** thumbnails of every image in order. Drag a frame or use ⬆⬇ to reorder; Sort by name /
-  modified date / Reverse. Add files, a folder, or drop them on the window (jpg/png/bmp/webp/tif; gif is skipped).
+- **Image list:** a vertical list of every image (index, optional thumbnail and filename, size and duration).
+  Drag the grip or a row to reorder, or use ⬆⬇; Sort by name / modified date / Reverse. Add files, a folder,
+  or drop them on the window (jpg/png/bmp/webp/tif; gif is skipped). **Pop out** opens the list in a
+  separate window (Pop in returns it). Show or hide filenames and thumbnails; thumbnail size is Small /
+  Medium / Large. Those list options are remembered next to the settings file.
 - **Duration:** Per image length (default 5 s), Fixed total length, or Match audio length (needs an audio file).
-  With a crossfade of F seconds and N images: total = N×D − (N−1)×F.
+  Transitions are additive: each image is fully visible for D seconds, then each transition adds T.
+  With N images: total = N×D + (N−1)×T (e.g. 3×5 s + 2×2 s fade = 19 s).
 - **Transitions:** None (hard cut), Fade, Fade through black/white, Dissolve, Wipe/Slide left/right.
-  Needs FFmpeg’s `xfade` filter — the app checks `ffmpeg -filters` and warns / falls back to hard cuts if it is missing.
+  Needs FFmpeg’s `xfade` filter — the app checks `ffmpeg -filters` and warns / falls back to hard cuts
+  (display time kept, transition time not added) if it is missing.
 - **Size:** Auto, 1920×1080 (default), 1920×1024, 1280×720, 1024×768, 800×600, 640×480. Images keep aspect
   ratio (black bars). Smaller than the canvas: black border (default) or bicubic upscale.
 - **Encode:** libx264 CRF 18, preset medium, 30 fps, MP4; optional AAC audio. Separate settings folder
