@@ -2,7 +2,7 @@
 name = "ffmpeg-encoder"
 version = "0.5.4-slideshow.3"
 edition = "2021"
-description = "Portable Windows GUI for FFmpeg encoding tasks (port of the user's PowerShell script v22.0)"
+description = "Windows GUI for common FFmpeg encoding jobs"
 build = "build.rs"
 
 [lib]
