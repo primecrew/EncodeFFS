@@ -14,3 +14,6 @@ credentials*.json
 venv/
 __pycache__/
 node_modules/
+
+# local cross-compile linker flags (machine-specific)
+/.cargo/

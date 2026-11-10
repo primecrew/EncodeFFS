@@ -400,6 +400,7 @@ impl App {
                 queue.log(n);
             }
         }
+        settings.migrate_app_folders(&list);
         let current = list.iter().position(|p| p.id == settings.last_preset && !p.hidden).unwrap_or(0);
         let layout = layout::LayoutRt::new(startup, settings.remember_layout);
         if settings.remember_layout {
@@ -1691,7 +1692,8 @@ impl App {
                 }
                 if ui.button("Reset to script defaults").clicked() {
                     let drafts = std::mem::take(&mut ed.drafts);
-                    ed = Settings { drafts, last_preset: ed.last_preset.clone(), ..Settings::default() };
+                    let (input_folder, output_folder, ffmpeg_bin_path) = (ed.input_folder.clone(), ed.output_folder.clone(), ed.ffmpeg_bin_path.clone());
+                    ed = Settings { drafts, last_preset: ed.last_preset.clone(), input_folder, output_folder, ffmpeg_bin_path, ..Settings::default() };
                 }
             });
         });
@@ -1718,6 +1720,7 @@ impl App {
             ed.managed_ffmpeg_dir = self.settings.managed_ffmpeg_dir.clone();
             self.settings = ed;
             self.pre.rebase(&self.settings);
+            self.pre.apply_app_folders_all(&self.settings);
             self.save_settings();
             if ff_changed || self.ff.is_none() {
                 self.refresh_ffmpeg(ctx);
@@ -1941,6 +1944,24 @@ impl eframe::App for App {
                 let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
                 let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
                 self.pre.editor(idx, &self.settings).mode.ui(ui, &cx);
+                let (inp, out) = crate::ui::presets::take_app_folders(&*self.pre.editor(idx, &self.settings).mode);
+                let mut folders_changed = false;
+                if let Some(o) = out {
+                    if o != self.settings.output_folder {
+                        self.settings.output_folder = o;
+                        folders_changed = true;
+                    }
+                }
+                if let Some(i) = inp {
+                    if i != self.settings.input_folder {
+                        self.settings.input_folder = i;
+                        folders_changed = true;
+                    }
+                }
+                if folders_changed {
+                    self.pre.apply_app_folders_all(&self.settings);
+                    self.save_settings();
+                }
                 ui.add_space(10.0);
                 if ui.add_sized([180.0, 32.0], egui::Button::new(RichText::new("Preview & run…").strong())).clicked() {
                     self.start_preview(ctx);

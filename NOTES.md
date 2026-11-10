@@ -1,5 +1,26 @@
 # Notes / changes vs PowerShell script v22.0
 
+## 0.5.5 — App-level input/output folders; clearer audio bitrate choice
+- **Input and output folders are app-level**, not part of a preset. Presets describe only *how* to
+  encode. The remembered input folder and output folder are shared by every preset and survive
+  switching presets, File › New, and restarts.
+- **First run** (no remembered folders): both default to the Windows Videos known folder
+  (`FOLDERID_Videos` via `SHGetKnownFolderPath`; fallback `%USERPROFILE%\Videos` or `~/Videos`).
+  FFmpeg's path is empty so it is auto-located (no `C:\Apps\…` baked in). Built-in presets
+  still ship with `values: null`.
+- **Remembered picks**: whatever folder the user chooses is written to Settings (`input_folder` /
+  `output_folder`) and reused until they change it. “Reset to script defaults” keeps the remembered
+  folders and FFmpeg path.
+- **Migration**: if those Settings fields are empty, they are seeded once from the last-preset draft,
+  then that preset's saved `out_dir` / `in_dir` / `src_dir`, then any other draft or preset, else
+  Videos. Existing non-empty values (including older `D:\Videos\Out` / `D:\Videos\Inbox…`) are left alone.
+  Saved preset files are not rewritten or deleted; folder keys in them are simply ignored going
+  forward. Exporting a preset omits `out_dir`, `in_dir` and `src_dir`. Per-job output file name and
+  suffix stay on the job.
+- **Audio bitrate**: the row now shows a distinct **Will encode: N kb/s** readout, then spaced
+  choice chips (128 / 160 / 192 / 256 / 320) with a filled selected state (accent fill; high contrast
+  uses a black fill, accent stroke and accent text), plus a custom typed field.
+
 ## 0.5.4 — File › New, job history, top-aligned rows, hover help, own FFmpeg never modified
 - **File › New (Ctrl+N)** (`PresetUi::new_job`): replaces the selected preset's form with a fresh one built
   from the stored preset (as on first open): input/output files cleared, unsaved option edits dropped,

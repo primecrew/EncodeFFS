@@ -364,13 +364,43 @@ pub fn output_fps_ui(ui: &mut Ui, fps: &mut String) {
 
 pub fn bitrate_ui(ui: &mut Ui, label: &str, k: &mut u32) {
     row_label(ui, label);
-    ui.horizontal(|ui| {
-        num_u32(ui, k, 8..=1024, " kbps");
-        for b in [128, 160, 192, 256, 320] {
-            if ui.small_button(b.to_string()).clicked() {
-                *k = b;
+    let pal = crate::ui::theme::c();
+    ui.vertical(|ui| {
+        let readout = format!("Will encode: {k} kb/s");
+        let color = if pal.high_contrast { pal.accent } else { ui.visuals().strong_text_color() };
+        let r = ui.label(RichText::new(&readout).strong().size(15.0).color(color));
+        named(r, egui::WidgetType::Label, &readout);
+        ui.add_space(10.0);
+        hint(ui, "Available bitrates");
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            for b in [128, 160, 192, 256, 320] {
+                let selected = *k == b;
+                let text = if selected {
+                    let c = if pal.high_contrast { pal.accent } else { pal.on_pill };
+                    RichText::new(format!("{b}")).strong().color(c)
+                } else {
+                    RichText::new(format!("{b}"))
+                };
+                let mut btn = egui::Button::new(text);
+                if selected {
+                    if pal.high_contrast {
+                        btn = btn.fill(egui::Color32::BLACK).stroke(egui::Stroke::new(pal.focus_width.max(2.0), pal.accent));
+                    } else {
+                        btn = btn.fill(pal.accent).stroke(egui::Stroke::new(2.0_f32, pal.accent));
+                    }
+                }
+                let name = if selected { format!("{b} kb/s (selected)") } else { format!("{b} kb/s") };
+                if named(ui.add(btn), egui::WidgetType::Button, &name).clicked() {
+                    *k = b;
+                }
             }
-        }
+        });
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            hint(ui, "Or type a custom value");
+            num_u32(ui, k, 8..=1024, " kbps");
+        });
     });
     ui.end_row();
 }
