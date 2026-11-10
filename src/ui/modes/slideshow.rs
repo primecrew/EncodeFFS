@@ -638,7 +638,7 @@ impl Mode for SlideshowMode {
             self.compact_summary(ui);
             self.show_popout(cx);
         } else {
-            self.image_list(ui, cx, Some(280.0), "ss_list");
+            self.image_list(ui, cx, Some(420.0), "ss_list");
         }
         self.persist_list_ui(false);
 

@@ -7,8 +7,8 @@ One `FFmpegEncoder.exe`, no installer, no runtime. Needs `ffmpeg.exe` + `ffprobe
 ## Run
 1. Copy `FFmpegEncoder.exe` anywhere (e.g. `C:\Apps\FFmpegEncoder\`) and run it.
 2. First start (and whenever no working ffmpeg/ffprobe is found) asks for the folder holding `ffmpeg.exe` and
-   `ffprobe.exe`, pre-filled with `C:\ffmpeg\bin`, with Browse… and live validation (the parent of a
-   `bin` folder is accepted too). Secondary buttons: **Download newest FFmpeg** and **Skip for now**.
+   `ffprobe.exe` (Browse… and live validation; the parent of a `bin` folder is accepted too). It is not
+   pre-filled with a machine-specific path. Secondary buttons: **Download newest FFmpeg** and **Skip for now**.
    Later: Help › Locate FFmpeg folder… or File › Settings.
 3. Pick a preset in the **preset panel** on the left, choose a file (Browse… or drag-and-drop – see below) and
    press **Preview & run…** — or double-click a preset / press **▶ Run** / F5. The confirmation shows every job's full
@@ -19,8 +19,8 @@ One `FFmpegEncoder.exe`, no installer, no runtime. Needs `ffmpeg.exe` + `ffprobe
 4. The queue shows progress per job and can cancel one or all. Cancel sends `q` to ffmpeg, kills it after 4 s,
    and deletes the partial output.
 
-FFmpeg lookup order: Settings folder (default `C:\ffmpeg\bin`) → `ffmpeg\` or `ffmpeg\bin\` next to
-the exe → app-managed copy (`%LOCALAPPDATA%\FFmpegEncoder\ffmpeg\bin` by default, see *App-managed FFmpeg location*) → `PATH`.
+FFmpeg lookup order: Settings folder (empty on first run, then whatever you picked) → `ffmpeg\` or `ffmpeg\bin\` next to
+the exe → app-managed copy (`%LOCALAPPDATA%\FFmpegEncoder\ffmpeg\bin` by default, or this edition's folder; see *App-managed FFmpeg location*) → `PATH`.
 On start the app checks the build has `libx264` and `aac`.
 
 ## Appearance, text size & keyboard
@@ -310,6 +310,19 @@ Re-encode, Custom pipeline (single file and folder batch) and Batch re-encode ca
 - **Encode:** libx264 CRF 18, preset medium, 30 fps, MP4; optional AAC audio. Separate settings folder
   (`FFmpegEncoder-Slideshow`); first start can import from the stable version.
 
+## Larger slideshow thumbnails (0.5.4-slideshow.3)
+Small / Medium / Large thumbnails display at 96 / 160 / 256 points (about twice the previous sizes) and scale
+with the UI zoom.
+
+## Input / output folders (0.5.4-slideshow.3)
+Input and output folders are remembered at the app level (File › Settings), not in presets. On first run they
+default to the Windows Videos folder. Switching presets or File › New does not change them. Exporting a preset
+omits folder paths.
+
+## Audio bitrate (0.5.4-slideshow.3)
+The audio bitrate row shows **Will encode: N kb/s**, then the 128 / 160 / 192 / 256 / 320 choices with the
+selected value highlighted, and a field for a custom rate.
+
 ## File › New (0.5.4)
 **File › New** (Ctrl+N) starts a new job with the selected preset: the form goes back to the preset's settings
 with no input/output files (folders come from Settings). If you changed the preset's options without saving,
@@ -368,8 +381,9 @@ Stored as JSON. Portable first: `FFmpegEncoder.settings.json` next to the exe if
 otherwise `%APPDATA%\FFmpegEncoder\settings.json`. Logs go to `logs\` next to the settings file
 (app log rotates at 5 MB). **Help › Open settings file / Open logs folder** jump there.
 File › Settings… edits the defaults (script values: CRF 22, preset slow, AAC 192k, chapters 5 min, compressor
--18 dB / 2:1 / knee 4 / +2 dB / 20 ms / 250 ms, commentary name, fallback 48000 Hz, input `D:\Videos\Inbox`,
-output `D:\Videos\Out`). Built-in presets you haven't customised follow these defaults.
+-18 dB / 2:1 / knee 4 / +2 dB / 20 ms / 250 ms, commentary name, fallback 48000 Hz). Input and output folders are
+app-level (not stored in presets): on first run they are the Windows Videos folder; whatever you pick is remembered
+across restarts, preset switches and File › New. Built-in presets you haven't customised follow the encode defaults.
 
 Per-job ffmpeg stderr goes to `ffmpeg_error_<name>.log` in the output folder; it is deleted on success unless
 “keep logs on success” is ticked.

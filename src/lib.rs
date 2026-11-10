@@ -33,7 +33,7 @@ pub const OTHER_EDITION_DATA_DIR_NAMES: &[&str] = &["FFmpegEncoder", "FFmpegEnco
 
 pub mod import_stable;
 
-/// "FFmpeg Encoder 0.5.4-slideshow.2 (Slideshow)"
+/// "FFmpeg Encoder 0.5.4-slideshow.3 (Slideshow)"
 pub fn full_title() -> String {
     format!("{APP_NAME} {APP_VERSION} ({EDITION})")
 }
