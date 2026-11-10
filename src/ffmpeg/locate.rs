@@ -80,17 +80,23 @@ pub fn local_app_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("FFENC_LOCAL_DIR") {
         return PathBuf::from(d); // override for tests
     }
+    local_app_dir_named(crate::DATA_DIR_NAME)
+}
+
+/// `%LOCALAPPDATA%\<name>` (Linux: $XDG_DATA_HOME/<name> or ~/.local/share/<name>).
+pub fn local_app_dir_named(name: &str) -> PathBuf {
     if let Some(d) = std::env::var_os("LOCALAPPDATA") {
-        return PathBuf::from(d).join("FFmpegEncoder");
+        return PathBuf::from(d).join(name);
     }
     if let Some(d) = std::env::var_os("XDG_DATA_HOME") {
-        return PathBuf::from(d).join("FFmpegEncoder");
+        return PathBuf::from(d).join(name);
     }
     if let Some(h) = std::env::var_os("HOME") {
-        return PathBuf::from(h).join(".local/share/FFmpegEncoder");
+        return PathBuf::from(h).join(".local/share").join(name);
     }
-    std::env::temp_dir().join("FFmpegEncoder")
+    std::env::temp_dir().join(name)
 }
+
 
 /// Root of the app-managed FFmpeg: the folder chosen in Settings, or by default
 /// `...\FFmpegEncoder\ffmpeg` (see [`super::managed`]).

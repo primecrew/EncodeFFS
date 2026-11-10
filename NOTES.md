@@ -2,6 +2,13 @@
 
 Detailed implementation notes. The user-facing history is in [CHANGELOG.md](CHANGELOG.md).
 
+## 0.6.0-rc.1 — Create Slideshow in the stable app (release candidate)
+- Create Slideshow is a built-in preset of the stable edition (`FFmpegEncoder.exe`, data folder
+  `FFmpegEncoder`). There is no separate Slideshow exe, title suffix, or first-run import from
+  stable. `slideshow-ui.json` is stored next to the stable settings file.
+- The `slideshow` branch is archived (`archive/slideshow` tag) and is no longer the production
+  Slideshow edition.
+
 ## 0.5.5 — App-level input/output folders; clearer audio bitrate choice
 - **Input and output folders are app-level**, not part of a preset. Presets describe only *how* to
   encode. The remembered input folder and output folder are shared by every preset and survive
@@ -22,6 +29,41 @@ Detailed implementation notes. The user-facing history is in [CHANGELOG.md](CHAN
 - **Audio bitrate**: the row now shows a distinct **Will encode: N kb/s** readout, then spaced
   choice chips (128 / 160 / 192 / 256 / 320) with a filled selected state (accent fill; high contrast
   uses a black fill, accent stroke and accent text), plus a custom typed field.
+
+## 0.5.4-slideshow.3 — Larger thumbnails (Create Slideshow)
+- Slideshow thumbnails are larger (Small / Medium / Large display at 96 / 160 / 256 points, about
+  2× the previous 48 / 80 / 128) and still scale with UI zoom; decode size is 144 / 240 / 384. The
+  inline list is a little taller so Large thumbs fit more comfortably.
+
+## 0.5.4-slideshow.2 — Vertical image list, pop-out, additive transitions
+- Image list: the long horizontal camera reel is replaced by a vertical list (index, optional
+  thumbnail + filename, dimensions and per-image duration). Drag the grip or a row to reorder
+  (accent drop line); Sort by name / modified date / Reverse, ⬆ ⬇ and Remove stay. Click to
+  select; Arrow keys / Home / End move the selection, Alt+↑ / Alt+↓ (or Ctrl) reorder, Delete
+  removes the selected row. Buttons have AccessKit names.
+- **Pop out** opens the list in a separate resizable window (`show_viewport_immediate` when the
+  backend allows a real OS window; otherwise a floating egui window), with **Pop in**. Size and
+  open/closed state are remembered in `slideshow-ui.json` next to the settings file, along with
+  show-filename / show-thumbnail / thumbnail size (Small / Medium / Large). These do not dirty
+  the preset and survive File › New.
+- Transitions are **additive**: each image is fully visible for its display time `D`, then each
+  transition adds `T` between images. `total = N×D + (N−1)×T` (no extra hold before the first or
+  after the last). Example: 3 images of 5 s with a 2 s fade last 19 s. xfade offsets are
+  `(k+1)×D + k×T`; clip lengths are `D+T` (first/last) and `D+2T` (middle). The old “fade must
+  be shorter than D” rule is gone. Fixed total / Match audio: `D = (Total − (N−1)×T) / N`,
+  rejected when that is ≤ 0. Without xfade: hard cuts at `N×D` (transition time is not added).
+
+## 0.5.4-slideshow.1 — Create Slideshow
+- New built-in **Create Slideshow** (`src/cmd/slideshow.rs`, `src/ui/modes/slideshow.rs`):
+  - Image list (thumbnails + reorder: drag / ⬆⬇ / sort by name / modified / reverse).
+  - Duration: Per image (default 5 s), Fixed total, Match audio (requires audio).
+  - Transitions (need `xfade`): Fade (default), fade black/white, dissolve, wipe/slide L/R; else hard cut.
+  - Detects `xfade` via `ffmpeg -filters` (cached in `FfmpegCheck`); missing → warn + hard-cut fallback.
+  - Sizes: Auto; 1920×1080 (default); 1920×1024; 1280×720; 1024×768; 800×600; 640×480. Aspect preserved
+    (letterbox/pillarbox). Smaller images: black border (default) or bicubic upscale.
+  - Encode defaults: libx264 CRF 18 medium, yuv420p, 30 fps, MP4; optional AAC audio.
+  - Uses `fps=` filter (not `-r`) so duration stays correct.
+  - List display is stored in `slideshow-ui.json` next to the settings file.
 
 ## 0.5.4 — File › New, job history, top-aligned rows, hover help, own FFmpeg never modified
 - **File › New (Ctrl+N)** (`PresetUi::new_job`): replaces the selected preset's form with a fresh one built

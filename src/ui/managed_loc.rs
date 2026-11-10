@@ -42,7 +42,7 @@ fn rules() -> managed::Rules {
     managed::Rules {
         current: managed::current_root().to_string_lossy().into_owned(),
         // the experimental edition's own data folder
-        protected: locate::local_app_dir().parent().map(|p| vec![p.join(ffenc::OTHER_EDITION_DATA_DIR_NAME).to_string_lossy().into_owned()]).unwrap_or_default(),
+        protected: locate::local_app_dir().parent().map(|p| ffenc::OTHER_EDITION_DATA_DIR_NAMES.iter().map(|n| p.join(n).to_string_lossy().into_owned()).collect()).unwrap_or_default(),
         system: managed::system_dirs(),
     }
 }

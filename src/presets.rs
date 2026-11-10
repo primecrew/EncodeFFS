@@ -76,6 +76,7 @@ pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
     ("builtin-reencode", "reencode", "Re-encode video", "libx264 + AAC with trim, resize, chapters, passthrough, gain/compressor and deinterlacing."),
     ("builtin-tracks", "tracks", "Audio & subtitles", "See a video's audio and subtitle tracks; keep, remove, rename, reorder; add commentary, another language or subtitle files; replace or extract audio – video is never re-encoded."),
     ("builtin-still", "still", "MP4 from still image", "One image + one audio file -> H.264/AAC MP4."),
+    ("builtin-slideshow", "slideshow", "Create Slideshow", "Images → H.264/AAC MP4 slideshow with optional audio and crossfades (fade, wipe, slide). CRF 18, medium, 30 fps, 1920×1080 by default."),
     ("builtin-commentary", "commentary", "Add commentary track", "Copy video and all audio, add an audio file as a new AAC track."),
     ("builtin-extract", "extract", "Extract audio to WAV", "One audio track -> 16-bit PCM WAV."),
     ("builtin-replace", "replace_audio", "Replace primary audio with WAV", "Copy video, replace the audio with an audio file encoded to AAC."),
@@ -522,7 +523,7 @@ mod tests {
 
     #[test]
     fn paths() {
-        assert_eq!(presets_path_for(Path::new("/x/FFmpegEncoder.settings.json")), PathBuf::from("/x/FFmpegEncoder.presets.json"));
+        assert_eq!(presets_path_for(&Path::new("/x").join(crate::settings::PORTABLE_FILE)), PathBuf::from("/x").join(PORTABLE_PRESETS_FILE));
         assert_eq!(presets_path_for(Path::new("/r/FFmpegEncoder/settings.json")), PathBuf::from("/r/FFmpegEncoder/presets.json"));
     }
 }

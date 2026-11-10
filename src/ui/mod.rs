@@ -349,7 +349,7 @@ impl App {
         theme::apply(&cc.egui_ctx, &settings.appearance);
         let applied = Some(settings.appearance.clone());
         let ctx = cc.egui_ctx.clone();
-        let queue = Queue::new(Some(settings::logs_dir().join("FFmpegEncoder.log")), move || ctx.request_repaint());
+        let queue = Queue::new(Some(settings::logs_dir().join(format!("{}.log", ffenc::FILE_STEM))), move || ctx.request_repaint());
         queue.log(format!("{} {} started. Settings: {}", ffenc::APP_NAME, ffenc::APP_VERSION, settings::settings_path().display()));
         queue.set_keep_temp(settings.keep_temp_files);
         let registry = settings::logs_dir().join("partial-outputs.txt");
@@ -520,7 +520,7 @@ impl App {
                 self.pre.list.extend(new);
                 if n > 0 {
                     let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-                    let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+                    let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
                     self.pre.select(first, &cx);
                 }
                 self.save_presets();
@@ -664,7 +664,7 @@ impl App {
                 _ => {}
             }
         }
-        let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx };
+        let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
         match self.pre.editor(idx, &self.settings).mode.build(&cx) {
             Ok(plan) => {
                 self.preview = Some(Preview::new(plan, ff.ffmpeg.clone(), self.settings.when_exists));
@@ -1332,7 +1332,7 @@ impl App {
         let act = self.pre.dialogs(ctx);
         if !matches!(act, Action::None) {
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
             let r = self.pre.apply(act, &cx);
             if let Err(e) = r {
                 self.error = Some(e);
@@ -1446,7 +1446,7 @@ impl App {
     /// Files from a drop or Ctrl+O into the selected preset.
     fn route_paths(&mut self, ctx: &egui::Context, dropped: Vec<PathBuf>) {
         let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-        let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+        let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
         let idx = self.pre.current;
         let ed = self.pre.editor(idx, &self.settings);
         let paths = if ed.mode.wants_folders() { dropped.clone() } else { ffenc::util::expand_dropped(&dropped) };
@@ -1846,7 +1846,7 @@ impl eframe::App for App {
         let presets_panel = egui::SidePanel::left(layout::panel_id("presets")).resizable(true).default_width(presets_w).width_range(150.0..=(screen.x * 0.45).max(200.0)).show(ctx, |ui| {
             ui.add_space(4.0);
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
             match self.pre.sidebar(ui, &cx) {
                 None => {}
                 Some(SideEvent::Selected) => self.save_settings(),
@@ -1942,7 +1942,7 @@ impl eframe::App for App {
             }
             egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                 let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-                let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx };
+                let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
                 self.pre.editor(idx, &self.settings).mode.ui(ui, &cx);
                 let (inp, out) = crate::ui::presets::take_app_folders(&*self.pre.editor(idx, &self.settings).mode);
                 let mut folders_changed = false;

@@ -1077,7 +1077,7 @@ mod tests {
     fn builtins_are_read_only_and_prompt_save_as_new() {
         let s = Settings::default();
         let ctx = egui::Context::default();
-        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx };
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, has_xfade: None };
         let mut pu = ui_with(presets::factory_all());
         assert!(pu.is_builtin(0));
         set(pu.editor(0, &s), "input", json!("/v/a.mkv"), &s);
@@ -1137,7 +1137,7 @@ mod tests {
     fn leaving_an_edited_builtin_prompts() {
         let s = Settings::default();
         let ctx = egui::Context::default();
-        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx };
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, has_xfade: None };
         let mut pu = ui_with(presets::factory_all());
         let mix = pu.index_of("builtin-mix").unwrap();
         // unchanged: no prompt
@@ -1210,7 +1210,7 @@ mod tests {
     fn create_saveas_rename_delete_reset() {
         let s = Settings::default();
         let ctx = egui::Context::default();
-        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx };
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, has_xfade: None };
         let mut pu = ui_with(presets::factory_all());
         let n0 = pu.list.len();
         // blank custom
@@ -1269,7 +1269,7 @@ mod tests {
     fn select_carries_input_file() {
         let s = Settings::default();
         let ctx = egui::Context::default();
-        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx };
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, has_xfade: None };
         let f = std::env::temp_dir().join(format!("carry_{}.mkv", ffenc::util::unique_id()));
         std::fs::write(&f, b"x").unwrap();
         let mut pu = ui_with(presets::factory_all());
@@ -1395,7 +1395,7 @@ mod tests {
     fn category_action_and_reset_keeps_pin() {
         let s = Settings::default();
         let ctx = egui::Context::default();
-        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx };
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, has_xfade: None };
         let mut pu = ui_with(presets::factory_all());
         pu.apply(Action::SetCategory { id: "builtin-mix".into(), category: "  Audio ".into() }, &cx).unwrap();
         let i = pu.index_of("builtin-mix").unwrap();

@@ -2,12 +2,18 @@
 
 User-facing history for the **stable** edition of FFmpeg Encoder (`master`, `FFmpegEncoder.exe`). Developer notes are in [NOTES.md](NOTES.md).
 
-Other editions are released from their own branches and are not part of this build: **Codecs** (`codecs`), **Slideshow** (`slideshow`), and the retired **Experimental UI** (`ui-experimental`).
+Create Slideshow is now part of this stable build. The old **Slideshow** branch is archived (`archive/slideshow`). The experimental **Codecs** (`codecs`) and retired **Experimental UI** (`ui-experimental`) branches remain separate.
+
+## 0.6.0-rc.1
+
+- **Create Slideshow** is a built-in preset in the stable app (images → H.264/AAC MP4 with optional audio and crossfades). Vertical image list, pop-out, drag-and-drop reorder, additive transitions (`total = N×D + (N−1)×T`). List display options are stored in `slideshow-ui.json` next to the stable settings file. The separate Slideshow edition identity (own exe, data folder, and first-run import from stable) is not used.
+- Input and output folders are remembered at the app level (File › Settings), not in presets. On first run they default to the Windows Videos folder. Switching presets or File › New does not change them. Exporting a preset omits folder paths. Existing saved folders are kept.
+- Audio bitrate shows a distinct **Will encode: N kb/s** readout and a highlighted selected rate, plus a custom value.
 
 ## 0.5.5
 
-- Input and output folders are remembered at the app level (File › Settings), not in presets. On first run they default to the Windows Videos folder. Switching presets or File › New does not change them. Exporting a preset omits folder paths. Existing saved folders are kept.
-- Audio bitrate shows a distinct **Will encode: N kb/s** readout and a highlighted selected rate, plus a custom value.
+- Input and output folders became app-level settings (Windows Videos on first run; remembered thereafter).
+- Audio bitrate selector gained a clear **Will encode** readout and a highlighted selected rate.
 
 ## 0.5.4
 

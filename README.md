@@ -1,23 +1,22 @@
 # FFmpeg Encoder
 
-Windows desktop app for everyday FFmpeg jobs: re-encode or batch-re-encode video, join/stitch clips, remux MKV to MP4, work with audio and subtitles, add chapters, make a video from a still image, run a custom pipeline, or feed an AviSynth frameserver script. Pick a preset, choose files, preview the exact ffmpeg command, and run the job in a queue.
+Windows desktop app for everyday FFmpeg jobs: re-encode or batch-re-encode video, join/stitch clips, remux MKV to MP4, work with audio and subtitles, add chapters, make a video from a still image, run a custom pipeline, feed an AviSynth frameserver script, or **create a slideshow** from still images (H.264/AAC MP4 with optional audio and crossfades). Pick a preset, choose files, preview the exact ffmpeg command, and run the job in a queue.
 
-This is the **stable** edition (`FFmpegEncoder.exe`, version 0.5.5). Other editions live on their own branches and keep their own settings; they are not merged into this build.
+This is the **stable** edition (`FFmpegEncoder.exe`, version 0.6.0-rc.1). Create Slideshow is included as a built-in preset. The old standalone Slideshow branch is archived and is not a separate app any more.
 
 **Requirements:** Windows 10 or 11 (64-bit). You need `ffmpeg.exe` and `ffprobe.exe` — use a copy you already have (for example `C:\ffmpeg\bin`), or let the app download a build for you. No extra runtime.
 
 **Install:** run the installer (`FFmpegEncoder-<version>-setup.exe`) or unzip the portable package and run `FFmpegEncoder.exe` from any folder (for example `C:\Apps\FFmpegEncoder\`). Portable settings are stored next to the exe when that folder is writable; otherwise they go in `%APPDATA%\FFmpegEncoder`.
 
-**Editions** (separate branches and exes; not mixed together):
+**Other branches** (separate exes, not mixed into this build):
 
-- **Stable** (`master`) — the supported build; installer and portable zip.
 - **Codecs** (`codecs`, experimental) — the same tools plus optional HEVC/AV1 video and AC3 audio (`FFmpegEncoder-Codecs.exe`).
-- **Slideshow** (`slideshow`, experimental) — adds Create Slideshow, which turns still images into an H.264/AAC MP4. Portable zip only (`FFmpegEncoder-Slideshow.exe`).
+- **Slideshow** (`slideshow`) — archived earlier Slideshow-only edition; use this stable build instead.
 - **Experimental UI** (`ui-experimental`) — a retired UI-prototype branch; not developed further.
 
 **Accessibility:** System, Dark, Light, and High contrast themes; text size 75–300%; a visible keyboard focus ring; and screen-reader names through UI Automation (AccessKit). High contrast uses a black background, white text, and a yellow accent.
 
-Version history is in [CHANGELOG.md](CHANGELOG.md). Developer-facing notes are in [NOTES.md](NOTES.md).
+Version history is in [CHANGELOG.md](CHANGELOG.md). Developer-facing notes are in [NOTES.md](NOTES.md). See **Create Slideshow** below for that preset.
 
 ## Run
 1. Copy the exe anywhere (for example `C:\Apps\FFmpegEncoder\`) and run it.
@@ -307,12 +306,29 @@ Re-encode, Custom pipeline (single file and folder batch) and Batch re-encode ca
   **name suffix**, **faststart**, and free-form **extra input options** (before `-i`) and **extra output options**
   (before the output file; quotes group values with spaces).
 
-## Input / output folders (0.5.5)
+## Create Slideshow
+**Create Slideshow** turns a set of still images into an H.264/AAC MP4.
+- **Image list:** a vertical list of every image (index, optional thumbnail and filename, size and duration).
+  Drag the grip or a row to reorder, or use ⬆⬇; Sort by name / modified date / Reverse. Add files, a folder,
+  or drop them on the window (jpg/png/bmp/webp/tif; gif is skipped). **Pop out** opens the list in a
+  separate window (Pop in returns it). Show or hide filenames and thumbnails; thumbnail size is Small /
+  Medium / Large. Those list options are remembered in `slideshow-ui.json` next to the settings file.
+- **Duration:** Per image length (default 5 s), Fixed total length, or Match audio length (needs an audio file).
+  Transitions are additive: each image is fully visible for D seconds, then each transition adds T.
+  With N images: total = N×D + (N−1)×T (e.g. 3×5 s + 2×2 s fade = 19 s).
+- **Transitions:** None (hard cut), Fade, Fade through black/white, Dissolve, Wipe/Slide left/right.
+  Needs FFmpeg’s `xfade` filter — the app checks `ffmpeg -filters` and warns / falls back to hard cuts
+  (display time kept, transition time not added) if it is missing.
+- **Size:** Auto, 1920×1080 (default), 1920×1024, 1280×720, 1024×768, 800×600, 640×480. Images keep aspect
+  ratio (black bars). Smaller than the canvas: black border (default) or bicubic upscale.
+- **Encode:** libx264 CRF 18, preset medium, 30 fps, MP4; optional AAC audio.
+
+## Input / output folders
 Input and output folders are remembered at the app level (File › Settings), not in presets. On first run they
 default to the Windows Videos folder. Switching presets or File › New does not change them. Exporting a preset
 omits folder paths.
 
-## Audio bitrate (0.5.5)
+## Audio bitrate
 The audio bitrate row shows **Will encode: N kb/s**, then the 128 / 160 / 192 / 256 / 320 choices with the
 selected value highlighted, and a field for a custom rate.
 
