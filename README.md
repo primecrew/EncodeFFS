@@ -1,17 +1,26 @@
-# FFmpeg Encoder
+# FFmpeg Encoder (Codecs)
 
-Portable Windows GUI (Rust + egui) that replaces the PowerShell script v22.0.
-One `FFmpegEncoder.exe`, no installer, no runtime. Needs `ffmpeg.exe` + `ffprobe.exe`
-(the app can download them for you).
+Windows desktop app for everyday FFmpeg jobs, with optional **HEVC / AV1** video and **AC3** audio on top of the usual H.264/AAC defaults. The rest of the stable toolset is here too (re-encode, batch, join, remux, audio and subtitles, chapters, custom pipeline, frameserver). Pick a preset, choose files, preview the exact ffmpeg command, and run the job in a queue.
 
-> **Codecs edition (branch `codecs`, 0.5.4-codecs.1)** — an experimental side-by-side build:
-> `FFmpegEncoder-Codecs.exe`, window title “(Codecs)”, its own settings/presets/FFmpeg folders
-> (`%APPDATA%\FFmpegEncoder-Codecs`, `%LOCALAPPDATA%\FFmpegEncoder-Codecs`, portable
-> `FFmpegEncoder-Codecs.*.json`). It never writes the stable version's files; on the very first start it
-> copies the stable settings and presets in (read only). Portable zip only. See “Video & audio codecs”.
+This is the **Codecs** edition (`FFmpegEncoder-Codecs.exe`, version 0.5.5-codecs.1) on branch `codecs`. It keeps its own settings, presets and data folder (`FFmpegEncoder-Codecs`) so it can sit next to the stable build. On first start it can copy stable settings in (read only). It is not merged into the stable edition.
+
+**Requirements:** Windows 10 or 11 (64-bit). You need `ffmpeg.exe` and `ffprobe.exe` — use a copy you already have (for example `C:\ffmpeg\bin`), or let the app download a build for you. No extra runtime. HEVC and AV1 need an FFmpeg build that includes `libx265` and `libsvtav1`.
+
+**Install:** run the installer (`FFmpegEncoder-Codecs-<version>-setup.exe`) or unzip the portable package and run `FFmpegEncoder-Codecs.exe` from any folder (for example `C:\Apps\FFmpegEncoder-Codecs\`). Portable settings are stored next to the exe when that folder is writable; otherwise they go in `%APPDATA%\FFmpegEncoder-Codecs`.
+
+**Editions** (separate branches and exes; not mixed together):
+
+- **Stable** (`master`) — the supported build; installer and portable zip.
+- **Codecs** (`codecs`, this build) — optional HEVC/AV1 and AC3; installer and portable zip.
+- **Slideshow** (`slideshow`, experimental) — Create Slideshow; portable zip only.
+- **Experimental UI** (`ui-experimental`) — a retired UI-prototype branch; not developed further.
+
+**Accessibility:** System, Dark, Light, and High contrast themes; text size 75–300%; a visible keyboard focus ring; and screen-reader names through UI Automation (AccessKit). High contrast uses a black background, white text, and a yellow accent.
+
+Version history is in [CHANGELOG.md](CHANGELOG.md). Developer-facing notes are in [NOTES.md](NOTES.md). See **Video & audio codecs** below for this edition's extra options.
 
 ## Run
-1. Copy `FFmpegEncoder.exe` anywhere (e.g. `C:\Apps\FFmpegEncoder\`) and run it.
+1. Copy the exe anywhere (for example `C:\Apps\FFmpegEncoder\`) and run it.
 2. First start (and whenever no working ffmpeg/ffprobe is found) asks for the folder holding `ffmpeg.exe` and
    `ffprobe.exe` (Browse… and live validation; the parent of a `bin` folder is accepted too). It is not
    pre-filled with a machine-specific path. Secondary buttons: **Download newest FFmpeg** and **Skip for now**.
@@ -320,7 +329,6 @@ commands as 0.5.3 (`tests/h264_unchanged.rs`).
   Archive – HEVC 10-bit (game / camera footage) CRF 20 / 18 slow, Archive – AV1 10-bit (game / camera
   footage) CRF 28 / 26 preset 5 (grain off); audio AAC. Existing presets files get them on first load;
   your own presets are untouched (18 built-ins in total).
-## Job history (next release)
 ## Input / output folders (0.5.5-codecs.1)
 Input and output folders are remembered at the app level (File › Settings), not in presets. On first run they
 default to the Windows Videos folder. Switching presets or File › New does not change them. Exporting a preset
