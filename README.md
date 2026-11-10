@@ -1,11 +1,26 @@
 # FFmpeg Encoder
 
-Portable Windows GUI (Rust + egui) that replaces the PowerShell script v22.0.
-One `FFmpegEncoder.exe`, no installer, no runtime. Needs `ffmpeg.exe` + `ffprobe.exe`
-(the app can download them for you).
+Windows desktop app for everyday FFmpeg jobs: re-encode or batch-re-encode video, join/stitch clips, remux MKV to MP4, work with audio and subtitles, add chapters, make a video from a still image, run a custom pipeline, or feed an AviSynth frameserver script. Pick a preset, choose files, preview the exact ffmpeg command, and run the job in a queue.
+
+This is the **stable** edition (`FFmpegEncoder.exe`, version 0.5.5). Other editions live on their own branches and keep their own settings; they are not merged into this build.
+
+**Requirements:** Windows 10 or 11 (64-bit). You need `ffmpeg.exe` and `ffprobe.exe` — use a copy you already have (for example `C:\ffmpeg\bin`), or let the app download a build for you. No extra runtime.
+
+**Install:** run the installer (`FFmpegEncoder-<version>-setup.exe`) or unzip the portable package and run `FFmpegEncoder.exe` from any folder (for example `C:\Apps\FFmpegEncoder\`). Portable settings are stored next to the exe when that folder is writable; otherwise they go in `%APPDATA%\FFmpegEncoder`.
+
+**Editions** (separate branches and exes; not mixed together):
+
+- **Stable** (`master`) — the supported build; installer and portable zip.
+- **Codecs** (`codecs`, experimental) — the same tools plus optional HEVC/AV1 video and AC3 audio (`FFmpegEncoder-Codecs.exe`).
+- **Slideshow** (`slideshow`, experimental) — adds Create Slideshow, which turns still images into an H.264/AAC MP4. Portable zip only (`FFmpegEncoder-Slideshow.exe`).
+- **Experimental UI** (`ui-experimental`) — a retired UI-prototype branch; not developed further.
+
+**Accessibility:** System, Dark, Light, and High contrast themes; text size 75–300%; a visible keyboard focus ring; and screen-reader names through UI Automation (AccessKit). High contrast uses a black background, white text, and a yellow accent.
+
+Version history is in [CHANGELOG.md](CHANGELOG.md). Developer-facing notes are in [NOTES.md](NOTES.md).
 
 ## Run
-1. Copy `FFmpegEncoder.exe` anywhere (e.g. `C:\Apps\FFmpegEncoder\`) and run it.
+1. Copy the exe anywhere (for example `C:\Apps\FFmpegEncoder\`) and run it.
 2. First start (and whenever no working ffmpeg/ffprobe is found) asks for the folder holding `ffmpeg.exe` and
    `ffprobe.exe` (Browse… and live validation; the parent of a `bin` folder is accepted too). It is not
    pre-filled with a machine-specific path. Secondary buttons: **Download newest FFmpeg** and **Skip for now**.

@@ -1,4 +1,6 @@
-# Notes / changes vs PowerShell script v22.0
+# Developer notes
+
+Detailed implementation notes. The user-facing history is in [CHANGELOG.md](CHANGELOG.md).
 
 ## 0.5.5 — App-level input/output folders; clearer audio bitrate choice
 - **Input and output folders are app-level**, not part of a preset. Presets describe only *how* to
@@ -6,14 +8,14 @@
   switching presets, File › New, and restarts.
 - **First run** (no remembered folders): both default to the Windows Videos known folder
   (`FOLDERID_Videos` via `SHGetKnownFolderPath`; fallback `%USERPROFILE%\Videos` or `~/Videos`).
-  FFmpeg's path is empty so it is auto-located (no `C:\Apps\…` baked in). Built-in presets
+  FFmpeg's path is empty so it is auto-located (no machine-specific path baked in). Built-in presets
   still ship with `values: null`.
 - **Remembered picks**: whatever folder the user chooses is written to Settings (`input_folder` /
   `output_folder`) and reused until they change it. “Reset to script defaults” keeps the remembered
   folders and FFmpeg path.
 - **Migration**: if those Settings fields are empty, they are seeded once from the last-preset draft,
   then that preset's saved `out_dir` / `in_dir` / `src_dir`, then any other draft or preset, else
-  Videos. Existing non-empty values (including older `D:\Videos\Out` / `D:\Videos\Inbox…`) are left alone.
+  Videos. Existing non-empty values (folders already saved from an earlier version) are left alone.
   Saved preset files are not rewritten or deleted; folder keys in them are simply ignored going
   forward. Exporting a preset omits `out_dir`, `in_dir` and `src_dir`. Per-job output file name and
   suffix stay on the job.
@@ -382,8 +384,7 @@ Functional changes ported from the experimental branch (0.6.0-dev.2/dev.3); no U
   or restarting keeps the chosen file, and the file is carried to the next preset you open.
 - 0.1.x remembered values (`modes` in the settings file) are migrated once into the built-in presets.
 - Built-in types gained a **name suffix** field; Re-encode gained a **container** choice (auto = script behaviour).
-- First run, or no working ffmpeg/ffprobe: a dialog asks for the FFmpeg folder (pre-filled `C:\ffmpeg\bin`,
-  Browse, validation; the parent of `bin` also works), with Download newest FFmpeg / Skip for now. Help › Locate FFmpeg folder… reopens it.
+- First run, or no working ffmpeg/ffprobe: a dialog asks for the FFmpeg folder (Browse, validation; the parent of `bin` also works), with Download newest FFmpeg / Skip for now. Help › Locate FFmpeg folder… reopens it.
 - Custom pipeline details: video is mapped as `0:V?` (real video, not cover art); data streams are not mapped; attachments
   are kept only in Matroska; trim start is applied to the extra audio/subtitle inputs too (they're assumed aligned with the
   main file); a corrupt presets file is moved aside to `*.bad-<time>`, never overwritten.
@@ -423,7 +424,7 @@ Behaviour follows the script unless listed here. Each change fixes a bug or an i
 - Overwrite warnings are shown in the preview before anything runs.
 
 ## FFmpeg updater
-- Default install target is an app-managed folder, not your `C:\ffmpeg\bin`; in-place update needs a tick.
+- Default install target is an app-managed folder, not a copy of FFmpeg you installed yourself; in-place update needs a tick.
 - gyan.dev has no “release full” zip any more (404); Stable uses `ffmpeg-release-essentials.zip`, Latest uses
   `ffmpeg-git-essentials.7z` (7z support built in). Both verified against gyan's `.sha256`.
 - BtbN “Stable” = newest `ffmpeg-nX.Y-latest-win64-gpl-X.Y.zip` in the `latest` release; verified with GitHub's asset digest.
