@@ -96,7 +96,7 @@ pub enum Matrix {
 }
 
 impl Matrix {
-    pub const ALL: [Matrix; 6] = [Matrix::Rec709, Matrix::Rec601, Matrix::Pc709, Matrix::Pc601, Matrix::Rec2020, Matrix::Default];
+    pub const ALL: [Matrix; 6] = [Matrix::Pc709, Matrix::Rec709, Matrix::Rec601, Matrix::Pc601, Matrix::Rec2020, Matrix::Default];
     pub fn value(self) -> Option<&'static str> {
         match self {
             Matrix::Default => None,
@@ -110,13 +110,44 @@ impl Matrix {
     pub fn label(self) -> &'static str {
         match self {
             Matrix::Default => "Not set (AviSynth default, Rec601)",
-            Matrix::Rec709 => "Rec709 – HD and most editor projects (recommended)",
+            Matrix::Rec709 => "Rec709 – HD, squeeze to TV range (Vegas 32-bit full-range)",
             Matrix::Rec601 => "Rec601 – standard definition (DVD, 480/576 lines)",
-            Matrix::Pc709 => "PC.709 – HD, keep full range",
+            Matrix::Pc709 => "PC.709 – HD, keep full range (recommended for Vegas 8-bit)",
             Matrix::Pc601 => "PC.601 – SD, keep full range",
             Matrix::Rec2020 => "Rec2020 – UHD / HDR projects",
         }
     }
+    /// Rec709 / Rec601 / Rec2020 already convert to TV (limited) range in the script.
+    pub fn squeezes_to_tv(self) -> bool {
+        matches!(self, Matrix::Rec709 | Matrix::Rec601 | Matrix::Rec2020)
+    }
+    /// PC.709 / PC.601 keep the editor's full range.
+    pub fn keeps_full_range(self) -> bool {
+        matches!(self, Matrix::Pc709 | Matrix::Pc601)
+    }
+    /// FFmpeg colour-range / colour-space tags. `squeezed_to_tv` is set when a PC matrix
+    /// was then converted to TV range in FFmpeg (never when the script already squeezed).
+    pub fn color_tag_args(self, squeezed_to_tv: bool) -> Vec<String> {
+        let tags = |range: &str, space: &str, prim: &str, trc: &str| {
+            ["-color_range", range, "-colorspace", space, "-color_primaries", prim, "-color_trc", trc]
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
+        };
+        match (self, squeezed_to_tv) {
+            (Matrix::Rec709, _) | (Matrix::Pc709, true) => super::common::color_tag_args(),
+            (Matrix::Pc709, false) => tags("pc", "bt709", "bt709", "bt709"),
+            (Matrix::Rec601, _) | (Matrix::Pc601, true) => tags("tv", "smpte170m", "smpte170m", "smpte170m"),
+            (Matrix::Pc601, false) => tags("pc", "smpte170m", "smpte170m", "smpte170m"),
+            (Matrix::Rec2020, _) => tags("tv", "bt2020nc", "bt2020", "bt2020-10"),
+            (Matrix::Default, _) => vec![],
+        }
+    }
+}
+
+/// When a saved preset omitted `matrix`, the effective value used to be Rec709.
+pub fn missing_matrix() -> Matrix {
+    Matrix::Rec709
 }
 
 /// AviSource pixel_type (what the decompressor is asked to deliver).
@@ -205,7 +236,7 @@ impl ScriptOptions {
             pixel_type: PixelType::Auto,
             audio: AudioMode::Keep,
             color: Color::Yuv420,
-            matrix: Matrix::Rec709,
+            matrix: Matrix::Pc709,
             interlaced: false,
             trim: None,
             fps: None,
@@ -246,9 +277,6 @@ pub fn script(o: &ScriptOptions) -> Result<String, String> {
     let path = o.signpost.to_string_lossy().into_owned();
     if path.trim().is_empty() {
         return Err("Choose the signpost .avi file first.".into());
-    }
-    if o.bits == BitDepth::Ten && matches!(o.color, Color::Yv12 | Color::Rgb32) {
-        return Err(format!("10-bit can't be combined with {} (it is 8-bit only). Pick YUV420, YUV422, YUV444 or None.", o.color.function().unwrap_or("")));
     }
     let mut args = vec![quote(&path)?];
     args.push(format!("audio={}", if o.audio == AudioMode::None { "false" } else { "true" }));
@@ -296,6 +324,17 @@ pub fn script(o: &ScriptOptions) -> Result<String, String> {
     Ok(lines.join("\r\n") + "\r\n")
 }
 
+
+/// Unusual but still runnable script choices. Empty when the options are the safe defaults.
+pub fn script_warnings(o: &ScriptOptions) -> Vec<String> {
+    super::conflicts::messages(&super::conflicts::script_conflicts(o))
+}
+
+/// Unusual encode choices (range, tags, bit depth). These are warnings, not errors — the command is still built as requested.
+pub fn encode_choice_warnings(pr: &EncodeParams) -> Vec<String> {
+    super::conflicts::messages(&super::conflicts::encode_conflicts(pr))
+}
+
 /// Unique temporary script path in %TEMP%.
 pub fn temp_script_path() -> PathBuf {
     std::env::temp_dir().join(format!("{TEMP_PREFIX}{}.avs", crate::util::unique_id()))
@@ -318,8 +357,15 @@ pub struct EncodeParams {
     pub has_audio: bool,
     pub pix_fmt: String,
     pub resize: Option<(u32, u32)>,
-    /// Tag the output BT.709 (matrix Rec709 conversion to YUV).
+    /// Tag the output BT.709 (matrix Rec709 conversion to YUV). Kept so the historic
+    /// Rec709 command (tv + bt709 tags, no range filter) stays byte-identical.
     pub bt709_tags: bool,
+    /// Colour matrix used in the AviSynth script. Rec709/Rec601/Rec2020 already squeeze
+    /// to TV range in the script — a second full→TV filter is never applied.
+    pub matrix: Matrix,
+    /// When the script uses PC.709 / PC.601 (full range), optionally squeeze to TV range
+    /// in FFmpeg. Ignored for matrices that already squeeze in the script.
+    pub range_convert: bool,
     pub chapters: Option<(PathBuf, String)>,
     pub faststart: bool,
 }
@@ -348,18 +394,49 @@ pub fn build(pr: &EncodeParams) -> Result<BuiltCommand, String> {
     if pr.has_audio {
         a.push_all(["-map", "0:a:0?"]);
     }
-    let filter = pr.resize.map(|(w, h)| format!("scale={w}:{h}"));
-    let mut x = x264_args(&pr.video, filter.as_deref(), pr.bt709_tags);
+    let resize = pr.resize.map(|(w, h)| format!("scale={w}:{h}"));
+    // Honour range_convert even when the script already squeezed to TV range. That combo is
+    // unusual (washed-out picture) and is warned, not blocked or silently dropped.
+    warnings.extend(encode_choice_warnings(pr));
+    let squeezed = pr.range_convert;
+    let squeeze = squeezed.then(|| super::codecs::range_filter_pix(&pr.video, &pr.pix_fmt));
+    let filter = join_filters(&[resize, squeeze]);
+    // Historic Rec709 path: bt709_tags + video_args colour tags (tv / bt709), no extra filter.
+    // PC matrices get their own tags (pc, or tv after a squeeze). Rec601 / Rec2020 are tagged
+    // to match the script; they never take the historic bt709_tags shortcut.
+    // Rec601 / Rec2020 always use their own tags. Historic Rec709 uses bt709_tags (tv + bt709).
+    // If the user asks for those TV tags on an unsqueezed PC matrix, honour it and warn
+    // (do not silently retag as full range).
+    let classic_bt709 = pr.bt709_tags && !matches!(pr.matrix, Matrix::Rec601 | Matrix::Rec2020);
+    let extra_tags = if classic_bt709 {
+        vec![]
+    } else if pr.matrix.keeps_full_range() || pr.matrix == Matrix::Rec601 || pr.matrix == Matrix::Rec2020 {
+        pr.matrix.color_tag_args(squeezed)
+    } else {
+        vec![]
+    };
+    // Colour format + script bit depth decide -pix_fmt (may be 4:2:2 / 4:4:4, not only 4:2:0).
+    // That override is applied after video_args so a 10-bit codec is not later forced back to 8-bit,
+    // and an 8-bit script is not later forced up to 10-bit.
+    warnings.extend(super::codecs::check_video(&pr.video, &pr.output)?);
+    let mut x = super::codecs::video_args(&pr.video, filter.as_deref(), classic_bt709, &pr.output);
+    if !extra_tags.is_empty() {
+        x.extend(extra_tags);
+    }
     if let Some(i) = x.iter().position(|s| s == "-pix_fmt") {
         x[i + 1] = pr.pix_fmt.clone();
+    } else {
+        x.push("-pix_fmt".into());
+        x.push(pr.pix_fmt.clone());
     }
     a.extend(x);
     if pr.pix_fmt != "yuv420p" {
         warnings.push(format!("Pixel format {}: fine for archiving, but many TVs, phones and browsers only play 8-bit 4:2:0 (yuv420p).", pr.pix_fmt));
     }
     if pr.has_audio {
-        a.extend(pr.audio.aac_args());
-        if let Some(chain) = pr.audio.filter_chain() {
+        warnings.extend(super::codecs::check_audio(&pr.audio, &pr.output)?);
+        a.extend(super::codecs::audio_args(&pr.audio));
+        if let Some(chain) = pr.audio.filter_chain().filter(|_| pr.audio.codec != super::codecs::AudioCodec::Copy) {
             a.push_all(["-filter:a".to_string(), chain]);
         }
     } else {
@@ -408,14 +485,15 @@ mod tests {
     }
 
     #[test]
-    fn default_script_is_yuv420_rec709() {
-        let o = ScriptOptions::new(r"C:\Users\alex\Documents\clip.avi");
+    fn default_script_is_yuv420_pc709() {
+        let o = ScriptOptions::new(r"C:\Users\you\Documents\clip.avi");
         assert_eq!(o.color, Color::Yuv420);
+        assert_eq!(o.matrix, Matrix::Pc709);
         assert_eq!(Color::default(), Color::Yuv420);
         let s = script(&o).unwrap();
         assert!(s.ends_with("\r\n") && !s.starts_with('\u{feff}'));
         assert!(!s.contains('\n') || s.matches('\n').count() == s.matches("\r\n").count(), "CRLF only");
-        assert_eq!(lines(&s), [r#"AviSource("C:\Users\alex\Documents\clip.avi", audio=true)"#, r#"ConvertToYUV420(matrix="Rec709")"#]);
+        assert_eq!(lines(&s), [r#"AviSource("C:\Users\you\Documents\clip.avi", audio=true)"#, r#"ConvertToYUV420(matrix="PC.709")"#]);
     }
 
     #[test]
@@ -474,7 +552,9 @@ mod tests {
             o.matrix = Matrix::Default;
             assert_eq!(lines(&script(&o).unwrap())[1], format!("{}()", c.function().unwrap()));
             o.bits = BitDepth::Ten;
-            assert!(script(&o).is_err(), "{c:?} is 8-bit only");
+            let s = script(&o).unwrap();
+            assert!(s.contains("ConvertBits(10)"), "{c:?} still writes ConvertBits: {s}");
+            assert!(script_warnings(&o).iter().any(|w| w.contains("8-bit") && w.contains("still run")), "{c:?} {:?}", script_warnings(&o));
         }
         // bad trims / fps
         let mut o = ScriptOptions::new(r"C:\a.avi");
@@ -502,6 +582,8 @@ mod tests {
             pix_fmt: "yuv420p".into(),
             resize: None,
             bt709_tags: false,
+            matrix: Matrix::Rec709,
+            range_convert: false,
             chapters: None,
             faststart: true,
         }
@@ -553,6 +635,140 @@ mod tests {
         assert!(build(&pr).is_err());
         pr.script_text = "FFVideoSource(\"x.mkv\")".into();
         assert!(build(&pr).is_ok(), "any *Source( line is accepted");
+    }
+
+    #[test]
+    fn hevc_and_av1_from_avs_keep_pix_fmt() {
+        use super::super::codecs::VideoCodec;
+        let mut pr = enc();
+        pr.video.codec = VideoCodec::Hevc;
+        pr.video.crf = 20;
+        pr.video.ten_bit = false;
+        pr.pix_fmt = "yuv420p".into();
+        let s = build(&pr).unwrap().args.join(" ");
+        assert!(s.contains("-c:v libx265 -crf 20 -preset slow -pix_fmt yuv420p"), "{s}");
+        assert!(s.contains("-x265-params log-level=error -tag:v hvc1"), "{s}");
+        assert!(s.contains("-c:a aac -b:a 192k"), "{s}");
+        assert!(!s.contains("-c:v libx264"), "{s}");
+        // 10-bit HEVC: script pix_fmt wins and must not be forced back to 8-bit
+        pr.video.ten_bit = true;
+        pr.pix_fmt = Color::Yuv420.pix_fmt(BitDepth::Ten);
+        let b = build(&pr).unwrap();
+        let s = b.args.join(" ");
+        assert!(s.contains("-pix_fmt yuv420p10le"), "{s}");
+        assert!(!b.args.windows(2).any(|w| w == ["-pix_fmt", "yuv420p"]), "{s}");
+        assert!(b.warnings.iter().any(|w| w.contains("yuv420p10le") || w.contains("Chrome")), "{:?}", b.warnings);
+
+        let mut pr = enc();
+        pr.video.codec = VideoCodec::Av1;
+        pr.video.crf = 28;
+        pr.video.svt_preset = 5;
+        pr.video.ten_bit = false;
+        pr.pix_fmt = "yuv420p".into();
+        pr.output = PathBuf::from(r"C:\out\a_frameserved.mkv");
+        pr.faststart = false;
+        let s = build(&pr).unwrap().args.join(" ");
+        assert!(s.contains("-c:v libsvtav1 -crf 28 -preset 5 -pix_fmt yuv420p"), "{s}");
+        assert!(s.contains("-c:a aac -b:a 192k"), "{s}");
+        assert!(!s.contains("-tag:v"), "{s}");
+        pr.video.ten_bit = true;
+        pr.pix_fmt = Color::Yuv422.pix_fmt(BitDepth::Ten);
+        let b = build(&pr).unwrap();
+        let s = b.args.join(" ");
+        assert!(s.contains("-pix_fmt yuv422p10le"), "{s}");
+        assert!(!b.args.windows(2).any(|w| w == ["-pix_fmt", "yuv420p"] || w == ["-pix_fmt", "yuv420p10le"]), "{s}");
+    }
+
+    #[test]
+    fn no_double_range_squeeze_and_pc_tags() {
+        use super::super::codecs::VideoCodec;
+        // Rec709 already squeezes in the script: default is no second squeeze
+        let mut pr = enc();
+        pr.bt709_tags = true;
+        pr.matrix = Matrix::Rec709;
+        pr.range_convert = false;
+        pr.pix_fmt = "yuv420p".into();
+        let b = build(&pr).unwrap();
+        let s = b.args.join(" ");
+        assert!(s.contains("-color_range tv -colorspace bt709"), "{s}");
+        assert!(!s.contains("in_range=full"), "{s}");
+        assert!(encode_choice_warnings(&pr).is_empty());
+
+        // User override: Rec709 + range_convert still builds (double squeeze) and warns, does not block
+        pr.range_convert = true;
+        let b = build(&pr).unwrap();
+        let s = b.args.join(" ");
+        assert!(s.contains("scale=in_range=full:out_range=tv"), "{s}");
+        assert!(s.contains("-color_range tv -colorspace bt709"), "{s}");
+        assert!(b.warnings.iter().any(|w| w.contains("washed out")), "{:?}", b.warnings);
+
+        // Rec601 / Rec2020: tag TV range; no second squeeze unless the user asked
+        pr.range_convert = false;
+        pr.bt709_tags = false;
+        pr.matrix = Matrix::Rec601;
+        let s = build(&pr).unwrap().args.join(" ");
+        assert!(s.contains("-color_range tv -colorspace smpte170m"), "{s}");
+        assert!(!s.contains("in_range=full"), "{s}");
+        pr.matrix = Matrix::Rec2020;
+        let s = build(&pr).unwrap().args.join(" ");
+        assert!(s.contains("-color_range tv -colorspace bt2020nc"), "{s}");
+        assert!(!s.contains("in_range=full"), "{s}");
+
+        // PC.709 without convert: tag full range, never as tv
+        pr.matrix = Matrix::Pc709;
+        pr.range_convert = false;
+        let b = build(&pr).unwrap();
+        let s = b.args.join(" ");
+        assert!(s.contains("-color_range pc -colorspace bt709"), "{s}");
+        assert!(!s.contains("-color_range tv"), "{s}");
+        assert!(!s.contains("in_range=full"), "{s}");
+
+        // PC.709 + convert: one squeeze, then TV tags (not pc)
+        pr.range_convert = true;
+        let s = build(&pr).unwrap().args.join(" ");
+        assert!(s.contains("scale=in_range=full:out_range=tv"), "{s}");
+        assert!(s.contains("-color_range tv -colorspace bt709"), "{s}");
+        assert!(!s.contains("-color_range pc"), "{s}");
+
+        // 10-bit HEVC + PC.709 convert: squeeze and 10-bit format in one step; -pix_fmt stays 10-bit
+        pr.video.codec = VideoCodec::Hevc;
+        pr.video.crf = 20;
+        pr.video.ten_bit = true;
+        pr.pix_fmt = Color::Yuv420.pix_fmt(BitDepth::Ten);
+        let b = build(&pr).unwrap();
+        let s = b.args.join(" ");
+        assert!(s.contains("scale=in_range=full:out_range=tv,format=yuv420p10le"), "{s}");
+        assert!(b.args.windows(2).any(|w| w == ["-pix_fmt", "yuv420p10le"]), "{s}");
+        assert!(!b.args.windows(2).any(|w| w == ["-pix_fmt", "yuv420p"]), "{s}");
+
+        // 10-bit Rec709 (ConvertBits in the script), no extra squeeze: pix_fmt stays 10-bit
+        pr.matrix = Matrix::Rec709;
+        pr.range_convert = false;
+        pr.bt709_tags = true;
+        let b = build(&pr).unwrap();
+        let s = b.args.join(" ");
+        assert!(!s.contains("in_range=full"), "{s}");
+        assert!(b.args.windows(2).any(|w| w == ["-pix_fmt", "yuv420p10le"]), "{s}");
+        assert!(s.contains("-color_range tv -colorspace bt709"), "{s}");
+
+        // HEVC 10-bit ticked, 8-bit script: warn, still 8-bit pix_fmt, encode runs
+        pr.video.ten_bit = true;
+        pr.pix_fmt = "yuv420p".into();
+        let b = build(&pr).unwrap();
+        assert!(b.args.windows(2).any(|w| w == ["-pix_fmt", "yuv420p"]));
+        assert!(b.warnings.iter().any(|w| w.contains("script bit depth is 8-bit")), "{:?}", b.warnings);
+
+        // PC.709 + TV tags without a squeeze: warn about wrong tags, encode still runs, tags are as requested
+        let mut pr = enc();
+        pr.matrix = Matrix::Pc709;
+        pr.range_convert = false;
+        pr.bt709_tags = true;
+        let b = build(&pr).unwrap();
+        assert!(b.warnings.iter().any(|w| w.contains("crush the blacks") || w.contains("full-range picture")), "{:?}", b.warnings);
+        // Honour the requested TV tags (the unusual combo) rather than silently retagging as pc
+        let s = b.args.join(" ");
+        assert!(s.contains("-color_range tv"), "{s}");
+        assert!(!s.contains("-color_range pc"), "{s}");
     }
 
     #[test]

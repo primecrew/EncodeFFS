@@ -1,18 +1,14 @@
 # FFmpeg Encoder
 
-Windows desktop app for everyday FFmpeg jobs: re-encode or batch-re-encode video, join/stitch clips, remux MKV to MP4, work with audio and subtitles, add chapters, make a video from a still image, run a custom pipeline, feed an AviSynth frameserver script, or **create a slideshow** from still images (H.264/AAC MP4 with optional audio and crossfades). Pick a preset, choose files, preview the exact ffmpeg command, and run the job in a queue.
+Windows desktop app for everyday FFmpeg jobs: re-encode or batch-re-encode video, join/stitch clips, remux MKV to MP4, work with audio and subtitles, add chapters, make a video from a still image, run a custom pipeline, feed an AviSynth frameserver script, or **create a slideshow** from still images (H.264/AAC MP4 with optional audio and crossfades). Optional **HEVC / AV1** video and **AC3** audio sit on top of the usual H.264/AAC defaults. Pick a preset, choose files, preview the exact ffmpeg command, and run the job in a queue.
 
-This is the **stable** edition (`FFmpegEncoder.exe`, version 0.6.0-rc.1). Create Slideshow is included as a built-in preset. The old standalone Slideshow branch is archived and is not a separate app any more.
+This is the **stable** edition (`FFmpegEncoder.exe`). Create Slideshow is included as a built-in preset. Optional HEVC, AV1 and AC3 from the former Codecs edition are included too; H.264 + AAC remains the default. The old standalone Slideshow and Codecs editions are not separate apps any more.
 
 **Requirements:** Windows 10 or 11 (64-bit). You need `ffmpeg.exe` and `ffprobe.exe` — use a copy you already have (for example `C:\ffmpeg\bin`), or let the app download a build for you. No extra runtime.
 
 **Install:** run the installer (`FFmpegEncoder-<version>-setup.exe`) or unzip the portable package and run `FFmpegEncoder.exe` from any folder (for example `C:\Apps\FFmpegEncoder\`). Portable settings are stored next to the exe when that folder is writable; otherwise they go in `%APPDATA%\FFmpegEncoder`.
 
-**Other branches** (separate exes, not mixed into this build):
-
-- **Codecs** (`codecs`, experimental) — the same tools plus optional HEVC/AV1 video and AC3 audio (`FFmpegEncoder-Codecs.exe`).
-- **Slideshow** (`slideshow`) — archived earlier Slideshow-only edition; use this stable build instead.
-- **Experimental UI** (`ui-experimental`) — a retired UI-prototype branch; not developed further.
+**Other branches:** the old standalone **Slideshow** and **Codecs** editions are archived (`archive/slideshow`, and `archive/codecs` once tagged). Use this stable build instead. The retired **Experimental UI** branch (`ui-experimental`) is not developed further.
 
 **Accessibility:** System, Dark, Light, and High contrast themes; text size 75–300%; a visible keyboard focus ring; and screen-reader names through UI Automation (AccessKit). High contrast uses a black background, white text, and a yellow accent.
 
@@ -323,14 +319,74 @@ Re-encode, Custom pipeline (single file and folder batch) and Batch re-encode ca
   ratio (black bars). Smaller than the canvas: black border (default) or bicubic upscale.
 - **Encode:** libx264 CRF 18, preset medium, 30 fps, MP4; optional AAC audio.
 
+## Video & audio codecs
+H.264 (libx264) + AAC stays the default everywhere; the existing presets produce byte-for-byte the same
+commands as 0.5.3 (`tests/h264_unchanged.rs`).
+- **Video codec** (Re-encode, Batch re-encode, Custom pipeline video step, Join re-encode):
+  - **H.264 (libx264)** — default, plays everywhere.
+  - **HEVC / H.265 (libx265)** — CRF (20 game / 18 camera), Speed ultrafast…placebo (slow), tunes grain /
+    animation / fastdecode / zerolatency, 10-bit (yuv420p10le), `-tag:v hvc1` in MP4/MOV (Apple players),
+    `-x265-params log-level=error`.
+  - **AV1 (SVT-AV1)** — CRF 0–63 (28 game / 26 camera), Speed drop-down of useful values (default 5) plus
+    Custom… (0–13), 10-bit, optional film grain (`-svtav1-params film-grain=N:film-grain-denoise=0|1`).
+    Denoise first is off by default and disabled when film grain is 0.
+  - CRF values are not comparable across codecs. Hover the codec or CRF note for the full comparison.
+  - Containers: MKV/MP4 OK for all; AV1 in MOV gets a caution; invalid combinations are refused with a
+    plain message.
+  - Codecs the FFmpeg build lacks (checked with `ffmpeg -encoders`, cached per FFmpeg path) are disabled
+    with an explanation.
+  - Warnings: HEVC/AV1 don't play in every browser; an 8-bit source with 10-bit on (fine, explains why).
+- **Audio**: AAC (default), AC3 (up to 5.1; more channels are downmixed to 5.1),
+  or Keep original (stream copy; not for Join). Bitrate is a drop-down of typical rates plus Custom….
+- **Presets**: four read-only built-ins in the **Experimental codecs** folder at the bottom of **Default Presets**:
+  Archive – HEVC 10-bit (game / camera footage) CRF 20 / 18 slow, Archive – AV1 10-bit (game / camera
+  footage) CRF 28 / 26 speed 5 (grain off); audio AAC. Existing presets files get them on first load;
+  your own presets are untouched (18 built-ins in total).
+  For when to pick H.264, HEVC or AV1, and a way to choose a CRF, see **Choosing a codec**.
+
+## Choosing a codec
+These figures are approximate and vary a lot by content. The only reliable check is a short test on the screen you will actually watch.
+
+- **H.264** (2003, ITU/MPEG; this app uses x264) plays almost everywhere and encodes quickly. The file is usually the largest of the three.
+- **HEVC** (H.265, 2013, same standards bodies; this app uses x265) is often about 30–50% smaller than H.264 at a similar look. Most recent TVs and phones can play it. Patent licensing around HEVC is messy, which is one reason some browsers and platforms prefer something else.
+- **AV1** (2018, Alliance for Open Media; royalty-free; this app uses SVT-AV1 from Intel/Netflix) is often about 20–30% smaller than HEVC at a similar look, but it takes longer to encode and needs newer hardware to decode smoothly — for example an NVIDIA RTX 30-series or later, Intel Arc or 11th-generation Core, AMD RX 6000 or later, or a recent TV or phone. You also need an FFmpeg build with `libsvtav1` (BtbN GPL builds include it; **Help › Check for FFmpeg updates…** can download one).
+
+“Better” here means fewer bits for the same look, as measured in viewing tests and scores such as VMAF. A newer codec does not automatically win.
+
+**When to use which.** H.264 if it has to play on almost anything, or you want a fast encode. HEVC if you want a smaller file and the players you care about already handle it. AV1 if you want the smallest file, can wait for the encode, and the playback devices are recent enough.
+
+**CRF, not a target size.** You pick a quality (CRF); the encoder spends whatever bits it needs. A lower CRF is higher quality and a larger file. The number scales differ between encoders: the same CRF on H.264, HEVC and AV1 is not the same quality.
+
+Rough starting points for 1080p gameplay (try a clip and adjust):
+
+- H.264: CRF 18–20, preset slow.
+- AV1: CRF 28–32, Speed 4–6, film grain 0. 10-bit often helps dark scenes.
+
+**A short test.** Cut 1–2 minutes with motion and dark scenes. Encode an H.264 CRF 18 reference, then AV1 at CRF 28, 32 and 35 (Speed 5, 10-bit). Watch them on the real screen, not a tiny preview, and pick the highest AV1 CRF you cannot tell apart from the reference. That is the one that saves the most space without a difference you can see.
+
+Film grain is mainly for camera footage that already has grain; leave it off for typical game recordings.
+
+**Frameserving and audio.** When an editor such as Vegas serves the timeline, the audio arrives as PCM, so there is no compressed-audio passthrough — you get one lossy encode. If the result is quiet, raise levels in the editor, or use this app's pre-gain, then the compressor, then make-up gain.
+
+For colour range and Vegas levels, see **Colour range and Vegas frameserving**.
+
+## Colour range and Vegas frameserving
+These notes are approximate. The only reliable check is a dark scene on the screen you will actually watch. Grey, milky blacks usually mean the picture was squeezed from full (PC) range to TV (limited) range twice.
+
+**OBS and other captures.** The compatible tagged choice is NV12, Rec.709, Limited (TV) range. For a direct encode in this app, leave **Convert full-range to limited-range** off. If the file is already tagged as TV range and that conversion is on, a warning offers a one-click fix that turns the conversion off, or you can run as set. If the file has no range tag, there is no warning — only a short note on the Colour range hover.
+
+**Vegas frameserving.** An 8-bit Vegas project usually passes video levels through unchanged, so the script should use **PC.709** (keeps full range). That is now the Frameserver default, and is marked recommended for Vegas 8-bit. A 32-bit full-range Vegas project should use **Rec709**, which squeezes to TV range in the script. Saved presets keep the matrix they stored; older files that omitted the field still load as Rec709. Check a dark scene; grey blacks often mean the levels were squeezed twice. ffprobe shows `color_range`, `color_space`, `color_primaries` and `color_transfer` when the file has them.
+
+
 ## Input / output folders
 Input and output folders are remembered at the app level (File › Settings), not in presets. On first run they
 default to the Windows Videos folder. Switching presets or File › New does not change them. Exporting a preset
 omits folder paths.
 
 ## Audio bitrate
-The audio bitrate row shows **Will encode: N kb/s**, then the 128 / 160 / 192 / 256 / 320 choices with the
-selected value highlighted, and a field for a custom rate.
+The audio bitrate row shows **Will encode: N kb/s**, then a drop-down of typical rates for the selected
+codec (AAC: 96, 128, 160, 192, 256, 320; AC3: 192, 256, 384, 448, 640) and **Custom…** to type another
+value.
 
 ## File › New (0.5.4)
 **File › New** (Ctrl+N) starts a new job with the selected preset: the form goes back to the preset's settings

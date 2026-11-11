@@ -30,6 +30,8 @@ pub struct Ctx<'a> {
     pub egui: &'a egui::Context,
     /// Cached from `ffmpeg -filters` (None = not checked yet).
     pub has_xfade: Option<bool>,
+    /// Optional encoders of the current FFmpeg (None until it has been checked).
+    pub encoders: Option<ffenc::cmd::codecs::Encoders>,
 }
 
 /// Jobs to preview and queue.
@@ -59,6 +61,12 @@ pub trait Mode {
     fn ui(&mut self, ui: &mut egui::Ui, cx: &Ctx);
     /// Validate and build the jobs.
     fn build(&mut self, cx: &Ctx) -> Result<Plan, String>;
+    /// Unusual setting combinations that warn but still run. Default: none.
+    fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {
+        vec![]
+    }
+    /// Apply one one-click fix from a warning. Default: no-op.
+    fn apply_conflict_fix(&mut self, _kind: ffenc::cmd::conflicts::ConflictKind) {}
     /// Whether drops should keep folders as folders (folder-based presets).
     /// Otherwise the window expands each dropped folder into its files first.
     fn wants_folders(&self) -> bool {
@@ -70,6 +78,56 @@ pub trait Mode {
     fn save(&self) -> serde_json::Value;
     /// Restore remembered values (`Null` = start from the settings defaults).
     fn load(&mut self, v: &serde_json::Value, s: &Settings);
+}
+
+/// Conflict-check fields shared by Re-encode, Batch, Join and Custom.
+pub fn media_choices(
+    video: &ffenc::cmd::common::VideoEncode,
+    audio: &ffenc::cmd::common::AudioEncode,
+    container: &str,
+    out_name: &str,
+    last_auto: &str,
+    output: PathBuf,
+    range_convert: bool,
+    source_range: Option<ffenc::cmd::common::ColorRange>,
+) -> ffenc::cmd::conflicts::Choices {
+    ffenc::cmd::conflicts::Choices {
+        video: video.clone(),
+        audio: audio.clone(),
+        container: container.to_string(),
+        out_name: out_name.to_string(),
+        last_auto: last_auto.to_string(),
+        output,
+        bits: ffenc::cmd::conflicts::script_bit_depth(video),
+        bt709_tags: false,
+        range_convert,
+        source_range,
+        uses_script_matrix: false,
+        ..Default::default()
+    }
+}
+
+pub fn apply_media_fix(
+    kind: ffenc::cmd::conflicts::ConflictKind,
+    video: &mut ffenc::cmd::common::VideoEncode,
+    audio: &mut ffenc::cmd::common::AudioEncode,
+    container: &mut String,
+    out_name: &mut String,
+    last_auto: &mut String,
+    output: PathBuf,
+    range_convert: Option<&mut bool>,
+) {
+    let current_range = range_convert.as_deref().copied().unwrap_or(false);
+    let mut c = media_choices(video, audio, container, out_name, last_auto, output, current_range, None);
+    ffenc::cmd::conflicts::apply(&mut c, kind);
+    *video = c.video;
+    *audio = c.audio;
+    *container = c.container;
+    *out_name = c.out_name;
+    *last_auto = c.last_auto;
+    if let Some(r) = range_convert {
+        *r = c.range_convert;
+    }
 }
 
 /// Deserialize remembered state or fall back to `default`.
@@ -121,5 +179,6 @@ pub fn default_audio(s: &Settings) -> ffenc::cmd::common::AudioEncode {
         gain_db: s.gain_db,
         compressor: ffenc::cmd::common::CompressorPreset::None,
         advanced: s.compressor,
+        ..Default::default()
     }
 }

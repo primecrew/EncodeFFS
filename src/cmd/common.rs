@@ -19,6 +19,26 @@ pub const RANGE_FILTER: &str = "scale=in_range=full:out_range=tv";
 /// bwdif double-rate deinterlace used by the script.
 pub const DEINTERLACE_FILTER: &str = "bwdif=mode=send_field:parity=auto:deint=interlaced";
 
+/// Colour range tagged on a source file (ffprobe `color_range`), when known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorRange {
+    /// TV / mpeg / limited.
+    Limited,
+    /// PC / jpeg / full.
+    Full,
+}
+
+impl ColorRange {
+    /// Parse an ffprobe `color_range` value. Unknown, unspecified, or empty is `None`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "tv" | "mpeg" | "limited" | "1" => Some(Self::Limited),
+            "pc" | "jpeg" | "full" | "2" => Some(Self::Full),
+            _ => None,
+        }
+    }
+}
+
 /// BT.709 limited-range tags (script: Get-ColorRangeMetadataArgs).
 pub fn color_tag_args() -> Vec<String> {
     ["-color_range", "tv", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]
@@ -67,6 +87,15 @@ pub struct VideoEncode {
     pub preset: String,
     /// None = no -tune.
     pub tune: Option<String>,
+    /// Codec (codecs branch). Missing in older presets = H.264, so they build the same command.
+    pub codec: super::codecs::VideoCodec,
+    /// HEVC/AV1: write 10-bit (yuv420p10le). Ignored for H.264.
+    pub ten_bit: bool,
+    /// AV1 (SVT-AV1) preset 0–13.
+    pub svt_preset: u32,
+    /// AV1 film grain synthesis 0 (off) – 50.
+    pub film_grain: u32,
+    pub film_grain_denoise: bool,
     /// Output frame rate ("" = same as source, the default). A positive number ("5", "29.97") or a
     /// fraction ("30000/1001"). Added as the `fps` filter at the end of the video filter chain, so
     /// FFmpeg drops or duplicates frames: duration, audio and sync stay the same (no speed change).
@@ -74,7 +103,7 @@ pub struct VideoEncode {
 }
 impl Default for VideoEncode {
     fn default() -> Self {
-        VideoEncode { crf: 22, preset: "slow".into(), tune: None, output_fps: String::new() }
+        VideoEncode { crf: 22, preset: "slow".into(), tune: None, codec: Default::default(), ten_bit: true, svt_preset: 5, film_grain: 0, film_grain_denoise: false, output_fps: String::new() }
     }
 }
 
@@ -168,7 +197,7 @@ impl CompressorPreset {
             CompressorPreset::Light => "light",
             CompressorPreset::Medium => "medium",
             CompressorPreset::Strong => "strong",
-            CompressorPreset::Advanced => "advanced",
+            CompressorPreset::Advanced => "advanced…",
         }
     }
     pub fn help(self) -> &'static str {
@@ -177,7 +206,7 @@ impl CompressorPreset {
             CompressorPreset::Light => "gentle control for a small boost",
             CompressorPreset::Medium => "balanced default for most speech and mixed content",
             CompressorPreset::Strong => "firmer peak control when pushing audio harder",
-            CompressorPreset::Advanced => "enter threshold, ratio, knee, makeup, attack, release",
+            CompressorPreset::Advanced => "set ratio, threshold, attack, release and make-up gain below",
         }
     }
 }
@@ -262,10 +291,17 @@ pub struct AudioEncode {
     pub compressor: CompressorPreset,
     /// Used when `compressor == Advanced`.
     pub advanced: CompressorParams,
+    /// Codec (codecs branch). Missing in older presets = AAC.
+    pub codec: super::codecs::AudioCodec,
+    /// AC3 bitrate (kbps).
+    pub ac3_bitrate_k: u32,
+    /// Most channels in any source audio track (from ffprobe; not saved). AC3 downmixes > 5.1.
+    #[serde(skip)]
+    pub source_channels: Option<u32>,
 }
 impl Default for AudioEncode {
     fn default() -> Self {
-        AudioEncode { bitrate_k: 192, gain_db: 0.0, compressor: CompressorPreset::None, advanced: CompressorParams::default() }
+        AudioEncode { bitrate_k: 192, gain_db: 0.0, compressor: CompressorPreset::None, advanced: CompressorParams::default(), codec: Default::default(), ac3_bitrate_k: 448, source_channels: None }
     }
 }
 
@@ -360,9 +396,30 @@ pub fn faststart_args() -> Vec<String> {
     vec!["-movflags".into(), "+faststart".into()]
 }
 
+/// When a saved preset omitted `faststart`, those modes used to default to on. New jobs default to off.
+pub fn missing_faststart() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn color_range_parse() {
+        assert_eq!(ColorRange::parse("tv"), Some(ColorRange::Limited));
+        assert_eq!(ColorRange::parse("MPEG"), Some(ColorRange::Limited));
+        assert_eq!(ColorRange::parse("limited"), Some(ColorRange::Limited));
+        assert_eq!(ColorRange::parse("1"), Some(ColorRange::Limited));
+        assert_eq!(ColorRange::parse("pc"), Some(ColorRange::Full));
+        assert_eq!(ColorRange::parse("JPEG"), Some(ColorRange::Full));
+        assert_eq!(ColorRange::parse("full"), Some(ColorRange::Full));
+        assert_eq!(ColorRange::parse("2"), Some(ColorRange::Full));
+        assert_eq!(ColorRange::parse("unknown"), None);
+        assert_eq!(ColorRange::parse("unspecified"), None);
+        assert_eq!(ColorRange::parse(""), None);
+        assert_eq!(ColorRange::parse("n/a"), None);
+    }
 
     #[test]
     fn compressor_presets_match_script() {

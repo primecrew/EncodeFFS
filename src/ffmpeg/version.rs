@@ -157,6 +157,8 @@ pub struct FfmpegCheck {
     pub has_aac: bool,
     /// True when `ffmpeg -filters` lists the xfade filter (needed for crossfades).
     pub has_xfade: bool,
+    /// Optional encoders (codecs branch), from the same `ffmpeg -encoders` run (cached per check).
+    pub encoders: crate::cmd::codecs::Encoders,
 }
 
 /// Run `ffmpeg -version` and `ffmpeg -encoders`.
@@ -182,6 +184,7 @@ pub fn check_ffmpeg(ffmpeg: &Path) -> Result<FfmpegCheck, String> {
         has_libx264: has_encoder(&enc, "libx264"),
         has_aac: has_encoder(&enc, "aac"),
         has_xfade: has_filter(&filters, "xfade"),
+        encoders: crate::cmd::codecs::Encoders::from_list(&enc),
     })
 }
 

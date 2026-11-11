@@ -109,9 +109,10 @@ pub fn build(pr: &ReencodeParams) -> Result<BuiltCommand, String> {
         let filter = join_filters(&[
             pr.deinterlace.then(|| DEINTERLACE_FILTER.to_string()),
             resize,
-            pr.range_convert.then(|| RANGE_FILTER.to_string()),
+            pr.range_convert.then(|| super::codecs::range_filter(&pr.video)),
         ]);
-        a.extend(x264_args(&pr.video, filter.as_deref(), pr.range_convert));
+        warnings.extend(super::codecs::check_video(&pr.video, &pr.output)?);
+        a.extend(super::codecs::video_args(&pr.video, filter.as_deref(), pr.range_convert, &pr.output));
     } else {
         a.push_all(["-c:v", "copy"]);
         if pr.deinterlace {
@@ -127,11 +128,12 @@ pub fn build(pr: &ReencodeParams) -> Result<BuiltCommand, String> {
 
     // ---- audio
     if pr.passthrough.encodes_audio() {
-        a.extend(pr.audio.aac_args());
+        warnings.extend(super::codecs::check_audio(&pr.audio, &pr.output)?);
+        a.extend(super::codecs::audio_args(&pr.audio));
         // A plain -filter:a creates one simple filtergraph per output audio stream,
         // so every audio track gets the gain/compressor while keeping its order,
         // language/title tags and dispositions (no filter_complex needed).
-        if let Some(chain) = pr.audio.filter_chain() {
+        if let Some(chain) = pr.audio.filter_chain().filter(|_| pr.audio.codec != super::codecs::AudioCodec::Copy) {
             a.push_all(["-filter:a".to_string(), chain]);
         }
     } else {
@@ -321,5 +323,37 @@ mod tests {
     fn default_ext() {
         assert_eq!(default_output_ext(std::path::Path::new("a.MKV")), "mkv");
         assert_eq!(default_output_ext(std::path::Path::new("a.avi")), "mp4");
+    }
+
+    #[test]
+    fn ten_bit_hevc_range_squeeze_is_one_scale_step() {
+        use super::super::codecs::VideoCodec;
+        // H.264 + range convert: historic filter, byte-identical
+        let mut pr = base();
+        pr.range_convert = true;
+        pr.deinterlace = true;
+        pr.resize = Some((1280, 720));
+        let b = build(&pr).unwrap();
+        let i = b.args.iter().position(|x| x == "-vf").unwrap();
+        assert_eq!(b.args[i + 1], format!("{DEINTERLACE_FILTER},scale=1280:720,{RANGE_FILTER}"));
+        assert!(b.args.windows(2).any(|w| w == ["-pix_fmt", "yuv420p"]));
+
+        // HEVC 8-bit + range: still the historic RANGE_FILTER, 8-bit pix_fmt
+        pr.video.codec = VideoCodec::Hevc;
+        pr.video.crf = 20;
+        pr.video.ten_bit = false;
+        let b = build(&pr).unwrap();
+        let i = b.args.iter().position(|x| x == "-vf").unwrap();
+        assert_eq!(b.args[i + 1], format!("{DEINTERLACE_FILTER},scale=1280:720,{RANGE_FILTER}"));
+        assert!(b.args.windows(2).any(|w| w == ["-pix_fmt", "yuv420p"]));
+        assert!(!b.args[i + 1].contains("format="));
+
+        // HEVC 10-bit + range: squeeze and 10-bit format in one step; -pix_fmt kept
+        pr.video.ten_bit = true;
+        let b = build(&pr).unwrap();
+        let i = b.args.iter().position(|x| x == "-vf").unwrap();
+        assert_eq!(b.args[i + 1], format!("{DEINTERLACE_FILTER},scale=1280:720,{RANGE_FILTER},format=yuv420p10le"));
+        assert!(b.args.windows(2).any(|w| w == ["-pix_fmt", "yuv420p10le"]));
+        assert!(b.args.contains(&"tv".to_string()));
     }
 }

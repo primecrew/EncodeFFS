@@ -28,7 +28,7 @@ impl VideoAction {
     pub fn label(self) -> &'static str {
         match self {
             VideoAction::Copy => "Copy (no re-encode)",
-            VideoAction::X264 => "Re-encode (libx264)",
+            VideoAction::X264 => "Re-encode (codec below; H.264 default)",
             VideoAction::Drop => "Drop video",
         }
     }
@@ -276,9 +276,10 @@ pub fn build(pr: &CustomParams) -> Result<BuiltCommand, String> {
                 let filter = join_filters(&[
                     pr.deinterlace.then(|| DEINTERLACE_FILTER.to_string()),
                     pr.resize.map(|(w, h)| format!("scale={w}:{h}")),
-                    pr.range_convert.then(|| RANGE_FILTER.to_string()),
+                    pr.range_convert.then(|| super::codecs::range_filter(&pr.video_encode)),
                 ]);
-                a.extend(x264_args(&pr.video_encode, filter.as_deref(), pr.range_convert));
+                warnings.extend(super::codecs::check_video(&pr.video_encode, &pr.output)?);
+                a.extend(super::codecs::video_args(&pr.video_encode, filter.as_deref(), pr.range_convert, &pr.output));
             }
             _ => {
                 a.push_all(["-c:v", "copy"]);
@@ -429,6 +430,7 @@ pub struct CustomOptions {
     pub drop_chapters: bool,
     /// With chapters "off": generate chapters every `chapter_interval_min` when the input has none.
     pub auto_chapters_if_none: bool,
+    #[serde(default = "crate::cmd::common::missing_faststart")]
     pub faststart: bool,
     pub input_args: String,
     pub output_args: String,
@@ -458,7 +460,7 @@ impl Default for CustomOptions {
             manual: vec![],
             drop_chapters: false,
             auto_chapters_if_none: false,
-            faststart: true,
+            faststart: false,
             input_args: String::new(),
             output_args: String::new(),
         }
@@ -609,6 +611,17 @@ mod tests {
         assert!(!j.contains("0:t?"));
         assert!(j.ends_with("-movflags +faststart /out/x.mp4"));
         assert_eq!(c.warnings.len(), 2);
+        // 10-bit HEVC: squeeze and 10-bit format in one step; H.264 path above stays identical
+        pr.video_encode.codec = super::super::codecs::VideoCodec::Hevc;
+        pr.video_encode.crf = 20;
+        pr.video_encode.ten_bit = true;
+        let j10 = build(&pr).unwrap().args.join(" ");
+        assert!(j10.contains(&format!("-vf {DEINTERLACE_FILTER},scale=1280:720,{RANGE_FILTER},format=yuv420p10le")), "{j10}");
+        assert!(j10.contains("-pix_fmt yuv420p10le"), "{j10}");
+        pr.video_encode.ten_bit = false;
+        let j8 = build(&pr).unwrap().args.join(" ");
+        assert!(j8.contains(&format!("-vf {DEINTERLACE_FILTER},scale=1280:720,{RANGE_FILTER} -color_range tv")), "{j8}");
+        assert!(!j8.contains("format=yuv420p10le"), "{j8}");
     }
 
     #[test]
@@ -698,5 +711,16 @@ mod tests {
         assert_eq!(split_args("  ").unwrap(), Vec::<String>::new());
         assert_eq!(split_args(r#"-x """#).unwrap(), s(&["-x", ""]));
         assert!(split_args("\"open").is_err());
+    }
+
+    #[test]
+    fn new_jobs_default_faststart_off_and_old_files_keep_it_on() {
+        assert!(!CustomOptions::default().faststart);
+        let old: CustomOptions = serde_json::from_value(serde_json::json!({ "container": "mp4" })).unwrap();
+        assert!(old.faststart, "omitted field in an old custom preset still means on");
+        let off: CustomOptions = serde_json::from_value(serde_json::json!({ "faststart": false })).unwrap();
+        assert!(!off.faststart);
+        let on: CustomOptions = serde_json::from_value(serde_json::json!({ "faststart": true })).unwrap();
+        assert!(on.faststart);
     }
 }

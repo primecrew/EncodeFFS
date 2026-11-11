@@ -15,6 +15,7 @@ venv/
 __pycache__/
 node_modules/
 /dist-slideshow/
+/dist-codecs/
 
 # local cross-compile linker flags (machine-specific)
 /.cargo/

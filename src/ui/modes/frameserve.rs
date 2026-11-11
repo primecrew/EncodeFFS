@@ -1,5 +1,6 @@
 //! Frameserver (AviSynth script): point at a DebugMode FrameServer signpost .avi,
-//! get an .avs script that opens it, and encode the script with x264/AAC.
+//! get an .avs script that opens it, and encode the script with H.264/AAC by default
+//! (HEVC / AV1 and AC3 / copy are offered, same pickers as Re-encode).
 
 use std::path::{Path, PathBuf};
 
@@ -11,11 +12,13 @@ use crate::ui::chapter_creator::{ChapterCreator, Source, Spec};
 use crate::ui::common::*;
 use ffenc::cmd::chapters::{self, ChapterMode, ManualChapter};
 use ffenc::cmd::common::*;
+use ffenc::cmd::conflicts::{self, ConflictKind, Choices as ConflictChoices};
 use ffenc::cmd::frameserve::{self as fs, AudioMode, BitDepth, Color, EncodeParams, Matrix, PixelType, ScriptOptions};
 use ffenc::ffmpeg::avisynth::{self, Level};
 use ffenc::ffmpeg::probe::{self, MediaInfo};
 use ffenc::ffmpeg::runner::JobSpec;
 use ffenc::settings::Settings;
+use crate::ui::option_tips;
 use ffenc::util::{fmt_hms, stem};
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -40,6 +43,8 @@ struct State {
     pixel_type: PixelType,
     audio_mode: AudioMode,
     color: Color,
+    /// When omitted from an old saved preset, loads as Rec709 (the previous default).
+    #[serde(default = "ffenc::cmd::frameserve::missing_matrix")]
     matrix: Matrix,
     interlaced: bool,
     trim: bool,
@@ -49,6 +54,10 @@ struct State {
     fps_num: u32,
     fps_den: u32,
     bits: BitDepth,
+    /// Only used with PC.709 / PC.601: squeeze full range to TV range in FFmpeg.
+    /// Rec709 / Rec601 / Rec2020 already squeeze in the script; this stays off.
+    #[serde(default)]
+    range_convert: bool,
     place: Place,
     script_folder: String,
     /// Use `script_text` (typed by the user) instead of the generated script.
@@ -62,7 +71,11 @@ struct State {
     chapter_interval_min: f64,
     manual: Vec<ManualChapter>,
     auto_chapters_if_none: bool,
+    #[serde(default = "ffenc::cmd::common::missing_faststart")]
     faststart: bool,
+    /// Session-only: “Keep my setting” hides a warning until the combo changes.
+    #[serde(skip)]
+    dismissed: Vec<ConflictKind>,
 }
 
 impl State {
@@ -77,7 +90,7 @@ impl State {
             pixel_type: PixelType::Auto,
             audio_mode: AudioMode::Keep,
             color: Color::Yuv420,
-            matrix: Matrix::Rec709,
+            matrix: Matrix::Pc709,
             interlaced: false,
             trim: false,
             trim_first: 0,
@@ -86,6 +99,7 @@ impl State {
             fps_num: 30000,
             fps_den: 1001,
             bits: BitDepth::Eight,
+            range_convert: false,
             place: Place::Temp,
             script_folder: String::new(),
             edit_script: false,
@@ -98,7 +112,8 @@ impl State {
             chapter_interval_min: s.chapter_interval_min,
             manual: vec![],
             auto_chapters_if_none: false,
-            faststart: true,
+            faststart: false,
+            dismissed: vec![],
         }
     }
     fn regen_name(&mut self) {
@@ -118,7 +133,7 @@ impl State {
             interlaced: self.interlaced,
             trim: self.trim.then_some((self.trim_first, self.trim_last)),
             fps: self.assume_fps.then_some((self.fps_num, self.fps_den)),
-            bits: self.bits,
+            bits: conflicts::script_bit_depth(&self.video),
         }
     }
     /// The script that will be used: typed or generated.
@@ -142,6 +157,56 @@ impl State {
                 Ok((fs::saved_script_path(&sp, Some(Path::new(d))), true))
             }
         }
+    }
+
+    fn conflict_choices(&self) -> ConflictChoices {
+        let yuv = !matches!(self.color, Color::None | Color::Rgb32);
+        let script_text = if self.edit_script { self.script_text.clone() } else { String::new() };
+        ConflictChoices {
+            color: self.color,
+            matrix: self.matrix,
+            bits: conflicts::effective_bits(self.edit_script, &script_text, &self.video),
+            range_convert: self.range_convert,
+            bt709_tags: yuv && self.matrix == Matrix::Rec709,
+            video: self.video.clone(),
+            audio: self.audio.clone(),
+            container: self.container.clone(),
+            out_name: self.out_name.clone(),
+            last_auto: self.last_auto.clone(),
+            output: PathBuf::from(self.out_dir.trim()).join(self.out_name.trim()),
+            edit_script: self.edit_script,
+            script_text,
+            uses_script_matrix: true,
+            source_range: None,
+        }
+    }
+
+    fn apply_conflict(&mut self, kind: ConflictKind) {
+        let mut c = self.conflict_choices();
+        conflicts::apply(&mut c, kind);
+        self.color = c.color;
+        self.matrix = c.matrix;
+        self.range_convert = c.range_convert;
+        self.video = c.video;
+        self.audio = c.audio;
+        if self.container != c.container {
+            self.container = c.container;
+            self.out_name = c.out_name;
+            self.last_auto = c.last_auto;
+        }
+        if self.edit_script {
+            self.script_text = c.script_text;
+        }
+        self.bits = conflicts::script_bit_depth(&self.video);
+    }
+
+    /// After loading a saved preset: map old script Bit depth onto the codec 10-bit
+    /// checkbox when the codec supports it. H.264 stays 8-bit.
+    fn migrate_bit_depth(&mut self) {
+        if self.video.codec != ffenc::cmd::codecs::VideoCodec::H264 {
+            self.video.ten_bit = self.bits == BitDepth::Ten;
+        }
+        self.bits = conflicts::script_bit_depth(&self.video);
     }
 }
 
@@ -287,9 +352,35 @@ impl FrameserveMode {
     }
 }
 
+
+/// Draw matching warnings (or all, when `filter` is empty) with Fix / Keep buttons.
+fn show_conflicts(ui: &mut egui::Ui, st: &mut State, filter: &[ConflictKind]) {
+    let current = conflicts::detect(&st.conflict_choices());
+    conflicts::prune_dismissed(&mut st.dismissed, &current);
+    for c in current {
+        if !filter.is_empty() && !filter.contains(&c.kind) {
+            continue;
+        }
+        if st.dismissed.contains(&c.kind) {
+            continue;
+        }
+        match conflict_warning_ui(ui, &c, true) {
+            ConflictAction::Fix(k) => st.apply_conflict(k),
+            ConflictAction::Keep(k) => st.dismissed.push(k),
+            ConflictAction::None => {}
+        }
+    }
+}
+
 const HELP: &str = "How it works: your editor (Premiere, Vegas, After Effects…) serves the finished timeline through DebugMode FrameServer, which writes a small \"signpost\" .avi file. Pick that file here. This preset writes an AviSynth script (.avs) that opens the signpost with AviSource, and FFmpeg encodes the script to MP4 or MKV.\n\n\
 Before you run: 1) keep the project open and serving in the editor until the encode finishes – the signpost only works while it is serving; 2) AviSynth+ must be installed, and it must match FFmpeg: this 64-bit FFmpeg needs 64-bit AviSynth+ (the AviSynth+ installer puts both in Windows); 3) use \"Test the script\" to check that everything connects.\n\n\
-If AviSource can't open the signpost, other AviSynth source filters such as DirectShowSource or FFVideoSource (FFMS2 plugin) can sometimes read it – type them in the script editor below. They are not needed normally.";
+If AviSource can't open the signpost, other AviSynth source filters such as DirectShowSource or FFVideoSource (FFMS2 plugin) can sometimes read it – type them in the script editor below. They are not needed normally.
+
+Video and audio codecs: the default is H.264 (libx264) and AAC, the same as before. You can also pick HEVC or AV1, and AC3 or keep the original audio, just like Re-encode. MP4 and MKV both work for these.
+
+Colour range: the default colour matrix is PC.709, which keeps full range (recommended for Vegas 8-bit projects). Rec709, Rec601 and Rec2020 already convert to TV (limited) range in the script; use Rec709 for 32-bit full-range Vegas projects. The default is not to apply a second full-to-TV conversion (that would look washed out). You can still tick “Convert full range to TV range” if you want to; a warning is shown and the encode still runs. PC.709 and PC.601 keep the full range from the editor; the file is tagged as full range, not TV, unless you tick that box.
+
+10-bit: for HEVC and AV1, the 10-bit box in the codec section both writes a 10-bit pixel format and adds ConvertBits(10) at the end of the script (after the colour conversion), so FFmpeg does not convert back to 8-bit. H.264 is always 8-bit. Unusual combinations (for example 10-bit with YV12) show a warning and still run. If you edit the script by hand and its bit depth does not match the encoder, a warning offers a one-click fix.";
 
 impl Mode for FrameserveMode {
     fn key(&self) -> &'static str {
@@ -299,7 +390,7 @@ impl Mode for FrameserveMode {
         "Frameserver (AviSynth script)"
     }
     fn description(&self) -> &'static str {
-        "Encode straight from your editor through DebugMode FrameServer: pick the signpost .avi, the app writes the AviSynth script and encodes it with x264 + AAC."
+        "Encode straight from your editor through DebugMode FrameServer: pick the signpost .avi, the app writes the AviSynth script and encodes it with H.264 + AAC by default (or HEVC / AV1 and AC3 / copy)."
     }
     fn run_fields(&self) -> &'static [&'static str] {
         &["signpost", "out_name", "last_auto", "script_text", "edit_script"]
@@ -379,7 +470,7 @@ impl Mode for FrameserveMode {
 
         section(ui, "AviSynth script");
         egui::Grid::new("fs_script").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            let l = crate::ui::common::row_label(ui, "Colour format");
+            let l = crate::ui::common::row_label_tip(ui, "Colour format", option_tips::COLOUR_FORMAT);
             ui.vertical(|ui| {
                 ui.horizontal_wrapped(|ui| {
                     let r = egui::ComboBox::from_id_salt("fs_color").width(330.0).selected_text(st.color.label()).show_ui(ui, |ui| {
@@ -406,7 +497,7 @@ impl Mode for FrameserveMode {
             });
             ui.end_row();
 
-            let l = crate::ui::common::row_label(ui, "Colour matrix");
+            let l = crate::ui::common::row_label_tip(ui, "Colour matrix", option_tips::COLOUR_MATRIX);
             ui.vertical(|ui| {
                 let enabled = st.color != Color::None;
                 ui.add_enabled_ui(enabled, |ui| {
@@ -417,22 +508,25 @@ impl Mode for FrameserveMode {
                     }).response.labelled_by(l.id);
                     ui.checkbox(&mut st.interlaced, "Interlaced source (interlaced=true)");
                 });
-                hint(ui, "Used when converting between RGB and YUV. Rec709 suits HD projects.");
-            });
-            ui.end_row();
-
-            crate::ui::common::row_label(ui, "Bit depth");
-            ui.horizontal_wrapped(|ui| {
-                ui.radio_value(&mut st.bits, BitDepth::Eight, "8-bit (plays everywhere)");
-                let ten_ok = !matches!(st.color, Color::Yv12 | Color::Rgb32);
-                ui.add_enabled_ui(ten_ok, |ui| ui.radio_value(&mut st.bits, BitDepth::Ten, "10-bit (ConvertBits(10); smoother gradients, less compatible)"));
-                if !ten_ok && st.bits == BitDepth::Ten {
-                    st.bits = BitDepth::Eight;
+                hint(ui, "Used when converting between RGB and YUV. PC.709 is the usual choice for Vegas 8-bit projects; Rec709 squeezes to TV range.");
+                if matches!(st.color, Color::None | Color::Rgb32) {
+                    hint(ui, "No YUV conversion in the script, so the matrix is not applied.");
+                } else {
+                    if st.matrix.squeezes_to_tv() || st.matrix == Matrix::Default {
+                        hint(ui, "This matrix already converts to TV (limited) range in the script. Leave the box below unticked unless you really want a second conversion.");
+                    } else if st.matrix.keeps_full_range() {
+                        hint(ui, "PC.709 / PC.601 keep the full (0–255) range from the editor. The file is tagged as full range, not TV, unless you tick the box below.");
+                    }
+                    ui.checkbox(&mut st.range_convert, "Convert full range to TV range");
+                    if st.range_convert && !(st.matrix.squeezes_to_tv() || st.matrix == Matrix::Default) {
+                        hint(ui, "FFmpeg will squeeze full range to TV (16–235) once, then tag the file as TV range.");
+                    }
+                    show_conflicts(ui, st, &[ConflictKind::DoubleRangeSqueeze]);
                 }
             });
             ui.end_row();
 
-            let l = crate::ui::common::row_label(ui, "Signpost format");
+            let l = crate::ui::common::row_label_tip(ui, "Signpost format", option_tips::SIGNPOST_FORMAT);
             ui.vertical(|ui| {
                 egui::ComboBox::from_id_salt("fs_pt").width(220.0).selected_text(st.pixel_type.label()).show_ui(ui, |ui| {
                     for p in PixelType::ALL {
@@ -443,7 +537,7 @@ impl Mode for FrameserveMode {
             });
             ui.end_row();
 
-            let l = crate::ui::common::row_label(ui, "Audio");
+            let l = crate::ui::common::row_label_tip(ui, "Audio", option_tips::FRAMESERVE_AUDIO);
             egui::ComboBox::from_id_salt("fs_audio").width(330.0).selected_text(st.audio_mode.label()).show_ui(ui, |ui| {
                 for a in AudioMode::ALL {
                     ui.selectable_value(&mut st.audio_mode, a, a.label());
@@ -468,7 +562,7 @@ impl Mode for FrameserveMode {
             });
             ui.end_row();
 
-            crate::ui::common::row_label(ui, "Trim");
+            crate::ui::common::row_label_tip(ui, "Trim", option_tips::TRIM_FRAMES);
             ui.horizontal_wrapped(|ui| {
                 ui.checkbox(&mut st.trim, "Only part of the timeline (frames)");
                 if st.trim {
@@ -558,10 +652,17 @@ impl Mode for FrameserveMode {
             }
         }
 
-        section(ui, "Video (libx264)");
+        section(ui, &format!("Video ({})", st.video.codec.encoder()));
         egui::Grid::new("fs_v").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            video_encode_ui(ui, "fs", &mut st.video, true);
-            crate::ui::common::row_label(ui, "Resize");
+            crate::ui::codecs_ui::video_codec_ui_ex(ui, "fs", &mut st.video, cx.encoders.as_ref(), None, Some("Also sets the AviSynth script to 10-bit."));
+            st.bits = conflicts::script_bit_depth(&st.video);
+            show_conflicts(ui, st, &[
+                ConflictKind::TenBitEightBitColor,
+                ConflictKind::EncoderTenBitScriptEight,
+                ConflictKind::ScriptTenBitEncoderEight,
+                ConflictKind::ScriptTenBitH264,
+            ]);
+            crate::ui::common::row_label_tip(ui, "Resize", option_tips::RESIZE);
             ui.horizontal_wrapped(|ui| {
                 ui.checkbox(&mut st.resize, "New vertical resolution");
                 if st.resize {
@@ -574,13 +675,16 @@ impl Mode for FrameserveMode {
                 }
             });
             ui.end_row();
-            crate::ui::common::row_label(ui, "Encoder format");
-            hint(ui, format!("{} (follows the colour format and bit depth above)", st.color.pix_fmt(st.bits)));
+            crate::ui::common::row_label_tip(ui, "Encoder format", "The pixel format written by the encoder. It follows the colour format and the 10-bit option (not only 4:2:0), so a 10-bit script is not forced back to 8-bit.");
+            hint(ui, format!("{} (follows the colour format and the 10-bit option)", st.color.pix_fmt(conflicts::script_bit_depth(&st.video))));
             ui.end_row();
         });
         if st.audio_mode != AudioMode::None {
-            section(ui, "Audio (AAC)");
-            egui::Grid::new("fs_a").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| audio_encode_ui(ui, "fsa", &mut st.audio));
+            section(ui, "Audio");
+            egui::Grid::new("fs_a").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                crate::ui::codecs_ui::audio_codec_ui(ui, "fsa", &mut st.audio, cx.encoders.as_ref(), true);
+                show_conflicts(ui, st, &[ConflictKind::CopyIgnoresFilters]);
+            });
         }
 
         section(ui, "Chapters & output");
@@ -592,7 +696,7 @@ impl Mode for FrameserveMode {
             if output_rows_sfx(ui, &mut st.out_dir, &mut st.out_name, &mut st.suffix, &cx.settings.output_folder) {
                 st.regen_name();
             }
-            let l = crate::ui::common::row_label(ui, "Container");
+            let l = crate::ui::common::row_label_tip(ui, "Container", option_tips::CONTAINER);
             let before = st.container.clone();
             egui::ComboBox::from_id_salt("fs_cont").selected_text(st.container.clone()).show_ui(ui, |ui| {
                 ui.selectable_value(&mut st.container, "mp4".to_string(), "mp4 (plays everywhere)");
@@ -610,6 +714,7 @@ impl Mode for FrameserveMode {
             creator.grid_rows(ui, "fs", &mut spec, &src);
             faststart_ui(ui, &mut st.faststart, st.container == "mp4");
         });
+        show_conflicts(ui, st, &[ConflictKind::Av1InMov, ConflictKind::CopyAudioIntoMp4]);
         if test {
             self.start_test(cx);
         }
@@ -620,6 +725,11 @@ impl Mode for FrameserveMode {
 
     fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
         ffenc::cmd::common::parse_output_fps(&self.st.video.output_fps)?;
+        crate::ui::codecs_ui::check_available(
+            cx.encoders.as_ref(),
+            Some(&self.st.video),
+            (self.st.audio_mode != AudioMode::None).then_some(&self.st.audio),
+        )?;
         if let Some(s) = &self.status {
             if s.demuxer == Some(false) {
                 return Err(avisynth::advice(s).into_iter().find(|a| a.0 == Level::Error).map(|a| a.1).unwrap_or_default());
@@ -657,20 +767,36 @@ impl Mode for FrameserveMode {
             let d = dur.ok_or("Chapters need the length: use “Test the script” first.")?;
             chapters::chapter_input(d, mode, st.chapter_interval_min * 60.0, &st.manual)?
         };
+        let yuv = !matches!(st.color, Color::None | Color::Rgb32);
+        let matrix = if yuv { st.matrix } else { Matrix::Default };
+        // Honour the checkbox even on Rec709/Rec601/Rec2020 (warned, not silently dropped).
+        let range_convert = st.range_convert;
+        let bt709_tags = yuv && matrix == Matrix::Rec709;
+        let mut audio = st.audio.clone();
+        audio.source_channels = crate::ui::codecs_ui::source_channels(
+            self.tested.as_ref().and_then(|(_, r)| r.as_ref().ok()).or(self.probe.info()),
+        );
         let pr = EncodeParams {
             script_path: script_path.clone(),
             script_text: text.clone(),
             output: output.clone(),
             video: st.video.clone(),
-            audio: st.audio.clone(),
+            audio,
             has_audio: st.audio_mode != AudioMode::None,
-            pix_fmt: st.color.pix_fmt(st.bits),
+            pix_fmt: st.color.pix_fmt(conflicts::effective_bits(st.edit_script, &text, &st.video)),
             resize,
-            bt709_tags: st.color != Color::None && st.color != Color::Rgb32 && st.matrix == Matrix::Rec709,
+            bt709_tags,
+            matrix,
+            range_convert,
             chapters,
             faststart: st.faststart,
         };
         let mut cmd = fs::build(&pr)?;
+        for msg in fs::script_warnings(&st.options()) {
+            if !cmd.warnings.iter().any(|w| w == &msg) {
+                cmd.warnings.push(msg);
+            }
+        }
         if st.edit_script {
             cmd.warnings.push("Using your hand-edited script.".into());
         }
@@ -709,8 +835,17 @@ impl Mode for FrameserveMode {
 
     fn load(&mut self, v: &serde_json::Value, s: &Settings) {
         self.st = restore(v, State::from_settings(s));
+        self.st.migrate_bit_depth();
         self.probe = ProbeSlot::default();
         self.tested = None;
+    }
+
+    fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {
+        conflicts::detect(&self.st.conflict_choices())
+    }
+
+    fn apply_conflict_fix(&mut self, kind: ConflictKind) {
+        self.st.apply_conflict(kind);
     }
 }
 
@@ -722,12 +857,13 @@ mod tests {
     fn defaults_yuv420_and_paths() {
         let m = FrameserveMode::default();
         assert_eq!(m.st.color, Color::Yuv420, "default colour conversion is ConvertToYUV420()");
+        assert_eq!(m.st.matrix, Matrix::Pc709, "new jobs default to PC.709");
         assert_eq!(m.st.place, Place::Temp);
         let mut st = State { signpost: r"/v/My Clip.avi".into(), ..State::default() };
         st.regen_name();
         assert_eq!(st.out_name, "My Clip_frameserved.mp4");
         let t = st.script().unwrap();
-        assert!(t.contains("ConvertToYUV420(matrix=\"Rec709\")"), "{t}");
+        assert!(t.contains("ConvertToYUV420(matrix=\"PC.709\")"), "{t}");
         // temp script: fresh temp path, not kept
         let (p, keep) = st.script_path().unwrap();
         assert!(!keep && p.starts_with(std::env::temp_dir()));
@@ -743,5 +879,218 @@ mod tests {
         assert_eq!(st.script().unwrap(), "AviSource(\"x.avi\")\r\n");
         assert_eq!(ffmpeg_of(Path::new("/f/ffprobe.exe")), PathBuf::from("/f/ffmpeg.exe"));
         assert_eq!(ffmpeg_of(Path::new("/f/ffprobe")), PathBuf::from("/f/ffmpeg"));
+        assert_eq!(m.st.video.codec, ffenc::cmd::codecs::VideoCodec::H264);
+        assert_eq!(m.st.audio.codec, ffenc::cmd::codecs::AudioCodec::Aac);
+        assert!(!m.st.range_convert);
+        assert!(!m.st.faststart, "new jobs default faststart off");
+    }
+
+    #[test]
+    fn omitted_matrix_stays_rec709_and_new_jobs_are_pc709() {
+        assert_eq!(FrameserveMode::default().st.matrix, Matrix::Pc709);
+        let v = serde_json::json!({
+            "signpost": r"C:\clips\a.avi",
+            "color": "Yuv420"
+        });
+        let mut m = FrameserveMode::default();
+        m.load(&v, &Settings::default());
+        assert_eq!(m.st.matrix, Matrix::Rec709, "old presets that omitted matrix keep Rec709");
+        let mut m = FrameserveMode::default();
+        m.load(&serde_json::json!({ "matrix": "Rec709" }), &Settings::default());
+        assert_eq!(m.st.matrix, Matrix::Rec709, "an explicitly saved Rec709 matrix is unchanged");
+        let mut m = FrameserveMode::default();
+        m.load(&serde_json::json!({ "matrix": "Pc709" }), &Settings::default());
+        assert_eq!(m.st.matrix, Matrix::Pc709);
+    }
+
+    #[test]
+    fn old_json_loads_as_h264_aac_and_no_range_convert() {
+
+        let v = serde_json::json!({
+            "signpost": r"C:\clips\a.avi",
+            "out_dir": r"D:\Videos\Out",
+            "out_name": "a_frameserved.mp4",
+            "last_auto": "a_frameserved.mp4",
+            "suffix": "_frameserved",
+            "container": "mp4",
+            "color": "Yuv420",
+            "matrix": "Rec709",
+            "bits": "Eight",
+            "video": { "crf": 22, "preset": "slow", "tune": null },
+            "audio": { "bitrate_k": 192 }
+        });
+        let mut m = FrameserveMode::default();
+        m.load(&v, &Settings::default());
+        assert_eq!(m.st.video.codec, ffenc::cmd::codecs::VideoCodec::H264, "missing codec field defaults to H.264");
+        assert_eq!(m.st.audio.codec, ffenc::cmd::codecs::AudioCodec::Aac, "missing codec field defaults to AAC");
+        assert_eq!(m.st.video.crf, 22);
+        assert_eq!(m.st.audio.bitrate_k, 192);
+        assert!(!m.st.range_convert, "old presets do not enable a range squeeze");
+        assert!(m.st.faststart, "old presets that omitted faststart keep it on");
+        assert_eq!(m.st.matrix, Matrix::Rec709);
+        let o = m.st.options();
+        let pr = EncodeParams {
+            script_path: PathBuf::from(r"C:\T\ffenc_frameserve_1.avs"),
+            script_text: fs::script(&o).unwrap(),
+            output: PathBuf::from(r"C:\clips\a_frameserved.mp4"),
+            video: m.st.video.clone(),
+            audio: m.st.audio.clone(),
+            has_audio: true,
+            pix_fmt: m.st.color.pix_fmt(m.st.bits),
+            resize: None,
+            bt709_tags: true,
+            matrix: m.st.matrix,
+            range_convert: m.st.range_convert,
+            chapters: None,
+            faststart: m.st.faststart,
+        };
+        let b = fs::build(&pr).unwrap();
+        assert_eq!(
+            b.args,
+            [
+                "-y", "-i", r"C:\T\ffenc_frameserve_1.avs", "-map", "0:v:0", "-map", "0:a:0?",
+                "-c:v", "libx264", "-crf", "22", "-preset", "slow", "-pix_fmt", "yuv420p",
+                "-color_range", "tv", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", r"C:\clips\a_frameserved.mp4"
+            ]
+        );
+        assert!(!b.args.iter().any(|a| a.contains("in_range=full")));
+    }
+
+    fn msgs(st: &State) -> Vec<String> {
+        conflicts::messages(&conflicts::detect(&st.conflict_choices()))
+    }
+
+    #[test]
+    fn unusual_choices_warn_and_do_not_change_the_form() {
+        use ffenc::cmd::codecs::VideoCodec;
+        let mut st = State::default();
+        st.signpost = r"C:\clips\a.avi".into();
+        assert_eq!(st.bits, BitDepth::Eight);
+        assert!(!st.range_convert);
+        assert!(msgs(&st).is_empty(), "safe defaults: {:?}", msgs(&st));
+
+        // Picking HEVC: the codec 10-bit box (default on) also sets the script to 10-bit
+        st.video.codec = VideoCodec::Hevc;
+        st.bits = conflicts::script_bit_depth(&st.video);
+        assert!(st.video.ten_bit);
+        assert_eq!(st.options().bits, BitDepth::Ten);
+        let text = fs::script(&st.options()).unwrap();
+        assert!(text.contains("ConvertBits(10)"), "{text}");
+        assert!(msgs(&st).iter().all(|m| !m.contains("encoder has 10-bit")), "{:?}", msgs(&st));
+
+        // YV12 + 10-bit: not rewritten; warning; script still builds
+        st.color = Color::Yv12;
+        st.signpost = r"C:\clips\a.avi".into();
+        assert_eq!(st.options().bits, BitDepth::Ten);
+        let w = msgs(&st);
+        assert!(w.iter().any(|m| m.contains("ConvertToYV12") && m.contains("still run")), "{w:?}");
+        assert!(st.options().color == Color::Yv12);
+        let text = fs::script(&st.options()).unwrap();
+        assert!(text.contains("ConvertToYV12") && text.contains("ConvertBits(10)"));
+
+        // Rec709 + range_convert: not cleared; warning
+        st.color = Color::Yuv420;
+        st.matrix = Matrix::Rec709;
+        st.range_convert = true;
+        let w = msgs(&st);
+        assert!(st.range_convert);
+        assert!(w.iter().any(|m| m.contains("washed out") && m.contains("still run")), "{w:?}");
+    }
+
+    #[test]
+    fn fix_buttons_change_only_the_intended_field() {
+        use ffenc::cmd::codecs::VideoCodec;
+        let mut st = State::default();
+        st.color = Color::Yv12;
+        st.video.codec = VideoCodec::Hevc;
+        st.video.ten_bit = true;
+        st.signpost = r"C:\clips\a.avi".into();
+        st.bits = conflicts::script_bit_depth(&st.video);
+        assert!(msgs(&st).iter().any(|m| m.contains("ConvertToYV12")));
+        let color_before = st.color;
+        let ten_before = st.video.ten_bit;
+        st.apply_conflict(ConflictKind::TenBitEightBitColor);
+        assert_eq!(st.color, Color::Yuv420);
+        assert_eq!(st.video.ten_bit, ten_before);
+        assert_ne!(st.color, color_before);
+        assert!(msgs(&st).iter().all(|m| !m.contains("ConvertToYV12")), "{:?}", msgs(&st));
+
+        st.matrix = Matrix::Rec709;
+        st.range_convert = true;
+        assert!(msgs(&st).iter().any(|m| m.contains("washed out")));
+        st.apply_conflict(ConflictKind::DoubleRangeSqueeze);
+        assert!(!st.range_convert);
+        assert!(msgs(&st).iter().all(|m| !m.contains("washed out")), "{:?}", msgs(&st));
+    }
+
+    #[test]
+    fn old_script_bits_map_onto_codec_10_bit() {
+        use ffenc::cmd::codecs::VideoCodec;
+        // Old HEVC preset with script bits=Ten → 10-bit on
+        let v = serde_json::json!({
+            "signpost": r"C:\clips\a.avi",
+            "out_name": "a_frameserved.mp4",
+            "last_auto": "a_frameserved.mp4",
+            "container": "mp4",
+            "color": "Yuv420",
+            "matrix": "Rec709",
+            "bits": "Ten",
+            "video": { "codec": "Hevc", "crf": 20, "preset": "slow", "ten_bit": false },
+            "audio": { "bitrate_k": 192 }
+        });
+        let mut m = FrameserveMode::default();
+        m.load(&v, &Settings::default());
+        assert_eq!(m.st.video.codec, VideoCodec::Hevc);
+        assert!(m.st.video.ten_bit, "script bits=Ten maps to the codec 10-bit box");
+        assert_eq!(m.st.options().bits, BitDepth::Ten);
+        assert!(fs::script(&m.st.options()).unwrap().contains("ConvertBits(10)"));
+
+        // Old HEVC preset with script bits=Eight → 10-bit off
+        let v = serde_json::json!({
+            "signpost": r"C:\clips\a.avi",
+            "out_name": "a_frameserved.mp4",
+            "container": "mp4",
+            "color": "Yuv420",
+            "bits": "Eight",
+            "video": { "codec": "Hevc", "crf": 20, "preset": "slow", "ten_bit": true },
+            "audio": { "bitrate_k": 192 }
+        });
+        m.load(&v, &Settings::default());
+        assert!(!m.st.video.ten_bit, "script bits=Eight maps to the codec 10-bit box off");
+        assert_eq!(m.st.options().bits, BitDepth::Eight);
+        assert!(!fs::script(&m.st.options()).unwrap().contains("ConvertBits(10)"));
+
+        // Old H.264 + bits=Ten: H.264 stays 8-bit
+        let v = serde_json::json!({
+            "signpost": r"C:\clips\a.avi",
+            "out_name": "a_frameserved.mp4",
+            "container": "mp4",
+            "color": "Yuv420",
+            "bits": "Ten",
+            "video": { "crf": 22, "preset": "slow" },
+            "audio": { "bitrate_k": 192 }
+        });
+        m.load(&v, &Settings::default());
+        assert_eq!(m.st.video.codec, VideoCodec::H264);
+        assert_eq!(m.st.options().bits, BitDepth::Eight);
+        assert!(!fs::script(&m.st.options()).unwrap().contains("ConvertBits(10)"));
+    }
+
+    #[test]
+    fn hand_edited_script_bit_depth_mismatch_warns_and_fix_edits_script() {
+        use ffenc::cmd::codecs::VideoCodec;
+        let mut st = State::default();
+        st.signpost = r"C:\clips\a.avi".into();
+        st.video.codec = VideoCodec::Hevc;
+        st.video.ten_bit = true;
+        st.edit_script = true;
+        st.script_text = "AviSource(\"C:\\\\clips\\\\a.avi\")\r\nConvertToYUV420(matrix=\"Rec709\")\r\n".into();
+        let w = msgs(&st);
+        assert!(w.iter().any(|m| m.contains("encoder has 10-bit") && m.contains("still run")), "{w:?}");
+        st.apply_conflict(ConflictKind::EncoderTenBitScriptEight);
+        assert!(conflicts::script_is_10bit(&st.script_text), "{}", st.script_text);
+        assert!(st.video.ten_bit);
+        assert!(msgs(&st).iter().all(|m| !m.contains("encoder has 10-bit")), "{:?}", msgs(&st));
     }
 }

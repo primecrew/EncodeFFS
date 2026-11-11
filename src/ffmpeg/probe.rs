@@ -5,7 +5,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::cmd::common::is_interlaced;
+use crate::cmd::common::{is_interlaced, ColorRange};
 use crate::cmd::reencode::StreamRef;
 use crate::cmd::subs::SubStreamInfo;
 
@@ -24,6 +24,10 @@ pub struct StreamInfo {
     pub title: Option<String>,
     pub profile: Option<String>,
     pub pix_fmt: Option<String>,
+    pub color_range: Option<String>,
+    pub color_space: Option<String>,
+    pub color_primaries: Option<String>,
+    pub color_transfer: Option<String>,
     /// Average frame rate (frames/s) for video streams.
     pub fps: Option<f64>,
     pub bit_rate: Option<u64>,
@@ -111,6 +115,10 @@ struct RawStream {
     tags: HashMap<String, String>,
     profile: Option<String>,
     pix_fmt: Option<String>,
+    color_range: Option<String>,
+    color_space: Option<String>,
+    color_primaries: Option<String>,
+    color_transfer: Option<String>,
     avg_frame_rate: Option<String>,
     r_frame_rate: Option<String>,
     bit_rate: Option<serde_json::Value>,
@@ -159,6 +167,10 @@ pub fn parse_probe_json(json: &str) -> Result<MediaInfo, String> {
             title: tag(&s.tags, "title"),
             profile: s.profile,
             pix_fmt: s.pix_fmt,
+            color_range: s.color_range.filter(|v| !v.trim().is_empty()),
+            color_space: s.color_space.filter(|v| !v.trim().is_empty()),
+            color_primaries: s.color_primaries.filter(|v| !v.trim().is_empty()),
+            color_transfer: s.color_transfer.filter(|v| !v.trim().is_empty()),
             fps: s.avg_frame_rate.as_deref().and_then(parse_rate).or_else(|| s.r_frame_rate.as_deref().and_then(parse_rate)),
             bit_rate: num(&s.bit_rate).map(|v| v as u64),
             channel_layout: s.channel_layout,
@@ -225,6 +237,11 @@ impl MediaInfo {
         self.of_type("audio").next().and_then(|a| a.sample_rate)
     }
 
+    /// Tagged colour range of the first real video stream, when ffprobe reported a known value.
+    pub fn video_color_range(&self) -> Option<ColorRange> {
+        self.video().and_then(|v| v.color_range.as_deref().and_then(ColorRange::parse))
+    }
+
     /// Script's Get-VideoInfo validation.
     pub fn video_summary(&self) -> Result<VideoSummary, String> {
         let v = self.video().ok_or("No video stream found")?;
@@ -250,7 +267,7 @@ pub fn probe_args(path: &Path) -> Vec<String> {
         "-v".into(),
         "error".into(),
         "-show_entries".into(),
-        "stream=index,codec_type,codec_name,profile,width,height,duration,field_order,sample_rate,channels,channel_layout,avg_frame_rate,r_frame_rate,pix_fmt,bit_rate:stream_tags=language,title:stream_disposition=default,forced,attached_pic:format=duration,format_name,format_long_name,size,bit_rate:chapter=start_time,end_time:chapter_tags=title".into(),
+        "stream=index,codec_type,codec_name,profile,width,height,duration,field_order,sample_rate,channels,channel_layout,avg_frame_rate,r_frame_rate,pix_fmt,bit_rate,color_range,color_space,color_primaries,color_transfer:stream_tags=language,title:stream_disposition=default,forced,attached_pic:format=duration,format_name,format_long_name,size,bit_rate:chapter=start_time,end_time:chapter_tags=title".into(),
         "-of".into(),
         "json".into(),
         path.to_string_lossy().into_owned(),
@@ -347,5 +364,32 @@ mod tests {
         assert_eq!((m.size, m.bit_rate, m.format_long_name.as_deref()), (Some(12345), Some(999), Some("QuickTime / MOV")));
         assert_eq!(parse_rate("25"), Some(25.0));
         assert_eq!(parse_rate("0/0"), None);
+    }
+
+    #[test]
+    fn color_tags_are_parsed_and_unknown_is_untagged() {
+        let tv = r#"{"streams":[{"index":0,"codec_type":"video","width":640,"height":360,"duration":"1","color_range":"tv","color_space":"bt709","color_primaries":"bt709","color_transfer":"bt709"}]}"#;
+        let m = parse_probe_json(tv).unwrap();
+        let v = m.video().unwrap();
+        assert_eq!(v.color_range.as_deref(), Some("tv"));
+        assert_eq!(v.color_space.as_deref(), Some("bt709"));
+        assert_eq!(v.color_primaries.as_deref(), Some("bt709"));
+        assert_eq!(v.color_transfer.as_deref(), Some("bt709"));
+        assert_eq!(m.video_color_range(), Some(ColorRange::Limited));
+
+        let pc = r#"{"streams":[{"index":0,"codec_type":"video","width":640,"height":360,"duration":"1","color_range":"pc"}]}"#;
+        assert_eq!(parse_probe_json(pc).unwrap().video_color_range(), Some(ColorRange::Full));
+
+        let unknown = r#"{"streams":[{"index":0,"codec_type":"video","width":640,"height":360,"duration":"1","color_range":"unknown"}]}"#;
+        assert_eq!(parse_probe_json(unknown).unwrap().video_color_range(), None);
+
+        let missing = r#"{"streams":[{"index":0,"codec_type":"video","width":640,"height":360,"duration":"1"}]}"#;
+        assert_eq!(parse_probe_json(missing).unwrap().video_color_range(), None);
+
+        let args = probe_args(Path::new("clip.mp4")).join(" ");
+        assert!(args.contains("color_range"), "{args}");
+        assert!(args.contains("color_space"), "{args}");
+        assert!(args.contains("color_primaries"), "{args}");
+        assert!(args.contains("color_transfer"), "{args}");
     }
 }

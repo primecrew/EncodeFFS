@@ -106,3 +106,35 @@ fn thirty_to_five_keeps_duration_and_audio() {
     assert!((adur - 4.0).abs() < 0.2, "audio untouched: {adur}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn codec_paths_add_fps_last() {
+    use ffenc::cmd::codecs::{video_args, VideoCodec};
+    let out = std::path::Path::new("/o/x.mp4");
+    for codec in [VideoCodec::H264, VideoCodec::Hevc, VideoCodec::Av1] {
+        let same = VideoEncode { codec, ..Default::default() };
+        let a = video_args(&same, Some("bwdif"), false, out);
+        assert!(a.windows(2).any(|w| w == ["-vf", "bwdif"]), "{codec:?}: same as source unchanged");
+        let five = VideoEncode { output_fps: "5".into(), ..same };
+        let a = video_args(&five, Some("bwdif"), false, out);
+        assert!(a.windows(2).any(|w| w == ["-vf", "bwdif,fps=5"]), "{codec:?}: {a:?}");
+        let a = video_args(&five, None, false, out);
+        assert!(a.windows(2).any(|w| w == ["-vf", "fps=5"]), "{codec:?}: {a:?}");
+    }
+}
+
+#[test]
+fn hevc_thirty_to_five() {
+    let (Some(ffmpeg), Some(ffprobe)) = (which("ffmpeg"), which("ffprobe")) else { return };
+    let dir = std::env::temp_dir().join(format!("ffenc_fps_hevc_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("in.mp4");
+    assert!(Command::new(&ffmpeg).args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=3"]).arg(&src).status().unwrap().success());
+    let out = dir.join("out.mp4");
+    let v = VideoEncode { codec: ffenc::cmd::codecs::VideoCodec::Hevc, crf: 30, preset: "ultrafast".into(), output_fps: "5".into(), ..Default::default() };
+    let args = ffenc::cmd::codecs::video_args(&v, None, false, &out);
+    let st = Command::new(&ffmpeg).args(["-hide_banner", "-loglevel", "error", "-y", "-i"]).arg(&src).args(&args).arg(&out).output().unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+    assert_eq!(probe(&ffprobe, &out, &["-select_streams", "v:0", "-show_entries", "stream=codec_name,r_frame_rate"]), "hevc\n5/1");
+    let _ = std::fs::remove_dir_all(&dir);
+}

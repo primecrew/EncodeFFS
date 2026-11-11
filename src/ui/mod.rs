@@ -1,11 +1,13 @@
 //! The egui application: menu, mode list, mode form, preview dialog, queue + log.
 
 pub mod chapter_creator;
+pub mod codecs_ui;
 pub mod common;
 pub mod finished;
 pub mod layout;
 pub mod managed_loc;
 pub mod modes;
+pub mod option_tips;
 pub mod presets;
 pub mod source;
 pub mod updater;
@@ -221,6 +223,14 @@ impl Preview {
     }
 }
 
+/// Pre-run popup for unusual settings that have a one-click fix.
+struct ConflictDlg {
+    items: Vec<ffenc::cmd::conflicts::Conflict>,
+    plan: Plan,
+    program: PathBuf,
+    focus_run_as_set: bool,
+}
+
 /// First-run / "FFmpeg not found" dialog state.
 struct LocateDlg {
     path: String,
@@ -249,6 +259,7 @@ pub struct App {
     ff_check: Option<Result<FfmpegCheck, String>>,
     ff_task: Option<Bg<Result<FfmpegCheck, String>>>,
     preview: Option<Preview>,
+    conflict_dlg: Option<ConflictDlg>,
     error: Option<String>,
     info: Option<(String, String)>,
     /// Feedback after a file drop: (text, accepted, when).
@@ -354,6 +365,22 @@ impl App {
         queue.set_keep_temp(settings.keep_temp_files);
         let registry = settings::logs_dir().join("partial-outputs.txt");
         queue.set_partials_registry(Some(registry.clone()));
+        // leftover FFmpeg update staging (next to the app-managed copy only; older than 1 h so a live download in another instance is left alone)
+        {
+            let q = queue.clone();
+            std::thread::spawn(move || {
+                for n in ffenc::updater::install::cleanup_stale_staging(&ffenc::updater::install::staging_roots(), ffenc::updater::install::STALE_STAGING_AGE) {
+                    match n {
+                        ffenc::updater::install::StaleStaging::Removed(p) => {
+                            q.log(format!("Removed a leftover FFmpeg update folder left behind by an interrupted download: {}", p.display()));
+                        }
+                        ffenc::updater::install::StaleStaging::Failed(p, e) => {
+                            q.log(format!("Could not remove leftover FFmpeg update folder {}: {e}", p.display()));
+                        }
+                    }
+                }
+            });
+        }
         if settings.keep_temp_files {
             queue.log("Keep temporary files for debugging is on: temporary files are kept and not cleaned up at startup.");
         } else {
@@ -416,6 +443,7 @@ impl App {
             ff_check: None,
             ff_task: None,
             preview: None,
+            conflict_dlg: None,
             error: None,
             info: None,
             drop_note: None,
@@ -520,7 +548,7 @@ impl App {
                 self.pre.list.extend(new);
                 if n > 0 {
                     let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-                    let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
+                    let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
                     self.pre.select(first, &cx);
                 }
                 self.save_presets();
@@ -536,7 +564,7 @@ impl App {
 
     fn export_presets(&mut self, all: bool) {
         let list: Vec<Preset> = if all { (0..self.pre.list.len()).map(|i| self.pre.export_copy(i, &self.settings)).collect() } else { vec![self.pre.export_copy(self.pre.current, &self.settings)] };
-        let name = if all { "FFmpegEncoder presets.json".to_string() } else { format!("{}.preset.json", ffenc::util::safe_name(&list[0].name)) };
+        let name = if all { format!("{} presets.json", ffenc::FILE_STEM) } else { format!("{}.preset.json", ffenc::util::safe_name(&list[0].name)) };
         let Some(f) = rfd::FileDialog::new().add_filter("Presets (JSON)", &["json"]).set_file_name(name).save_file() else { return };
         match std::fs::write(&f, pstore::to_json(&list)) {
             Ok(()) => self.queue.log(format!("Exported {} preset(s) to {}", list.len(), f.display())),
@@ -664,7 +692,7 @@ impl App {
                 _ => {}
             }
         }
-        let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
+        let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
         match self.pre.editor(idx, &self.settings).mode.build(&cx) {
             Ok(plan) => {
                 self.preview = Some(Preview::new(plan, ff.ffmpeg.clone(), self.settings.when_exists));
@@ -1030,6 +1058,63 @@ impl App {
             }
         }
 
+        // unusual-settings popup (before the command preview)
+        if self.preview.is_none() {
+            if let Some(mut dlg) = self.conflict_dlg.take() {
+                let mut run_as_set = false;
+                let mut fix = None;
+                let mut close = false;
+                let focus = dlg.focus_run_as_set;
+                dlg.focus_run_as_set = false;
+                common::fit(egui::Window::new("Unusual settings")
+                    .collapsible(false)
+                    .resizable(true)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]), ctx, true)
+                    .show(ctx, |ui| {
+                        ui.set_max_width(640.0);
+                        ui.label(RichText::new("These choices are unusual. The encode can still run as you set it. You can fix a setting, or keep it and continue.").strong());
+                        ui.add_space(8.0);
+                        egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                            for c in &dlg.items {
+                                match common::conflict_warning_ui(ui, c, false) {
+                                    common::ConflictAction::Fix(k) => fix = Some(k),
+                                    _ => {}
+                                }
+                                ui.add_space(8.0);
+                            }
+                        });
+                        ui.separator();
+                        ui.horizontal_wrapped(|ui| {
+                            let r = ui.add(egui::Button::new(RichText::new("Run as set").strong()).min_size(egui::vec2(140.0, 32.0)));
+                            let r = common::named(r, egui::WidgetType::Button, "Run as set: keep these settings and continue to the command preview");
+                            if focus {
+                                r.request_focus();
+                            }
+                            if r.clicked() {
+                                run_as_set = true;
+                            }
+                            if ui.add(egui::Button::new("Cancel").min_size(egui::vec2(80.0, 32.0))).clicked() {
+                                close = true;
+                            }
+                        });
+                    });
+                if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    close = true;
+                }
+                if let Some(k) = fix {
+                    let idx = self.pre.current;
+                    self.pre.editor(idx, &self.settings).mode.apply_conflict_fix(k);
+                    self.preview_origin = None;
+                } else if run_as_set {
+                    self.preview = Some(Preview::new(dlg.plan, dlg.program, self.settings.when_exists));
+                } else if close {
+                    self.preview_origin = None;
+                } else {
+                    self.conflict_dlg = Some(dlg);
+                }
+            }
+        }
+
         // preview / confirm
         let mut run = false;
         let mut cancel = false;
@@ -1332,7 +1417,7 @@ impl App {
         let act = self.pre.dialogs(ctx);
         if !matches!(act, Action::None) {
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
+            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
             let r = self.pre.apply(act, &cx);
             if let Err(e) = r {
                 self.error = Some(e);
@@ -1446,7 +1531,7 @@ impl App {
     /// Files from a drop or Ctrl+O into the selected preset.
     fn route_paths(&mut self, ctx: &egui::Context, dropped: Vec<PathBuf>) {
         let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-        let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
+        let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
         let idx = self.pre.current;
         let ed = self.pre.editor(idx, &self.settings);
         let paths = if ed.mode.wants_folders() { dropped.clone() } else { ffenc::util::expand_dropped(&dropped) };
@@ -1545,6 +1630,7 @@ impl App {
             ui.label("• Everything in the menus and forms can be reached with Tab; the focused control has a thick outline.");
             ui.label("• Screen readers (Narrator, NVDA) can read buttons, labels, check boxes and text fields through UI Automation. Some parts (the queue list, the drag-and-drop file list order, colours) are only partly announced.");
             ui.label("• Every action in a preset's right-click menu is also in the Presets menu.");
+            ui.label("• The left list has Default Presets (built-ins, including Experimental codecs) and User Presets (your saved, duplicated and imported presets). Pin a preset to put it in Favorites at the top.");
         });
         if !open || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.show_help = false;
@@ -1623,7 +1709,7 @@ impl App {
                     crate::ui::common::row_label_tip(ui, "Fallback sample rate", "Audio sample rate used when ffprobe cannot read the source's rate.");
                     common::num_u32(ui, &mut ed.fallback_sample_rate, 8000..=384000, " Hz");
                     ui.end_row();
-                    crate::ui::common::row_label(ui, "Advanced compressor");
+                    crate::ui::common::row_label_tip(ui, "Advanced compressor defaults", "Default values used when Compressor is set to Advanced on a form. On encode forms they appear under the Compressor drop-down; on Audio & subtitles they appear below the track list.");
                     common::compressor_params_ui(ui, "set_comp", &mut ed.compressor);
                     ui.end_row();
                 });
@@ -1846,7 +1932,7 @@ impl eframe::App for App {
         let presets_panel = egui::SidePanel::left(layout::panel_id("presets")).resizable(true).default_width(presets_w).width_range(150.0..=(screen.x * 0.45).max(200.0)).show(ctx, |ui| {
             ui.add_space(4.0);
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
+            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
             match self.pre.sidebar(ui, &cx) {
                 None => {}
                 Some(SideEvent::Selected) => self.save_settings(),
@@ -1942,7 +2028,7 @@ impl eframe::App for App {
             }
             egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                 let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-                let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) };
+                let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
                 self.pre.editor(idx, &self.settings).mode.ui(ui, &cx);
                 let (inp, out) = crate::ui::presets::take_app_folders(&*self.pre.editor(idx, &self.settings).mode);
                 let mut folders_changed = false;

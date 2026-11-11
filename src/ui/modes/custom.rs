@@ -9,6 +9,7 @@ use super::{default_audio, default_video, restore, Ctx, Mode, Plan};
 use crate::ui::common::*;
 use ffenc::cmd::chapters::ChapterMode;
 use crate::ui::chapter_creator::{ChapterCreator, Source, Spec};
+use crate::ui::option_tips;
 use ffenc::cmd::custom::{self, AudioAction, CustomOptions, SubAction, VideoAction, CONTAINERS};
 use ffenc::ffmpeg::probe::{self, MediaInfo};
 use ffenc::ffmpeg::runner::JobSpec;
@@ -171,7 +172,7 @@ impl Mode for CustomMode {
                     st.regen_name();
                 }
             }
-            crate::ui::common::row_label(ui, "Container");
+            crate::ui::common::row_label_tip(ui, "Container", option_tips::CONTAINER);
             let before = st.o.container.clone();
             egui::ComboBox::from_id_salt("cu_cont").selected_text(st.o.container.clone()).show_ui(ui, |ui| {
                 for c in CONTAINERS {
@@ -182,7 +183,7 @@ impl Mode for CustomMode {
                 st.regen_name();
             }
             ui.end_row();
-            crate::ui::common::row_label(ui, "Trim");
+            crate::ui::common::row_label_tip(ui, "Trim", option_tips::TRIM);
             ui.horizontal(|ui| {
                 ui.label("start");
                 num_f64(ui, &mut st.o.trim_start, 0.0..=1.0e7, 0.1, " s");
@@ -220,8 +221,8 @@ impl Mode for CustomMode {
             });
             ui.end_row();
             if o.video == VideoAction::X264 {
-                video_encode_ui(ui, "cu", &mut o.video_encode, true);
-                crate::ui::common::row_label(ui, "Resize");
+                crate::ui::codecs_ui::video_codec_ui(ui, "cu", &mut o.video_encode, cx.encoders.as_ref(), None);
+                crate::ui::common::row_label_tip(ui, "Resize", option_tips::RESIZE);
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut o.resize, "New vertical resolution");
                     if o.resize {
@@ -234,8 +235,8 @@ impl Mode for CustomMode {
                     }
                 });
                 ui.end_row();
-                range_ui(ui, &mut o.range_convert);
-                crate::ui::common::row_label(ui, "Deinterlace");
+                range_ui(ui, &mut o.range_convert, self.probe.info().map(|i| i.video_color_range()));
+                crate::ui::common::row_label_tip(ui, "Deinterlace", option_tips::DEINTERLACE);
                 ui.checkbox(&mut o.deinterlace, "bwdif double-rate, only when ffprobe reports interlaced video");
                 ui.end_row();
             }
@@ -344,7 +345,10 @@ impl Mode for CustomMode {
         }
     }
 
-    fn build(&mut self, _cx: &Ctx) -> Result<Plan, String> {
+    fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
+        if self.st.o.video == VideoAction::X264 {
+            crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&self.st.o.video_encode), None)?;
+        }
         let st = &self.st;
         if st.o.video == VideoAction::X264 {
             ffenc::cmd::common::parse_output_fps(&st.o.video_encode.output_fps)?;
@@ -470,5 +474,15 @@ impl Mode for CustomMode {
         self.rows.clear();
         self.scanned.clear();
         self.scan = None;
+    }
+
+    fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {
+        let out = PathBuf::from(self.st.out_dir.trim()).join(self.st.out_name.trim());
+        ffenc::cmd::conflicts::detect(&super::media_choices(&self.st.o.video_encode, &self.st.o.audio_encode, &self.st.o.container, &self.st.out_name, &self.st.last_auto, out, self.st.o.range_convert, self.probe.info().and_then(|i| i.video_color_range())))
+    }
+
+    fn apply_conflict_fix(&mut self, kind: ffenc::cmd::conflicts::ConflictKind) {
+        let out = PathBuf::from(self.st.out_dir.trim()).join(self.st.out_name.trim());
+        super::apply_media_fix(kind, &mut self.st.o.video_encode, &mut self.st.o.audio_encode, &mut self.st.o.container, &mut self.st.out_name, &mut self.st.last_auto, out, Some(&mut self.st.o.range_convert));
     }
 }

@@ -11,6 +11,7 @@ use crate::ffmpeg::locate::exe_dir;
 use crate::updater::{UpdateChannel, UpdateSource};
 
 pub const PORTABLE_FILE: &str = "FFmpegEncoder.settings.json";
+/// The stable version's portable settings file (read only, for importing).
 
 /// Colour theme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -415,7 +416,7 @@ fn dir_writable(dir: &Path) -> bool {
 /// `%APPDATA%\<name>` (Linux: ~/.config/<name>).
 pub fn roaming_dir_named(name: &str) -> PathBuf {
     if let Some(d) = std::env::var_os("FFENC_ROAMING_BASE") {
-        return PathBuf::from(d).join(name);
+        return PathBuf::from(d).join(name); // override for tests
     }
     if let Some(d) = std::env::var_os("APPDATA") {
         return PathBuf::from(d).join(name);

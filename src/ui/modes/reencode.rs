@@ -9,6 +9,7 @@ use super::{default_audio, default_video, restore, Ctx, Mode, Plan};
 use crate::ui::common::*;
 use ffenc::cmd::chapters::{self, ChapterMode, ManualChapter};
 use crate::ui::chapter_creator::{ChapterCreator, Source, Spec};
+use crate::ui::option_tips;
 use ffenc::cmd::common::*;
 use ffenc::cmd::reencode::{self, ReencodeParams};
 use ffenc::ffmpeg::runner::JobSpec;
@@ -112,7 +113,7 @@ impl Mode for ReencodeMode {
         "Re-encode video"
     }
     fn description(&self) -> &'static str {
-        "libx264 + AAC with trim, resize, chapters, passthrough, gain/compressor and deinterlacing."
+        "H.264 (or HEVC / AV1) + AAC (or AC3 / copy) with trim, resize, chapters, passthrough, gain/compressor and deinterlacing."
     }
     fn run_fields(&self) -> &'static [&'static str] {
         &["input", "out_name", "last_auto", "override_duration", "duration"]
@@ -144,7 +145,7 @@ impl Mode for ReencodeMode {
             });
             ui.end_row();
 
-            crate::ui::common::row_label(ui, "Trim");
+            crate::ui::common::row_label_tip(ui, "Trim", option_tips::TRIM);
             ui.horizontal(|ui| {
                 ui.label("start");
                 num_f64(ui, &mut st.trim_start, 0.0..=1.0e7, 0.1, " s");
@@ -165,7 +166,7 @@ impl Mode for ReencodeMode {
             if output_rows_sfx(ui, &mut st.out_dir, &mut st.out_name, &mut st.suffix, &cx.settings.output_folder) {
                 st.regen_name();
             }
-            crate::ui::common::row_label(ui, "Container");
+            crate::ui::common::row_label_tip(ui, "Container", option_tips::CONTAINER);
             let before = st.container.clone();
             egui::ComboBox::from_id_salt("m1_cont").selected_text(st.container.clone()).show_ui(ui, |ui| {
                 for c in ["auto", "mp4", "mkv", "mov"] {
@@ -180,10 +181,11 @@ impl Mode for ReencodeMode {
         });
 
         if st.passthrough.encodes_video() {
-            section(ui, "Video (libx264)");
+            section(ui, &format!("Video ({})", st.video.codec.encoder()));
+            let pix = crate::ui::codecs_ui::source_pix_fmt(self.probe.info());
             egui::Grid::new("m1v").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                video_encode_ui(ui, "m1", &mut st.video, true);
-                crate::ui::common::row_label(ui, "Resize");
+                crate::ui::codecs_ui::video_codec_ui(ui, "m1", &mut st.video, cx.encoders.as_ref(), pix.as_deref());
+                crate::ui::common::row_label_tip(ui, "Resize", option_tips::RESIZE);
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut st.resize, "New vertical resolution");
                     if st.resize {
@@ -204,8 +206,8 @@ impl Mode for ReencodeMode {
                     }
                 });
                 ui.end_row();
-                range_ui(ui, &mut st.range_convert);
-                crate::ui::common::row_label(ui, "Deinterlace");
+                range_ui(ui, &mut st.range_convert, self.probe.info().map(|i| i.video_color_range()));
+                crate::ui::common::row_label_tip(ui, "Deinterlace", option_tips::DEINTERLACE);
                 let interlaced = summary.as_ref().map(|s| s.interlaced).unwrap_or(false);
                 ui.vertical(|ui| {
                     ui.add_enabled(interlaced, egui::Checkbox::new(&mut st.deinterlace, "bwdif double-rate deinterlace (recommended)"));
@@ -220,9 +222,9 @@ impl Mode for ReencodeMode {
         }
 
         if st.passthrough.encodes_audio() {
-            section(ui, "Audio (AAC)");
+            section(ui, "Audio");
             egui::Grid::new("m1a").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                audio_encode_ui(ui, "m1a", &mut st.audio);
+                crate::ui::codecs_ui::audio_codec_ui(ui, "m1a", &mut st.audio, cx.encoders.as_ref(), true);
             });
             if summary.as_ref().map(|s| s.audio_count > 1).unwrap_or(false) && st.audio.filter_chain().is_some() {
                 hint(ui, "Gain/compressor is applied to every audio track separately.");
@@ -267,6 +269,9 @@ impl Mode for ReencodeMode {
             return Err("Trim duration exceeds video duration".into());
         }
         let chapters = chapters::chapter_input(out_dur, mode, st.chapter_interval_min * 60.0, &st.manual)?;
+        crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), st.passthrough.encodes_video().then_some(&st.video), st.passthrough.encodes_audio().then_some(&st.audio))?;
+        let mut audio = st.audio.clone();
+        audio.source_channels = crate::ui::codecs_ui::source_channels(Some(info));
         let pr = ReencodeParams {
             input: input.clone(),
             output: output.clone(),
@@ -275,7 +280,7 @@ impl Mode for ReencodeMode {
             trim_end: st.trim_end,
             passthrough: st.passthrough,
             video: st.video.clone(),
-            audio: st.audio.clone(),
+            audio,
             range_convert: st.range_convert,
             resize,
             deinterlace: st.deinterlace && v.interlaced,
@@ -294,7 +299,6 @@ impl Mode for ReencodeMode {
         if let Some((_, text)) = &pr.chapters {
             cmd.warnings.push(format!("Chapters:\n{}", text.trim_end()));
         }
-        let _ = cx;
         Ok(Plan {
             jobs: vec![JobSpec::new(
                 format!("Re-encode {}", input.file_name().unwrap_or_default().to_string_lossy()),
@@ -321,5 +325,15 @@ impl Mode for ReencodeMode {
     fn load(&mut self, v: &serde_json::Value, s: &Settings) {
         self.st = restore(v, State::from_settings(s));
         self.probe = ProbeSlot::default();
+    }
+
+    fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {
+        let out = PathBuf::from(self.st.out_dir.trim()).join(self.st.out_name.trim());
+        ffenc::cmd::conflicts::detect(&super::media_choices(&self.st.video, &self.st.audio, &self.st.container, &self.st.out_name, &self.st.last_auto, out, self.st.range_convert, self.probe.info().and_then(|i| i.video_color_range())))
+    }
+
+    fn apply_conflict_fix(&mut self, kind: ffenc::cmd::conflicts::ConflictKind) {
+        let out = PathBuf::from(self.st.out_dir.trim()).join(self.st.out_name.trim());
+        super::apply_media_fix(kind, &mut self.st.video, &mut self.st.audio, &mut self.st.container, &mut self.st.out_name, &mut self.st.last_auto, out, Some(&mut self.st.range_convert));
     }
 }

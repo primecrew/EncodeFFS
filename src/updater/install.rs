@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use sha2::{Digest, Sha256};
 
@@ -300,9 +300,230 @@ pub fn run_update(build: &AvailableBuild, target_bin: &Path, stage: &dyn Fn(Stag
     res
 }
 
+/// Folder name prefix used for update staging (`<managed root>/.ffmpeg-update-<id>`).
+pub const STAGING_PREFIX: &str = ".ffmpeg-update-";
+/// A staging folder newer than this is left alone (another instance may still be downloading).
+pub const STALE_STAGING_AGE: Duration = Duration::from_secs(60 * 60);
+
+/// Roots whose immediate children may be scanned for leftover staging: the current
+/// app-managed FFmpeg root, and the default managed root if it is a different folder.
+pub fn staging_roots_for(current: &Path, default: &Path) -> Vec<PathBuf> {
+    let mut v = vec![current.to_path_buf()];
+    if !crate::ffmpeg::locate::is_managed_dir(current, default) {
+        v.push(default.to_path_buf());
+    }
+    v
+}
+
+/// [`staging_roots_for`] for this process's current and default managed locations.
+pub fn staging_roots() -> Vec<PathBuf> {
+    staging_roots_for(&crate::ffmpeg::managed::current_root(), &crate::ffmpeg::managed::default_root())
+}
+
+/// Result of one attempted cleanup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StaleStaging {
+    Removed(PathBuf),
+    Failed(PathBuf, String),
+}
+
+/// Remove leftover `.ffmpeg-update-*` folders in `roots` that look like this app's
+/// staging and are older than `min_age`. Never follows symlinks or junctions, and
+/// never touches `bin` or `bin.previous`. Missing roots are skipped.
+pub fn cleanup_stale_staging(roots: &[PathBuf], min_age: Duration) -> Vec<StaleStaging> {
+    let mut out = vec![];
+    for root in roots {
+        match cleanup_root(root, min_age) {
+            Ok(mut v) => out.append(&mut v),
+            Err(e) => out.push(StaleStaging::Failed(root.to_path_buf(), e)),
+        }
+    }
+    out
+}
+
+fn cleanup_root(root: &Path, min_age: Duration) -> Result<Vec<StaleStaging>, String> {
+    let meta = match std::fs::symlink_metadata(root) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(e.to_string()),
+    };
+    if is_link(&meta) || !meta.is_dir() {
+        return Ok(vec![]);
+    }
+    let entries = std::fs::read_dir(root).map_err(|e| e.to_string())?;
+    let mut out = vec![];
+    for ent in entries {
+        let ent = match ent {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = ent.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        if name == "bin" || name == "bin.previous" || !is_staging_name(name) {
+            continue;
+        }
+        match consider_staging(&path, min_age) {
+            Ok(true) => match remove_dir_nofollow(&path) {
+                Ok(()) => out.push(StaleStaging::Removed(path)),
+                Err(e) => out.push(StaleStaging::Failed(path, e.to_string())),
+            },
+            Ok(false) => {}
+            Err(e) => out.push(StaleStaging::Failed(path, e)),
+        }
+    }
+    Ok(out)
+}
+
+fn is_staging_name(name: &str) -> bool {
+    name.starts_with(STAGING_PREFIX) && name.len() > STAGING_PREFIX.len() && !name.contains(['/', '\\'])
+}
+
+/// `Ok(true)` = stale staging we should remove.
+fn consider_staging(path: &Path, min_age: Duration) -> Result<bool, String> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if is_link(&meta) || !meta.is_dir() {
+        return Ok(false);
+    }
+    if !looks_like_our_staging(path)? {
+        return Ok(false);
+    }
+    Ok(is_older_than(path, min_age)?)
+}
+
+fn looks_like_our_staging(path: &Path) -> Result<bool, String> {
+    let mut saw_new = false;
+    for ent in std::fs::read_dir(path).map_err(|e| e.to_string())? {
+        let ent = ent.map_err(|e| e.to_string())?;
+        let p = ent.path();
+        let meta = std::fs::symlink_metadata(&p).map_err(|e| e.to_string())?;
+        if is_link(&meta) {
+            return Ok(false);
+        }
+        let name = ent.file_name();
+        let Some(name) = name.to_str() else { return Ok(false) };
+        if meta.is_dir() {
+            if saw_new || name != "new" {
+                return Ok(false);
+            }
+            saw_new = true;
+            if !looks_like_new_dir(&p)? {
+                return Ok(false);
+            }
+        } else if !meta.is_file() || !is_expected_staging_file(name) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn looks_like_new_dir(path: &Path) -> Result<bool, String> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if is_link(&meta) || !meta.is_dir() {
+        return Ok(false);
+    }
+    for ent in std::fs::read_dir(path).map_err(|e| e.to_string())? {
+        let ent = ent.map_err(|e| e.to_string())?;
+        let p = ent.path();
+        let meta = std::fs::symlink_metadata(&p).map_err(|e| e.to_string())?;
+        if is_link(&meta) || !meta.is_file() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn is_expected_staging_file(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+}
+
+fn is_older_than(path: &Path, min_age: Duration) -> Result<bool, String> {
+    let newest = newest_mtime(path)?.ok_or_else(|| "could not read the folder's date".to_string())?;
+    match newest.elapsed() {
+        Ok(age) => Ok(age >= min_age),
+        Err(_) => Ok(false), // future mtime: leave it
+    }
+}
+
+fn newest_mtime(path: &Path) -> Result<Option<SystemTime>, String> {
+    let mut newest: Option<SystemTime> = None;
+    fn consider(newest: &mut Option<SystemTime>, meta: &std::fs::Metadata) {
+        if let Ok(t) = meta.modified() {
+            if newest.map(|n| t > n).unwrap_or(true) {
+                *newest = Some(t);
+            }
+        }
+    }
+    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    consider(&mut newest, &meta);
+    if meta.is_dir() && !is_link(&meta) {
+        let entries = match std::fs::read_dir(path) {
+            Ok(e) => e,
+            Err(e) => return Err(e.to_string()),
+        };
+        for ent in entries {
+            let ent = ent.map_err(|e| e.to_string())?;
+            let p = ent.path();
+            let m = std::fs::symlink_metadata(&p).map_err(|e| e.to_string())?;
+            consider(&mut newest, &m);
+            if m.is_dir() && !is_link(&m) {
+                // one level down (`new/`)
+                if let Ok(inner) = std::fs::read_dir(&p) {
+                    for c in inner.flatten() {
+                        if let Ok(cm) = std::fs::symlink_metadata(c.path()) {
+                            consider(&mut newest, &cm);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(newest)
+}
+
+fn is_link(meta: &std::fs::Metadata) -> bool {
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Delete a directory tree without following symlinks or junctions.
+fn remove_dir_nofollow(path: &Path) -> std::io::Result<()> {
+    let meta = std::fs::symlink_metadata(path)?;
+    if is_link(&meta) {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, "refusing to follow a shortcut or link"));
+    }
+    if !meta.is_dir() {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, "not a folder"));
+    }
+    for ent in std::fs::read_dir(path)? {
+        let ent = ent?;
+        let p = ent.path();
+        let m = std::fs::symlink_metadata(&p)?;
+        if is_link(&m) {
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, "refusing to follow a shortcut or link"));
+        }
+        if m.is_dir() {
+            remove_dir_nofollow(&p)?;
+        } else {
+            std::fs::remove_file(&p)?;
+        }
+    }
+    std::fs::remove_dir(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, SystemTime};
 
     fn tmp() -> PathBuf {
         let d = std::env::temp_dir().join(format!("upd_{}", crate::util::unique_id()));
@@ -427,5 +648,122 @@ mod tests {
         println!("{report}");
         assert!(bin.join("ffmpeg.exe").is_file() && bin.join("ffprobe.exe").is_file());
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    fn staging(root: &Path, id: &str) -> PathBuf {
+        let p = root.join(format!("{STAGING_PREFIX}{id}"));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    fn removed(notes: &[StaleStaging]) -> Vec<PathBuf> {
+        notes.iter().filter_map(|n| match n {
+            StaleStaging::Removed(p) => Some(p.clone()),
+            StaleStaging::Failed(p, e) => panic!("cleanup failed for {}: {e}", p.display()),
+        }).collect()
+    }
+
+    fn set_old(path: &Path) {
+        let t = SystemTime::now() - Duration::from_secs(2 * 3600);
+        let f = std::fs::OpenOptions::new().read(true).open(path).unwrap();
+        let times = std::fs::FileTimes::new().set_modified(t);
+        f.set_times(times).unwrap();
+    }
+
+    #[test]
+    fn cleanup_removes_stale_staging_keeps_recent_and_leaves_bin_alone() {
+        let root = tmp();
+        let bin = root.join("bin");
+        let prev = root.join("bin.previous");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&prev).unwrap();
+        std::fs::write(bin.join("ffmpeg.exe"), b"keep").unwrap();
+        std::fs::write(prev.join("ffmpeg.exe"), b"old").unwrap();
+
+        // stale: archive + new/, older than an hour
+        let stale = staging(&root, "stale1");
+        std::fs::write(stale.join("ffmpeg-master-win64-gpl.zip"), b"partial").unwrap();
+        std::fs::create_dir_all(stale.join("new")).unwrap();
+        std::fs::write(stale.join("new").join("ffmpeg.exe"), b"x").unwrap();
+        set_old(&stale);
+        set_old(&stale.join("ffmpeg-master-win64-gpl.zip"));
+        set_old(&stale.join("new"));
+        set_old(&stale.join("new").join("ffmpeg.exe"));
+
+        // stale empty folder (crash right after create)
+        let empty = staging(&root, "empty");
+        set_old(&empty);
+
+        // recent in-progress download: same layout, fresh mtime
+        let recent = staging(&root, "recent");
+        std::fs::write(recent.join("ffmpeg-master-win64-gpl.zip"), b"downloading").unwrap();
+
+        // a file with a staging-like name, not a folder
+        let named_file = root.join(format!("{STAGING_PREFIX}notafile"));
+        std::fs::write(&named_file, b"not a dir").unwrap();
+
+        // other folders that must be left alone
+        let other = root.join("other-folder");
+        std::fs::create_dir_all(&other).unwrap();
+        set_old(&other);
+        let almost = root.join("ffmpeg-update-no-dot");
+        std::fs::create_dir_all(&almost).unwrap();
+        set_old(&almost);
+        let unexpected = staging(&root, "photos");
+        std::fs::create_dir_all(unexpected.join("vacation")).unwrap();
+        set_old(&unexpected);
+        set_old(&unexpected.join("vacation"));
+
+        // a staging-named folder inside bin must not be reached
+        let inside_bin = staging(&bin, "hidden");
+        set_old(&inside_bin);
+
+        let notes = cleanup_stale_staging(&[root.clone()], STALE_STAGING_AGE);
+        let gone = removed(&notes);
+        assert!(gone.contains(&stale), "stale staging with archive and new/ is removed");
+        assert!(gone.contains(&empty), "empty stale staging is removed");
+        assert_eq!(gone.len(), 2, "only the two stale staging folders: {gone:?}");
+
+        assert!(recent.is_dir(), "recent in-progress staging is kept");
+        assert!(named_file.is_file(), "a similarly named file is ignored");
+        assert!(other.is_dir(), "unrelated folder is ignored");
+        assert!(almost.is_dir(), "folder without the exact prefix is ignored");
+        assert!(unexpected.is_dir(), "prefix match with unexpected contents is ignored");
+        assert!(inside_bin.is_dir(), "does not recurse into bin");
+        assert_eq!(std::fs::read(bin.join("ffmpeg.exe")).unwrap(), b"keep");
+        assert_eq!(std::fs::read(prev.join("ffmpeg.exe")).unwrap(), b"old");
+        assert!(bin.is_dir() && prev.is_dir());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn staging_roots_are_only_current_and_default_when_they_differ() {
+        let cur = PathBuf::from("/data/custom-ffmpeg");
+        let def = PathBuf::from("/data/FFmpegEncoder/ffmpeg");
+        assert_eq!(staging_roots_for(&cur, &def), vec![cur.clone(), def.clone()]);
+        assert_eq!(staging_roots_for(&def, &def), vec![def.clone()]);
+        // same folder, different slash/case, still one entry
+        #[cfg(windows)]
+        {
+            let alt = PathBuf::from("/DATA/ffmpegencoder-codecs/ffmpeg/");
+            assert_eq!(staging_roots_for(&def, &alt).len(), 1);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_skips_symlinked_staging() {
+        let root = tmp();
+        let target = root.join("real-files");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("keep.txt"), b"x").unwrap();
+        let link = root.join(format!("{STAGING_PREFIX}link"));
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        set_old(&target);
+        let notes = cleanup_stale_staging(&[root.clone()], Duration::ZERO);
+        assert!(removed(&notes).is_empty(), "symlink is not treated as staging: {notes:?}");
+        assert!(link.exists() && target.join("keep.txt").is_file());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

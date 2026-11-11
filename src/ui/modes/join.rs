@@ -13,6 +13,7 @@ use ffenc::cmd::join::{self, JoinInput, JoinMethod, JoinParams};
 use ffenc::ffmpeg::probe;
 use ffenc::ffmpeg::runner::JobSpec;
 use ffenc::settings::Settings;
+use crate::ui::option_tips;
 use ffenc::util::{fmt_hms, has_ext, stem, ANY_VIDEO_EXTS};
 
 const CONTAINERS: &[&str] = &["mp4", "mkv", "mov"];
@@ -28,6 +29,7 @@ struct State {
     container: String,
     method: JoinMethod,
     chapters_per_file: bool,
+    #[serde(default = "ffenc::cmd::common::missing_faststart")]
     faststart: bool,
     video: VideoEncode,
     audio: AudioEncode,
@@ -44,7 +46,7 @@ impl Default for State {
             container: "mp4".into(),
             method: JoinMethod::Copy,
             chapters_per_file: true,
-            faststart: true,
+            faststart: false,
             video: VideoEncode::default(),
             audio: AudioEncode::default(),
         }
@@ -324,19 +326,19 @@ impl Mode for JoinMode {
         }
         if self.st.method == JoinMethod::Reencode {
             hint(ui, "Every file is scaled/padded to the first file's size and frame rate; audio is resampled to its rate (mono or stereo).");
-            section(ui, "Video (libx264)");
-            egui::Grid::new("joinv").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| video_encode_ui(ui, "join", &mut self.st.video, true));
-            section(ui, "Audio (AAC)");
-            egui::Grid::new("joina").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| audio_encode_ui(ui, "joina", &mut self.st.audio));
+            section(ui, &format!("Video ({})", self.st.video.codec.encoder()));
+            egui::Grid::new("joinv").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| crate::ui::codecs_ui::video_codec_ui(ui, "join", &mut self.st.video, cx.encoders.as_ref(), None));
+            section(ui, "Audio");
+            egui::Grid::new("joina").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| crate::ui::codecs_ui::audio_codec_ui(ui, "joina", &mut self.st.audio, cx.encoders.as_ref(), false));
         }
 
         section(ui, "Chapters & output");
         let mut rename = false;
         egui::Grid::new("joino").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            crate::ui::common::row_label(ui, "Chapters");
+            crate::ui::common::row_label_tip(ui, "Chapters", option_tips::CHAPTERS_JOIN);
             ui.checkbox(&mut self.st.chapters_per_file, "One chapter per source file (titled with the file name)");
             ui.end_row();
-            crate::ui::common::row_label(ui, "Container");
+            crate::ui::common::row_label_tip(ui, "Container", option_tips::CONTAINER);
             ui.horizontal(|ui| {
                 for c in CONTAINERS {
                     rename |= ui.radio_value(&mut self.st.container, c.to_string(), *c).changed();
@@ -356,8 +358,9 @@ impl Mode for JoinMode {
             self.update_name();
         }
     }
-    fn build(&mut self, _cx: &Ctx) -> Result<Plan, String> {
+    fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
         if self.st.method == JoinMethod::Reencode {
+            crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&self.st.video), Some(&self.st.audio))?;
             ffenc::cmd::common::parse_output_fps(&self.st.video.output_fps)?;
         }
         if self.st.files.len() < 2 {
@@ -405,6 +408,16 @@ impl Mode for JoinMode {
     fn load(&mut self, v: &serde_json::Value, s: &Settings) {
         self.st = restore(v, State { out_dir: s.output_folder.clone(), video: default_video(s), audio: default_audio(s), ..Default::default() });
         self.probes.clear();
+    }
+
+    fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {
+        let out = PathBuf::from(self.st.out_dir.trim()).join(self.st.out_name.trim());
+        ffenc::cmd::conflicts::detect(&super::media_choices(&self.st.video, &self.st.audio, &self.st.container, &self.st.out_name, &self.st.last_auto, out, false, None))
+    }
+
+    fn apply_conflict_fix(&mut self, kind: ffenc::cmd::conflicts::ConflictKind) {
+        let out = PathBuf::from(self.st.out_dir.trim()).join(self.st.out_name.trim());
+        super::apply_media_fix(kind, &mut self.st.video, &mut self.st.audio, &mut self.st.container, &mut self.st.out_name, &mut self.st.last_auto, out, None);
     }
 }
 

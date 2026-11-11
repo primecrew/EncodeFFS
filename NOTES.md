@@ -1,5 +1,8 @@
 # Developer notes
 
+The Codecs edition (HEVC/AV1/AC3, hover help, one-click conflict fixes, PC.709 Frameserver default, and related work) was merged into master after 0.6.0-rc.1. See [CHANGELOG.md](CHANGELOG.md) for the user-facing history, including the 0.5.5-codecs.* notes.
+
+
 Detailed implementation notes. The user-facing history is in [CHANGELOG.md](CHANGELOG.md).
 
 ## 0.6.0-rc.1 — Create Slideshow in the stable app (release candidate)

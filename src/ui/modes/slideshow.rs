@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{default_audio, default_video, restore, Ctx, Mode, Plan};
 use crate::ui::common::*;
+use crate::ui::option_tips;
 use ffenc::cmd::common::{VideoEncode, PRESETS};
 use ffenc::cmd::slideshow::{
     self, DurationMode, ImageInput, OutputSize, SmallImage, SlideshowParams, Transition, IMAGE_EXTS,
@@ -757,7 +758,7 @@ impl Mode for SlideshowMode {
                 hint(ui, "Slideshow default is 30 (stills).");
             });
             ui.end_row();
-            row_label(ui, "CRF");
+            row_label_tip(ui, "CRF", option_tips::CRF);
             ui.horizontal(|ui| {
                 num_u32(ui, &mut self.st.video.crf, 0..=51, "");
                 hint(ui, "18 is the slideshow default (visually lossless for stills).");

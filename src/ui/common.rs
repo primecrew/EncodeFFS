@@ -5,9 +5,12 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 
 use eframe::egui::{self, RichText, Ui};
+use ffenc::cmd::codecs::AAC_BITRATES;
 use ffenc::cmd::common::*;
 use ffenc::ffmpeg::probe::{self, MediaInfo};
 use ffenc::util::fmt_hms;
+
+use super::option_tips;
 
 /// Result of a closure run on a background thread.
 pub struct Bg<T> {
@@ -317,7 +320,7 @@ pub fn passthrough_ui(ui: &mut Ui, id: &str, p: &mut Passthrough) {
 
 /// CRF / preset / tune rows (inside a Grid).
 pub fn video_encode_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, show_tune: bool) {
-    row_label(ui, "CRF");
+    row_label_tip(ui, "CRF", option_tips::CRF);
     ui.horizontal(|ui| {
         num_u32(ui, &mut v.crf, 0..=51, "");
         hint(ui, "lower = better quality / bigger file");
@@ -362,7 +365,40 @@ pub fn output_fps_ui(ui: &mut Ui, fps: &mut String) {
     ui.end_row();
 }
 
+/// Closed drop-down label: a listed rate, or "Custom" when the value is typed / Custom… was chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BitrateMenu {
+    Listed(u32),
+    Custom,
+}
+
+pub fn bitrate_menu_selection(value: u32, choices: &[u32], custom_open: bool) -> BitrateMenu {
+    if custom_open || !choices.contains(&value) {
+        BitrateMenu::Custom
+    } else {
+        BitrateMenu::Listed(value)
+    }
+}
+
+/// `picked` is `Some(kbps)` for a typical rate, or `None` for Custom…. The stored value is unchanged when opening Custom.
+pub fn apply_bitrate_menu(current: u32, picked: Option<u32>) -> (u32, bool) {
+    match picked {
+        Some(b) => (b, false),
+        None => (current, true),
+    }
+}
+
+pub fn show_custom_bitrate_field(value: u32, choices: &[u32], custom_open: bool) -> bool {
+    matches!(bitrate_menu_selection(value, choices, custom_open), BitrateMenu::Custom)
+}
+
+/// AAC (and other standalone AAC rows): typical rates plus Custom….
 pub fn bitrate_ui(ui: &mut Ui, label: &str, k: &mut u32) {
+    bitrate_ui_ex(ui, label, k, &AAC_BITRATES, 8..=1024);
+}
+
+/// Bitrate drop-down of `choices` plus Custom… (typed box next to it). Keeps the "Will encode: N kb/s" readout.
+pub fn bitrate_ui_ex(ui: &mut Ui, label: &str, k: &mut u32, choices: &[u32], range: std::ops::RangeInclusive<u32>) {
     row_label(ui, label);
     let pal = crate::ui::theme::c();
     ui.vertical(|ui| {
@@ -370,37 +406,41 @@ pub fn bitrate_ui(ui: &mut Ui, label: &str, k: &mut u32) {
         let color = if pal.high_contrast { pal.accent } else { ui.visuals().strong_text_color() };
         let r = ui.label(RichText::new(&readout).strong().size(15.0).color(color));
         named(r, egui::WidgetType::Label, &readout);
-        ui.add_space(10.0);
-        hint(ui, "Available bitrates");
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            for b in [128, 160, 192, 256, 320] {
-                let selected = *k == b;
-                let text = if selected {
-                    let c = if pal.high_contrast { pal.accent } else { pal.on_pill };
-                    RichText::new(format!("{b}")).strong().color(c)
-                } else {
-                    RichText::new(format!("{b}"))
-                };
-                let mut btn = egui::Button::new(text);
-                if selected {
-                    if pal.high_contrast {
-                        btn = btn.fill(egui::Color32::BLACK).stroke(egui::Stroke::new(pal.focus_width.max(2.0), pal.accent));
-                    } else {
-                        btn = btn.fill(pal.accent).stroke(egui::Stroke::new(2.0_f32, pal.accent));
+        ui.add_space(6.0);
+        let custom_id = ui.id().with(("bitrate_custom", label));
+        let mut custom_open = ui.data(|d| d.get_temp::<bool>(custom_id)).unwrap_or(false);
+        let sel = bitrate_menu_selection(*k, choices, custom_open);
+        let selected_text = match sel {
+            BitrateMenu::Listed(b) => format!("{b} kb/s"),
+            BitrateMenu::Custom => "Custom".to_string(),
+        };
+        ui.horizontal(|ui| {
+            let combo = egui::ComboBox::from_id_salt(format!("bitrate:{label}")).width(140.0).selected_text(RichText::new(&selected_text).strong());
+            let r = combo.show_ui(ui, |ui| {
+                for &b in choices {
+                    let on = sel == BitrateMenu::Listed(b);
+                    if ui.selectable_label(on, format!("{b} kb/s")).clicked() {
+                        let (v, c) = apply_bitrate_menu(*k, Some(b));
+                        *k = v;
+                        custom_open = c;
                     }
                 }
-                let name = if selected { format!("{b} kb/s (selected)") } else { format!("{b} kb/s") };
-                if named(ui.add(btn), egui::WidgetType::Button, &name).clicked() {
-                    *k = b;
+                if ui.selectable_label(sel == BitrateMenu::Custom, "Custom…").clicked() {
+                    let (v, c) = apply_bitrate_menu(*k, None);
+                    *k = v;
+                    custom_open = c;
                 }
+            });
+            named(r.response, egui::WidgetType::ComboBox, &format!("{label}: {selected_text}. Choose a typical rate, or Custom… to type another value."));
+            if show_custom_bitrate_field(*k, choices, custom_open) {
+                let nr = num_u32(ui, k, range, " kbps");
+                if nr.changed() && choices.contains(k) {
+                    custom_open = false;
+                }
+                named(nr, egui::WidgetType::DragValue, &format!("{label} custom value (kbps)"));
             }
         });
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            hint(ui, "Or type a custom value");
-            num_u32(ui, k, 8..=1024, " kbps");
-        });
+        ui.data_mut(|d| d.insert_temp(custom_id, custom_open));
     });
     ui.end_row();
 }
@@ -408,7 +448,12 @@ pub fn bitrate_ui(ui: &mut Ui, label: &str, k: &mut u32) {
 /// Bitrate + gain + compressor rows.
 pub fn audio_encode_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode) {
     bitrate_ui(ui, "AAC bitrate", &mut a.bitrate_k);
-    row_label_tip(ui, "Gain", "Volume change applied to the audio, in decibels (+6 dB is roughly twice as loud). 0 = unchanged.");
+    audio_filters_ui(ui, id, a);
+}
+
+/// Gain / compressor rows (any re-encoded audio codec).
+pub fn audio_filters_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode) {
+        row_label_tip(ui, "Gain", "Pre-gain in decibels, applied before the compressor (+6 dB is roughly twice as loud). 0 = unchanged.");
     ui.horizontal(|ui| {
         num_f64(ui, &mut a.gain_db, -30.0..=30.0, 0.1, " dB");
         hint(ui, "-30..+30");
@@ -440,17 +485,14 @@ pub fn audio_encode_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode) {
 
 pub fn compressor_params_ui(ui: &mut Ui, id: &str, c: &mut CompressorParams) {
     egui::Grid::new(id).num_columns(2).show(ui, |ui| {
-        row_label_tip(ui, "Threshold", "Level above which the compressor starts reducing the volume.");
-        num_f64(ui, &mut c.threshold_db, -60.0..=0.0, 0.1, " dB");
-        ui.end_row();
         row_label_tip(ui, "Ratio", "How strongly levels above the threshold are reduced (4:1 = 4 dB over becomes 1 dB over).");
         num_f64(ui, &mut c.ratio, 1.0..=20.0, 0.05, ":1");
         ui.end_row();
+        row_label_tip(ui, "Threshold", "Level above which the compressor starts reducing the volume.");
+        num_f64(ui, &mut c.threshold_db, -60.0..=0.0, 0.1, " dB");
+        ui.end_row();
         row_label_tip(ui, "Knee", "Softens the transition around the threshold (1 = hard, higher = gentler).");
         num_f64(ui, &mut c.knee, 1.0..=8.0, 0.05, "");
-        ui.end_row();
-        row_label_tip(ui, "Makeup", "Gain added after compression to make up for the reduced level.");
-        num_f64(ui, &mut c.makeup_db, -12.0..=12.0, 0.1, " dB");
         ui.end_row();
         row_label_tip(ui, "Attack", "How quickly the compressor reacts when the level rises above the threshold.");
         num_f64(ui, &mut c.attack_ms, 0.01..=2000.0, 0.5, " ms");
@@ -458,20 +500,36 @@ pub fn compressor_params_ui(ui: &mut Ui, id: &str, c: &mut CompressorParams) {
         row_label_tip(ui, "Release", "How quickly the compressor lets go after the level drops below the threshold.");
         num_f64(ui, &mut c.release_ms, 1.0..=9000.0, 1.0, " ms");
         ui.end_row();
+        row_label_tip(ui, "Make-up gain", "Gain added after compression to make up for the reduced level.");
+        num_f64(ui, &mut c.makeup_db, -12.0..=12.0, 0.1, " dB");
+        ui.end_row();
     });
 }
 
-pub fn range_ui(ui: &mut Ui, v: &mut bool) {
-    row_label(ui, "Colour range");
+/// Colour-range checkbox. `probed` is `None` when there is no source probe yet,
+/// `Some(None)` when the file was probed but the range is missing or unknown
+/// (a mild hover-only note, no warning), and `Some(Limited/Full)` when tagged.
+pub fn range_ui(ui: &mut Ui, v: &mut bool, probed: Option<Option<ffenc::cmd::common::ColorRange>>) {
+    row_label_tip(ui, "Colour range", option_tips::COLOUR_RANGE);
     ui.vertical(|ui| {
         ui.checkbox(v, "Convert full-range to limited-range BT.709 and tag it");
         hint(ui, "Use for full-range PC/capture sources. Skip if the source is already limited/video range (avoids grey blacks).");
+        if matches!(probed, Some(None)) {
+            hint(ui, "This file's colour range is not tagged. Most captures are already TV range. Check a dark scene.");
+        }
     });
     ui.end_row();
+    if let Some(c) = ffenc::cmd::conflicts::source_already_limited(*v, probed.flatten()) {
+        ui.label("");
+        if let ConflictAction::Fix(_) = conflict_warning_ui(ui, &c, false) {
+            *v = false;
+        }
+        ui.end_row();
+    }
 }
 
 pub fn faststart_ui(ui: &mut Ui, v: &mut bool, enabled: bool) {
-    row_label(ui, "Faststart");
+    row_label_tip(ui, "Faststart", option_tips::FASTSTART);
     ui.add_enabled(enabled, egui::Checkbox::new(v, "Move index to the front for faster streaming (MP4 only)"));
     ui.end_row();
 }
@@ -581,6 +639,40 @@ pub fn row_label_tip(ui: &mut Ui, text: &str, tip: &str) -> egui::Response {
     row_label(ui, text).on_hover_text(tip)
 }
 
+
+/// Result of a one-click warning row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictAction {
+    None,
+    Fix(ffenc::cmd::conflicts::ConflictKind),
+    Keep(ffenc::cmd::conflicts::ConflictKind),
+}
+
+/// Plain-words warning plus optional “fix it” / “keep my setting” buttons.
+/// Large, keyboard-focusable buttons; uses the theme warning colour (including High contrast).
+pub fn conflict_warning_ui(ui: &mut Ui, c: &ffenc::cmd::conflicts::Conflict, show_keep: bool) -> ConflictAction {
+    ui.add_space(4.0);
+    ui.label(RichText::new(format!("⚠ {}", c.message)).color(crate::ui::theme::c().warn));
+    let mut action = ConflictAction::None;
+    if let Some(fix) = c.fix {
+        ui.horizontal_wrapped(|ui| {
+            let r = ui.add(egui::Button::new(RichText::new(fix.button).strong()).min_size(egui::vec2(24.0, 32.0)));
+            let r = named(r, egui::WidgetType::Button, &format!("Fix it for me: {}", fix.hint));
+            if r.on_hover_text(fix.hint).clicked() {
+                action = ConflictAction::Fix(c.kind);
+            }
+            if show_keep {
+                let r = ui.add(egui::Button::new("Keep my setting").min_size(egui::vec2(24.0, 32.0)));
+                let r = named(r, egui::WidgetType::Button, "Keep my setting: leave this as it is");
+                if r.clicked() {
+                    action = ConflictAction::Keep(c.kind);
+                }
+            }
+        });
+    }
+    action
+}
+
 #[cfg(test)]
 mod row_label_tests {
     use super::*;
@@ -627,5 +719,50 @@ mod row_label_tests {
         // stable across more frames
         let again = frame(&ctx, true);
         assert_eq!(again.2, h);
+    }
+}
+
+#[cfg(test)]
+mod bitrate_menu_tests {
+    use super::*;
+    use ffenc::cmd::codecs::{AAC_BITRATES, AC3_BITRATES};
+
+    #[test]
+    fn typical_aac_and_ac3_lists() {
+        assert_eq!(AAC_BITRATES, [96, 128, 160, 192, 256, 320]);
+        assert_eq!(AC3_BITRATES, [192, 256, 384, 448, 640]);
+        assert!(AAC_BITRATES.contains(&192), "default AAC rate is in the list");
+        assert!(AC3_BITRATES.contains(&448), "default AC3 rate is in the list");
+    }
+
+    #[test]
+    fn listed_value_shows_as_itself_until_custom_is_chosen() {
+        assert_eq!(bitrate_menu_selection(192, &AAC_BITRATES, false), BitrateMenu::Listed(192));
+        assert_eq!(bitrate_menu_selection(96, &AAC_BITRATES, false), BitrateMenu::Listed(96));
+        assert_eq!(bitrate_menu_selection(320, &AAC_BITRATES, false), BitrateMenu::Listed(320));
+        assert!(!show_custom_bitrate_field(192, &AAC_BITRATES, false));
+    }
+
+    #[test]
+    fn value_not_in_the_list_is_custom_and_shows_the_box() {
+        assert_eq!(bitrate_menu_selection(200, &AAC_BITRATES, false), BitrateMenu::Custom);
+        assert_eq!(bitrate_menu_selection(64, &AAC_BITRATES, false), BitrateMenu::Custom);
+        assert!(show_custom_bitrate_field(200, &AAC_BITRATES, false));
+        assert_eq!(bitrate_menu_selection(320, &AC3_BITRATES, false), BitrateMenu::Custom);
+        assert_eq!(bitrate_menu_selection(448, &AC3_BITRATES, false), BitrateMenu::Listed(448));
+    }
+
+    #[test]
+    fn choosing_custom_keeps_the_stored_rate_and_opens_the_box() {
+        assert_eq!(apply_bitrate_menu(192, None), (192, true));
+        assert_eq!(bitrate_menu_selection(192, &AAC_BITRATES, true), BitrateMenu::Custom);
+        assert!(show_custom_bitrate_field(192, &AAC_BITRATES, true));
+    }
+
+    #[test]
+    fn choosing_a_listed_rate_stores_it_and_closes_custom() {
+        assert_eq!(apply_bitrate_menu(200, Some(256)), (256, false));
+        assert_eq!(apply_bitrate_menu(192, Some(96)), (96, false));
+        assert!(!show_custom_bitrate_field(256, &AAC_BITRATES, false));
     }
 }

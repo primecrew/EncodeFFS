@@ -173,6 +173,75 @@ pub struct PresetUi {
     pub run_after: bool,
 }
 
+
+/// Sidebar heading for built-in presets (including the Experimental codecs folder).
+pub const DEFAULT_PRESETS: &str = "Default Presets";
+/// Sidebar heading for saved, duplicated and imported presets.
+pub const USER_PRESETS: &str = "User Presets";
+/// Shown in User Presets when the user has none yet.
+pub const USER_PRESETS_HINT: &str = "Your saved presets appear here. Use Save as new preset, or right-click a preset › Duplicate.";
+
+/// A folder inside Default Presets or User Presets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SidebarFolder {
+    pub name: String,
+    pub items: Vec<usize>,
+}
+
+/// One top-level sidebar block: Favorites, Default Presets, or User Presets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SidebarBlock {
+    pub heading: String,
+    /// Uncategorized presets in this block (or every favorite, in Favorites).
+    pub items: Vec<usize>,
+    /// Subfolders, in order of first appearance. Experimental codecs is last in Default Presets.
+    pub folders: Vec<SidebarFolder>,
+    /// Plain-words hint when the block is empty (User Presets on first run).
+    pub empty_hint: Option<&'static str>,
+}
+
+impl SidebarBlock {
+    /// Every visible index in this block, folders included, in display order.
+    pub fn all_items(&self) -> Vec<usize> {
+        let mut v = self.items.clone();
+        for f in &self.folders {
+            v.extend(&f.items);
+        }
+        v
+    }
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty() && self.folders.is_empty()
+    }
+    pub fn count(&self) -> usize {
+        self.all_items().len()
+    }
+}
+
+/// Split unpinned, visible presets into uncategorized items and named folders.
+fn folders_and_rest<'a>(iter: impl Iterator<Item = (usize, &'a Preset)>) -> (Vec<usize>, Vec<(String, Vec<usize>)>) {
+    let mut folders: Vec<(String, Vec<usize>)> = vec![];
+    let mut rest = vec![];
+    for (i, p) in iter {
+        let c = p.category.trim();
+        if c.is_empty() {
+            rest.push(i);
+        } else if let Some(g) = folders.iter_mut().find(|g| g.0.eq_ignore_ascii_case(c)) {
+            g.1.push(i);
+        } else {
+            folders.push((c.to_string(), vec![i]));
+        }
+    }
+    (rest, folders)
+}
+
+fn take_experimental(folders: &mut Vec<(String, Vec<usize>)>) -> Option<(String, Vec<usize>)> {
+    folders.iter().position(|g| g.0.eq_ignore_ascii_case(presets::EXPERIMENTAL_GROUP)).map(|i| folders.remove(i))
+}
+
+fn to_folders(v: Vec<(String, Vec<usize>)>) -> Vec<SidebarFolder> {
+    v.into_iter().map(|(name, items)| SidebarFolder { name, items }).collect()
+}
+
 impl PresetUi {
     pub fn new(list: Vec<Preset>, current: usize) -> Self {
         let mut pu = PresetUi { list, current, editors: HashMap::new(), dialog: None, filter: String::new(), run_after: false };
@@ -313,26 +382,28 @@ impl PresetUi {
         }
     }
 
-    /// Group key used for sidebar grouping and moving: favorites first, then folders.
+    /// Group key used for sidebar grouping and moving: favorites, then Default vs User, then folder.
     fn group_of(p: &Preset) -> String {
         if p.hidden {
             "\u{2}hidden".into()
         } else if p.pinned {
             "\u{1}fav".into()
+        } else if p.is_builtin() {
+            format!("\u{3}default\u{1}{}", p.category.trim())
         } else {
-            p.category.trim().to_string()
+            format!("\u{4}user\u{1}{}", p.category.trim())
         }
     }
 
-    /// Sidebar sections in display order: (heading, preset indices). Favorites
-    /// first, then folders in order of first appearance, then the rest. Without
-    /// any favorites or folders there is a single section without a heading.
-    /// A non-empty `filter` gives one flat list of matches.
-    pub fn sections(&self, filter: &str) -> Vec<(Option<String>, Vec<usize>)> {
+    /// Sidebar blocks in display order. Favorites first (when any are pinned), then
+    /// Default Presets (built-ins, with Experimental codecs last among its folders),
+    /// then User Presets (always shown; empty on first run). A non-empty `filter`
+    /// gives one flat list of matches (heading empty).
+    pub fn sidebar_blocks(&self, filter: &str) -> Vec<SidebarBlock> {
         let f = filter.trim().to_lowercase();
         if !f.is_empty() {
             let kl = kinds();
-            let hits = (0..self.list.len())
+            let hits: Vec<usize> = (0..self.list.len())
                 .filter(|&i| !self.list[i].hidden)
                 .filter(|&i| {
                     let p = &self.list[i];
@@ -340,32 +411,31 @@ impl PresetUi {
                     [p.name.as_str(), kind, p.category.as_str(), p.description.as_str()].iter().any(|s| s.to_lowercase().contains(&f))
                 })
                 .collect();
-            return vec![(None, hits)];
+            let empty_hint = hits.is_empty().then_some("No preset matches.");
+            return vec![SidebarBlock { heading: String::new(), items: hits, folders: vec![], empty_hint }];
         }
         let fav: Vec<usize> = (0..self.list.len()).filter(|&i| self.list[i].pinned && !self.list[i].hidden).collect();
-        let mut folders: Vec<(String, Vec<usize>)> = vec![];
-        let mut rest = vec![];
-        for (i, p) in self.list.iter().enumerate().filter(|(_, p)| !p.pinned && !p.hidden) {
-            let c = p.category.trim();
-            if c.is_empty() {
-                rest.push(i);
-            } else if let Some(g) = folders.iter_mut().find(|g| g.0.eq_ignore_ascii_case(c)) {
-                g.1.push(i);
-            } else {
-                folders.push((c.to_string(), vec![i]));
-            }
-        }
-        if fav.is_empty() && folders.is_empty() {
-            return vec![(None, rest)];
-        }
+        let visible = self.list.iter().enumerate().filter(|(_, p)| !p.pinned && !p.hidden);
+        let (def_rest, mut def_folders) = folders_and_rest(visible.clone().filter(|(_, p)| p.is_builtin()));
+        let exp = take_experimental(&mut def_folders);
+        let mut def_folders = to_folders(def_folders);
+        def_folders.extend(exp.map(|(name, items)| SidebarFolder { name, items }));
+        let (user_rest, user_folders) = folders_and_rest(visible.filter(|(_, p)| !p.is_builtin()));
         let mut out = vec![];
         if !fav.is_empty() {
-            out.push((Some("Favorites".to_string()), fav));
+            out.push(SidebarBlock { heading: "Favorites".into(), items: fav, folders: vec![], empty_hint: None });
         }
-        out.extend(folders.into_iter().map(|(n, v)| (Some(n), v)));
-        if !rest.is_empty() {
-            out.push((Some("Presets".to_string()), rest));
+        out.push(SidebarBlock { heading: DEFAULT_PRESETS.into(), items: def_rest, folders: def_folders, empty_hint: None });
+        let mut user = SidebarBlock {
+            heading: USER_PRESETS.into(),
+            items: user_rest,
+            folders: to_folders(user_folders),
+            empty_hint: None,
+        };
+        if user.is_empty() {
+            user.empty_hint = Some(USER_PRESETS_HINT);
         }
+        out.push(user);
         out
     }
 
@@ -399,10 +469,7 @@ impl PresetUi {
     /// The HandBrake-style preset panel. One click selects, double-click (or Run) previews the job.
     pub fn sidebar(&mut self, ui: &mut egui::Ui, cx: &Ctx) -> Option<SideEvent> {
         let mut ev: Option<SideEvent> = None;
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Presets").strong());
-            ui.label(RichText::new(format!("{}", self.list.len())).small().weak());
-        });
+        // Section headings below are "Default Presets" and "User Presets".
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             if ui.small_button("New…").on_hover_text("New preset (blank of a type, or a copy)").clicked() {
@@ -437,7 +504,7 @@ impl PresetUi {
         ui.separator();
 
         let kind_label = |k: &str| kinds().into_iter().find(|x| x.0 == k).map(|x| x.1).unwrap_or("?");
-        let sections = self.sections(&self.filter.clone());
+        let blocks = self.sidebar_blocks(&self.filter.clone());
         let mut clicked = None;
         let mut run = None;
         let mut move_req: Option<(usize, isize)> = None;
@@ -446,16 +513,14 @@ impl PresetUi {
         egui::ScrollArea::vertical().id_salt("presets").auto_shrink([false, false]).max_height((ui.available_height() - 100.0).max(60.0)).show(ui, |ui| {
             // full-width rows with left-aligned names
             ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
-            if filtering && sections[0].1.is_empty() {
-                hint(ui, "No preset matches.");
-            }
-            for (heading, idxs) in &sections {
-                let mut draw = |ui: &mut egui::Ui| {
+            for block in &blocks {
+                let show_star = filtering || block.heading == "Favorites";
+                let mut draw = |ui: &mut egui::Ui, idxs: &[usize]| {
                     for &i in idxs {
                         let p = &self.list[i];
                         let modified = self.modified(&p.id);
                         let mut label = String::new();
-                        if p.pinned && (filtering || heading.is_none()) {
+                        if p.pinned && show_star {
                             label.push_str("★ ");
                         }
                         label.push_str(&p.name);
@@ -536,12 +601,38 @@ impl PresetUi {
                         });
                     }
                 };
-                match heading {
-                    Some(h) => {
-                        let title = if h == "Favorites" { format!("★ Favorites ({})", idxs.len()) } else { format!("{h} ({})", idxs.len()) };
-                        crate::ui::layout::section(ui, &format!("presets.group:{h}"), egui::CollapsingHeader::new(RichText::new(title).strong()), true, |ui| ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| draw(ui)));
+                if filtering || block.heading.is_empty() {
+                    if let Some(h) = block.empty_hint {
+                        ui.label(RichText::new(h).color(crate::ui::theme::c().muted));
                     }
-                    None => draw(ui),
+                    draw(ui, &block.items);
+                } else {
+                    let n = block.count();
+                    let title = if block.heading == "Favorites" {
+                        format!("★ Favorites ({n})")
+                    } else if n == 0 {
+                        block.heading.clone()
+                    } else {
+                        format!("{} ({n})", block.heading)
+                    };
+                    crate::ui::layout::section(ui, &format!("presets.group:{}", block.heading), egui::CollapsingHeader::new(RichText::new(title).strong()), true, |ui| {
+                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                            if let Some(h) = block.empty_hint {
+                                ui.label(RichText::new(h).color(crate::ui::theme::c().muted));
+                            }
+                            draw(ui, &block.items);
+                            for folder in &block.folders {
+                                let ft = format!("{} ({})", folder.name, folder.items.len());
+                                crate::ui::layout::section(
+                                    ui,
+                                    &format!("presets.group:{}:{}", block.heading, folder.name),
+                                    egui::CollapsingHeader::new(RichText::new(ft).strong()),
+                                    true,
+                                    |ui| ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| draw(ui, &folder.items)),
+                                );
+                            }
+                        });
+                    });
                 }
             }
             });
@@ -1077,7 +1168,7 @@ mod tests {
     fn builtins_are_read_only_and_prompt_save_as_new() {
         let s = Settings::default();
         let ctx = egui::Context::default();
-        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, has_xfade: None };
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, has_xfade: None , encoders: None };
         let mut pu = ui_with(presets::factory_all());
         assert!(pu.is_builtin(0));
         set(pu.editor(0, &s), "input", json!("/v/a.mkv"), &s);
@@ -1100,7 +1191,8 @@ mod tests {
         pu.apply(Action::Delete { id: "builtin-mix".into() }, &cx).unwrap();
         assert!(pu.index_of("builtin-mix").is_some() && pu.list[mix].hidden, "hidden, not deleted");
         assert_ne!(pu.current, mix, "selection moved to a visible preset");
-        assert!(!pu.sections("")[0].1.contains(&mix) && !pu.sections("mix")[0].1.contains(&mix));
+        let shown = |q: &str| pu.sidebar_blocks(q).iter().flat_map(|b| b.all_items()).collect::<Vec<_>>();
+        assert!(!shown("").contains(&mix) && !shown("mix").contains(&mix));
         assert_eq!(pu.hidden_count(), 1);
         // restore: visible again, unsaved built-in edits dropped
         set(pu.editor(0, &s), "trim_end", json!(5.0), &s);
@@ -1137,7 +1229,7 @@ mod tests {
     fn leaving_an_edited_builtin_prompts() {
         let s = Settings::default();
         let ctx = egui::Context::default();
-        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, has_xfade: None };
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, has_xfade: None , encoders: None };
         let mut pu = ui_with(presets::factory_all());
         let mix = pu.index_of("builtin-mix").unwrap();
         // unchanged: no prompt
@@ -1210,7 +1302,7 @@ mod tests {
     fn create_saveas_rename_delete_reset() {
         let s = Settings::default();
         let ctx = egui::Context::default();
-        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, has_xfade: None };
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, has_xfade: None , encoders: None };
         let mut pu = ui_with(presets::factory_all());
         let n0 = pu.list.len();
         // blank custom
@@ -1269,7 +1361,7 @@ mod tests {
     fn select_carries_input_file() {
         let s = Settings::default();
         let ctx = egui::Context::default();
-        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, has_xfade: None };
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, has_xfade: None , encoders: None };
         let f = std::env::temp_dir().join(format!("carry_{}.mkv", ffenc::util::unique_id()));
         std::fs::write(&f, b"x").unwrap();
         let mut pu = ui_with(presets::factory_all());
@@ -1286,6 +1378,8 @@ mod tests {
         assert!(pu.editor(add, &s).mode.save()["out_name"].as_str().unwrap().ends_with("_chapters.mkv"));
         std::fs::remove_file(&f).unwrap();
     }
+
+    #[test]
 
     #[test]
     fn folders_are_app_level_ignored_on_presets_and_kept_across_new_and_switch() {
@@ -1345,38 +1439,95 @@ mod tests {
         assert!(pu.list[0].values.is_null(), "stored preset untouched");
     }
 
+    fn ids(pu: &PresetUi, idxs: &[usize]) -> Vec<String> {
+        idxs.iter().map(|&i| pu.list[i].id.clone()).collect()
+    }
+
     #[test]
     fn sidebar_sections_filter_and_group_moves() {
         let mut pu = ui_with(presets::factory_all());
         let n = pu.list.len();
-        let secs = pu.sections("");
-        assert_eq!(secs.len(), 1);
-        assert!(secs[0].0.is_none() && secs[0].1 == (0..n).collect::<Vec<_>>(), "user order, no headings");
-        // favorites + a folder
+        let blocks = pu.sidebar_blocks("");
+        // built-ins in Default Presets; Experimental codecs is a folder inside it; User Presets is empty
+        let e = n - 4;
+        assert_eq!(blocks.iter().map(|b| b.heading.as_str()).collect::<Vec<_>>(), [DEFAULT_PRESETS, USER_PRESETS]);
+        assert_eq!(blocks[0].items, (0..e).collect::<Vec<_>>(), "built-in order kept");
+        assert_eq!(blocks[0].folders.len(), 1);
+        assert_eq!(blocks[0].folders[0].name, presets::EXPERIMENTAL_GROUP);
+        assert_eq!(blocks[0].folders[0].items, (e..n).collect::<Vec<_>>());
+        assert!(blocks[0].items.iter().chain(blocks[0].folders[0].items.iter()).all(|&i| pu.list[i].is_builtin()));
+        assert!(blocks[1].is_empty());
+        assert_eq!(blocks[1].empty_hint, Some(USER_PRESETS_HINT));
+        // favorites + a built-in folder (stays inside Default Presets)
         pu.list[3].pinned = true;
         pu.list[5].pinned = true;
         pu.list[1].category = "Audio".into();
         pu.list[4].category = "audio".into();
-        let secs = pu.sections("");
-        let heads: Vec<_> = secs.iter().map(|s| s.0.clone().unwrap()).collect();
-        assert_eq!(heads, ["Favorites", "Audio", "Presets"]);
-        assert_eq!(secs[0].1, vec![3, 5]);
-        assert_eq!(secs[1].1, vec![1, 4], "folder names match case-insensitively");
-        assert!(!secs[2].1.contains(&3) && secs[2].1.contains(&0));
+        let blocks = pu.sidebar_blocks("");
+        let heads: Vec<_> = blocks.iter().map(|s| s.heading.as_str()).collect();
+        assert_eq!(heads, ["Favorites", DEFAULT_PRESETS, USER_PRESETS]);
+        assert_eq!(blocks[0].items, vec![3, 5]);
+        let audio = blocks[1].folders.iter().find(|f| f.name == "Audio").expect("Audio folder in Default Presets");
+        assert_eq!(audio.items, vec![1, 4], "folder names match case-insensitively");
+        assert!(!blocks[1].items.contains(&3) && blocks[1].items.contains(&0));
+        assert!(blocks[2].is_empty(), "builtin folders do not leak into User Presets");
         // search: name, type label, folder, description; flat
-        let hit = |q: &str, pu: &PresetUi| pu.sections(q)[0].1.iter().map(|&i| pu.list[i].id.clone()).collect::<Vec<_>>();
+        let hit = |q: &str, pu: &PresetUi| ids(pu, &pu.sidebar_blocks(q)[0].items);
         assert_eq!(hit("REMUX", &pu), ["builtin-remux"]);
         assert!(hit("audio", &pu).len() >= 3);
         assert!(hit("custom pipeline", &pu).contains(&"builtin-addchapters".to_string()), "matches the type label");
         assert!(hit("zzz", &pu).is_empty());
+        assert_eq!(pu.sidebar_blocks("zzz")[0].empty_hint, Some("No preset matches."));
         // moving inside the favorites group skips the presets between them
         pu.current = 5;
         assert!(pu.move_in_group(5, -1));
-        assert_eq!(pu.sections("")[0].1, vec![3, 4]);
+        assert_eq!(pu.sidebar_blocks("")[0].items, vec![3, 4]);
         assert!(pu.list[3].pinned && pu.list[4].pinned);
         assert_eq!(pu.current, 3, "selection follows the moved preset");
         assert!(!pu.move_in_group(3, -1), "already first in its group");
         assert!(!pu.can_move(4, 1));
+    }
+
+    #[test]
+    fn sidebar_user_presets_from_old_files_and_folders() {
+        let mut pu = ui_with(presets::factory_all());
+        // old saved / duplicated / imported presets have builtin: None
+        let base = pu.list[0].clone();
+        pu.list.push(Preset { id: "u1".into(), name: "My encode".into(), builtin: None, category: String::new(), pinned: false, hidden: false, ..base.clone() });
+        pu.list.push(Preset { id: "u2".into(), name: "In a folder".into(), builtin: None, category: "Projects".into(), pinned: false, hidden: false, ..base.clone() });
+        pu.list.push(Preset { id: "u3".into(), name: "Second".into(), builtin: None, category: String::new(), pinned: false, hidden: false, ..base.clone() });
+        let blocks = pu.sidebar_blocks("");
+        let user = blocks.iter().find(|b| b.heading == USER_PRESETS).unwrap();
+        assert_eq!(ids(&pu, &user.items), ["u1", "u3"], "uncategorized order kept");
+        assert_eq!(user.folders.len(), 1);
+        assert_eq!(user.folders[0].name, "Projects");
+        assert_eq!(ids(&pu, &user.folders[0].items), ["u2"]);
+        assert!(user.empty_hint.is_none());
+        assert!(user.all_items().iter().all(|&i| !pu.list[i].is_builtin()));
+        // a user folder is not mixed with a same-named builtin folder
+        pu.list[1].category = "Projects".into();
+        let blocks = pu.sidebar_blocks("");
+        let def = blocks.iter().find(|b| b.heading == DEFAULT_PRESETS).unwrap();
+        let user = blocks.iter().find(|b| b.heading == USER_PRESETS).unwrap();
+        assert!(def.folders.iter().any(|f| f.name == "Projects" && f.items.contains(&1) && pu.list[1].is_builtin()));
+        assert!(user.folders.iter().any(|f| f.name == "Projects" && ids(&pu, &f.items) == ["u2"]));
+        // pinning a user preset moves it to Favorites and out of User Presets
+        let u1 = pu.index_of("u1").unwrap();
+        pu.list[u1].pinned = true;
+        pu.list[0].pinned = true;
+        let blocks = pu.sidebar_blocks("");
+        assert_eq!(blocks[0].heading, "Favorites");
+        assert_eq!(ids(&pu, &blocks[0].items), ["builtin-reencode", "u1"]);
+        let user = blocks.iter().find(|b| b.heading == USER_PRESETS).unwrap();
+        assert!(!user.all_items().iter().any(|&i| pu.list[i].id == "u1"));
+        let def = blocks.iter().find(|b| b.heading == DEFAULT_PRESETS).unwrap();
+        assert!(!def.all_items().iter().any(|&i| pu.list[i].id == "builtin-reencode"));
+        // hidden user presets do not appear
+        let u3 = pu.index_of("u3").unwrap();
+        pu.list[u3].hidden = true;
+        let blocks = pu.sidebar_blocks("");
+        let user = blocks.iter().find(|b| b.heading == USER_PRESETS).unwrap();
+        assert!(!user.all_items().iter().any(|&i| pu.list[i].id == "u3"));
     }
 
     #[test]
@@ -1395,7 +1546,7 @@ mod tests {
     fn category_action_and_reset_keeps_pin() {
         let s = Settings::default();
         let ctx = egui::Context::default();
-        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, has_xfade: None };
+        let cx = Ctx { settings: &s, ffprobe: None, egui: &ctx, has_xfade: None , encoders: None };
         let mut pu = ui_with(presets::factory_all());
         pu.apply(Action::SetCategory { id: "builtin-mix".into(), category: "  Audio ".into() }, &cx).unwrap();
         let i = pu.index_of("builtin-mix").unwrap();
