@@ -6,6 +6,8 @@ Create Slideshow is part of this stable build (the old **Slideshow** branch is a
 
 ## Unreleased
 
+- Conflict warning text wraps to the window width, and the fix button (plus “Keep my setting” or the pre-run “Run as set” footer) sits on the next line at a natural width, so the button is not squeezed into a narrow column at small windows or large text.
+
 ## 0.6.0-rc.2
 
 - The Codecs edition is merged into the stable app: optional HEVC / AV1 video and AC3 or stream-copy audio (H.264 + AAC remains the default), hover help, one-click conflict fixes, colour-range warnings, and the Frameserver default colour matrix of PC.709. Create Slideshow from rc.1 is kept. The app identity stays FFmpegEncoder / %LOCALAPPDATA%\FFmpegEncoder; the standalone Codecs first-run import is not carried over.

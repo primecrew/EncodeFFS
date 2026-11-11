@@ -1071,7 +1071,8 @@ impl App {
                     .resizable(true)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]), ctx, true)
                     .show(ctx, |ui| {
-                        ui.set_max_width(640.0);
+                        let max_w = ctx.screen_rect().width().min(640.0).max(160.0);
+                        ui.set_max_width(max_w);
                         ui.label(RichText::new("These choices are unusual. The encode can still run as you set it. You can fix a setting, or keep it and continue.").strong());
                         ui.add_space(8.0);
                         egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
@@ -1085,7 +1086,11 @@ impl App {
                         });
                         ui.separator();
                         ui.horizontal_wrapped(|ui| {
-                            let r = ui.add(egui::Button::new(RichText::new("Run as set").strong()).min_size(egui::vec2(140.0, 32.0)));
+                            let r = ui.add(
+                                egui::Button::new(RichText::new("Run as set").strong())
+                                    .wrap_mode(egui::TextWrapMode::Extend)
+                                    .min_size(egui::vec2(140.0, 32.0)),
+                            );
                             let r = common::named(r, egui::WidgetType::Button, "Run as set: keep these settings and continue to the command preview");
                             if focus {
                                 r.request_focus();
@@ -1093,7 +1098,11 @@ impl App {
                             if r.clicked() {
                                 run_as_set = true;
                             }
-                            if ui.add(egui::Button::new("Cancel").min_size(egui::vec2(80.0, 32.0))).clicked() {
+                            if ui.add(
+                                egui::Button::new("Cancel")
+                                    .wrap_mode(egui::TextWrapMode::Extend)
+                                    .min_size(egui::vec2(80.0, 32.0)),
+                            ).clicked() {
                                 close = true;
                             }
                         });

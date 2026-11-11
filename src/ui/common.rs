@@ -648,21 +648,65 @@ pub enum ConflictAction {
     Keep(ffenc::cmd::conflicts::ConflictKind),
 }
 
+/// Visible strip for a warning: the panel / window clip, not the current Grid cell.
+/// Grid cells often report infinite `available_width` on the first pass, which would
+/// let unwrapped text widen the column and squeeze later cells.
+fn warning_strip(ui: &Ui) -> (f32, f32) {
+    let pad = ui.spacing().item_spacing.x.max(4.0);
+    let left = ui.clip_rect().left() + pad;
+    let right = ui.clip_rect().right() - pad;
+    let wrap_w = (right - left).max(ui.spacing().interact_size.x);
+    let shift = (ui.cursor().left() - left).max(0.0);
+    (wrap_w, shift)
+}
+
+fn unwrapped_button(ui: &Ui, label: impl Into<egui::WidgetText>, wrap_w: f32) -> egui::Button<'static> {
+    let text = label.into();
+    // Keep a natural (one-line) width when it fits; only word-wrap if the button
+    // itself is wider than the panel (large text in a very narrow window).
+    let natural = text
+        .clone()
+        .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::FontSelection::Default)
+        .size()
+        .x
+        + ui.spacing().button_padding.x * 2.0;
+    let mode = if natural <= wrap_w { egui::TextWrapMode::Extend } else { egui::TextWrapMode::Wrap };
+    egui::Button::new(text).wrap_mode(mode).min_size(egui::vec2(24.0, 32.0))
+}
+
 /// Plain-words warning plus optional “fix it” / “keep my setting” buttons.
 /// Large, keyboard-focusable buttons; uses the theme warning colour (including High contrast).
+///
+/// Occupies a single parent cell (safe inside a 2-column Grid). The block is pulled to the
+/// panel's left so the text wraps to the full available width; fix / keep buttons sit on
+/// the next line at their natural width (no letter-wrapping), left-aligned, wrapping to a
+/// further line as whole buttons if they do not fit side by side.
 pub fn conflict_warning_ui(ui: &mut Ui, c: &ffenc::cmd::conflicts::Conflict, show_keep: bool) -> ConflictAction {
-    ui.add_space(4.0);
-    ui.label(RichText::new(format!("⚠ {}", c.message)).color(crate::ui::theme::c().warn));
     let mut action = ConflictAction::None;
+    let (wrap_w, shift) = warning_strip(ui);
+    let top = ui.cursor().top();
+    let cell_left = ui.cursor().left();
+    let paint_left = cell_left - shift;
+    let paint_rect = egui::Rect::from_min_size(egui::pos2(paint_left, top), egui::vec2(wrap_w, 10_000.0));
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(("conflict_warning", c.kind as u32))
+            .max_rect(paint_rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    child.add_space(4.0);
+    child.add(
+        egui::Label::new(RichText::new(format!("⚠ {}", c.message)).color(crate::ui::theme::c().warn)).wrap(),
+    );
     if let Some(fix) = c.fix {
-        ui.horizontal_wrapped(|ui| {
-            let r = ui.add(egui::Button::new(RichText::new(fix.button).strong()).min_size(egui::vec2(24.0, 32.0)));
+        child.horizontal_wrapped(|ui| {
+            let r = ui.add(unwrapped_button(ui, RichText::new(fix.button).strong(), wrap_w));
             let r = named(r, egui::WidgetType::Button, &format!("Fix it for me: {}", fix.hint));
             if r.on_hover_text(fix.hint).clicked() {
                 action = ConflictAction::Fix(c.kind);
             }
             if show_keep {
-                let r = ui.add(egui::Button::new("Keep my setting").min_size(egui::vec2(24.0, 32.0)));
+                let r = ui.add(unwrapped_button(ui, "Keep my setting", wrap_w));
                 let r = named(r, egui::WidgetType::Button, "Keep my setting: leave this as it is");
                 if r.clicked() {
                     action = ConflictAction::Keep(c.kind);
@@ -670,6 +714,12 @@ pub fn conflict_warning_ui(ui: &mut Ui, c: &ffenc::cmd::conflicts::Conflict, sho
             }
         });
     }
+    let used_h = child.min_rect().height();
+    let pad = ui.spacing().item_spacing.x.max(4.0);
+    let cell_w = (ui.clip_rect().right() - pad - cell_left).max(ui.spacing().interact_size.x);
+    // Reserve only this grid cell's width so the form does not grow, but keep the child's height
+    // so the next row is not drawn under the wrapped text or the fix button.
+    ui.advance_cursor_after_rect(egui::Rect::from_min_size(egui::pos2(cell_left, top), egui::vec2(cell_w, used_h)));
     action
 }
 
@@ -719,6 +769,80 @@ mod row_label_tests {
         // stable across more frames
         let again = frame(&ctx, true);
         assert_eq!(again.2, h);
+    }
+}
+
+#[cfg(test)]
+mod conflict_warning_layout_tests {
+    use super::*;
+    use ffenc::cmd::conflicts::{Conflict, ConflictKind, Fix};
+
+    fn sample() -> Conflict {
+        Conflict {
+            kind: ConflictKind::SourceAlreadyLimited,
+            message: "This source is already tagged as TV (limited) range, and a full-to-TV conversion is also on, which can squeeze the picture twice and make blacks look grey. The encode will still run.".into(),
+            fix: Some(Fix {
+                button: "Turn off the range conversion",
+                hint: "Turns off “Convert full-range to limited-range”, so a TV-range source is not squeezed again.",
+            }),
+        }
+    }
+
+    /// Render the colour-range warning in a 2-column form grid, as Re-encode does.
+    fn layout(width: f32, text_scale: f32, show_keep: bool) -> (egui::Rect, egui::Rect) {
+        let ctx = egui::Context::default();
+        if (text_scale - 1.0).abs() > 0.001 {
+            ctx.style_mut(|style| {
+                for font in style.text_styles.values_mut() {
+                    font.size *= text_scale;
+                }
+            });
+        }
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 800.0));
+        let mut panel = egui::Rect::NOTHING;
+        let mut block = egui::Rect::NOTHING;
+        // Two frames: Grid measures on the first pass and positions on the second.
+        for _ in 0..3 {
+            let _ = ctx.run(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    panel = ui.max_rect();
+                    egui::Grid::new("form").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                        ui.label("Colour range");
+                        let mut on = true;
+                        ui.checkbox(&mut on, "Convert full-range to limited-range BT.709 and tag it");
+                        ui.end_row();
+                        ui.label("");
+                        block = ui.scope(|ui| {
+                            let _ = conflict_warning_ui(ui, &sample(), show_keep);
+                        }).response.rect;
+                        ui.end_row();
+                    });
+                });
+            });
+        }
+        (panel, block)
+    }
+
+    #[test]
+    fn warning_text_wraps_and_fix_button_is_not_squeezed_in_a_narrow_grid() {
+        let width = 420.0;
+        let (panel, block) = layout(width, 1.0, false);
+        let _ = panel;
+        assert!(block.right() <= width + 1.0, "warning stays inside the window: block {:?} width {}", block, width);
+        assert!(block.width() < width, "text wrapped instead of one long line: {}", block.width());
+        // Text + one button row, not a tall stack of one-letter-wrapped button glyphs.
+        assert!(block.height() > 40.0, "text and button both shown: {}", block.height());
+        assert!(block.height() < 220.0, "button is not letter-wrapped into a narrow column: {}", block.height());
+    }
+
+    #[test]
+    fn warning_still_fits_with_large_text_and_keep_button() {
+        let width = 420.0;
+        let (panel, block) = layout(width, 1.75, true);
+        let _ = panel;
+        assert!(block.right() <= width + 1.0, "large-text warning stays inside the window: block {:?} width {}", block, width);
+        // A letter-wrapped “Turn off the range conversion” button would be many lines tall.
+        assert!(block.height() < 420.0, "buttons keep a natural width at large text: {}", block.height());
     }
 }
 
