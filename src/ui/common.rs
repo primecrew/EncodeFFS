@@ -10,6 +10,8 @@ use ffenc::cmd::common::*;
 use ffenc::ffmpeg::probe::{self, MediaInfo};
 use ffenc::util::fmt_hms;
 
+use super::option_tips;
+
 /// Result of a closure run on a background thread.
 pub struct Bg<T> {
     rx: Receiver<T>,
@@ -318,7 +320,7 @@ pub fn passthrough_ui(ui: &mut Ui, id: &str, p: &mut Passthrough) {
 
 /// CRF / preset / tune rows (inside a Grid).
 pub fn video_encode_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, show_tune: bool) {
-    row_label(ui, "CRF");
+    row_label_tip(ui, "CRF", option_tips::CRF);
     ui.horizontal(|ui| {
         num_u32(ui, &mut v.crf, 0..=51, "");
         hint(ui, "lower = better quality / bigger file");
@@ -505,7 +507,7 @@ pub fn compressor_params_ui(ui: &mut Ui, id: &str, c: &mut CompressorParams) {
 }
 
 pub fn range_ui(ui: &mut Ui, v: &mut bool) {
-    row_label(ui, "Colour range");
+    row_label_tip(ui, "Colour range", option_tips::COLOUR_RANGE);
     ui.vertical(|ui| {
         ui.checkbox(v, "Convert full-range to limited-range BT.709 and tag it");
         hint(ui, "Use for full-range PC/capture sources. Skip if the source is already limited/video range (avoids grey blacks).");
@@ -514,7 +516,7 @@ pub fn range_ui(ui: &mut Ui, v: &mut bool) {
 }
 
 pub fn faststart_ui(ui: &mut Ui, v: &mut bool, enabled: bool) {
-    row_label(ui, "Faststart");
+    row_label_tip(ui, "Faststart", option_tips::FASTSTART);
     ui.add_enabled(enabled, egui::Checkbox::new(v, "Move index to the front for faster streaming (MP4 only)"));
     ui.end_row();
 }

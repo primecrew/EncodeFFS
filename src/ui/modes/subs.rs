@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{default_video, restore, Ctx, Mode, Plan};
 use crate::ui::common::*;
+use crate::ui::option_tips;
 use ffenc::cmd::common::VideoEncode;
 use ffenc::cmd::subs::{self, Mp4SubHandling, SubsParams};
 use ffenc::ffmpeg::runner::JobSpec;
@@ -142,7 +143,7 @@ impl Mode for SubsMode {
                 ui.checkbox(&mut st.keep_existing, "Keep subtitle tracks already in the destination");
             });
             ui.end_row();
-            crate::ui::common::row_label(ui, "Container");
+            crate::ui::common::row_label_tip(ui, "Container", option_tips::CONTAINER);
             ui.horizontal(|ui| {
                 let before = st.container.clone();
                 ui.radio_value(&mut st.container, "mkv".to_string(), "MKV (recommended)");

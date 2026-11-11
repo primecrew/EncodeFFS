@@ -18,6 +18,7 @@ use ffenc::ffmpeg::avisynth::{self, Level};
 use ffenc::ffmpeg::probe::{self, MediaInfo};
 use ffenc::ffmpeg::runner::JobSpec;
 use ffenc::settings::Settings;
+use crate::ui::option_tips;
 use ffenc::util::{fmt_hms, stem};
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -464,7 +465,7 @@ impl Mode for FrameserveMode {
 
         section(ui, "AviSynth script");
         egui::Grid::new("fs_script").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            let l = crate::ui::common::row_label(ui, "Colour format");
+            let l = crate::ui::common::row_label_tip(ui, "Colour format", option_tips::COLOUR_FORMAT);
             ui.vertical(|ui| {
                 ui.horizontal_wrapped(|ui| {
                     let r = egui::ComboBox::from_id_salt("fs_color").width(330.0).selected_text(st.color.label()).show_ui(ui, |ui| {
@@ -491,7 +492,7 @@ impl Mode for FrameserveMode {
             });
             ui.end_row();
 
-            let l = crate::ui::common::row_label(ui, "Colour matrix");
+            let l = crate::ui::common::row_label_tip(ui, "Colour matrix", option_tips::COLOUR_MATRIX);
             ui.vertical(|ui| {
                 let enabled = st.color != Color::None;
                 ui.add_enabled_ui(enabled, |ui| {
@@ -520,7 +521,7 @@ impl Mode for FrameserveMode {
             });
             ui.end_row();
 
-            let l = crate::ui::common::row_label(ui, "Signpost format");
+            let l = crate::ui::common::row_label_tip(ui, "Signpost format", option_tips::SIGNPOST_FORMAT);
             ui.vertical(|ui| {
                 egui::ComboBox::from_id_salt("fs_pt").width(220.0).selected_text(st.pixel_type.label()).show_ui(ui, |ui| {
                     for p in PixelType::ALL {
@@ -531,7 +532,7 @@ impl Mode for FrameserveMode {
             });
             ui.end_row();
 
-            let l = crate::ui::common::row_label(ui, "Audio");
+            let l = crate::ui::common::row_label_tip(ui, "Audio", option_tips::FRAMESERVE_AUDIO);
             egui::ComboBox::from_id_salt("fs_audio").width(330.0).selected_text(st.audio_mode.label()).show_ui(ui, |ui| {
                 for a in AudioMode::ALL {
                     ui.selectable_value(&mut st.audio_mode, a, a.label());
@@ -556,7 +557,7 @@ impl Mode for FrameserveMode {
             });
             ui.end_row();
 
-            crate::ui::common::row_label(ui, "Trim");
+            crate::ui::common::row_label_tip(ui, "Trim", option_tips::TRIM_FRAMES);
             ui.horizontal_wrapped(|ui| {
                 ui.checkbox(&mut st.trim, "Only part of the timeline (frames)");
                 if st.trim {
@@ -656,7 +657,7 @@ impl Mode for FrameserveMode {
                 ConflictKind::ScriptTenBitEncoderEight,
                 ConflictKind::ScriptTenBitH264,
             ]);
-            crate::ui::common::row_label(ui, "Resize");
+            crate::ui::common::row_label_tip(ui, "Resize", option_tips::RESIZE);
             ui.horizontal_wrapped(|ui| {
                 ui.checkbox(&mut st.resize, "New vertical resolution");
                 if st.resize {
@@ -690,7 +691,7 @@ impl Mode for FrameserveMode {
             if output_rows_sfx(ui, &mut st.out_dir, &mut st.out_name, &mut st.suffix, &cx.settings.output_folder) {
                 st.regen_name();
             }
-            let l = crate::ui::common::row_label(ui, "Container");
+            let l = crate::ui::common::row_label_tip(ui, "Container", option_tips::CONTAINER);
             let before = st.container.clone();
             egui::ComboBox::from_id_salt("fs_cont").selected_text(st.container.clone()).show_ui(ui, |ui| {
                 ui.selectable_value(&mut st.container, "mp4".to_string(), "mp4 (plays everywhere)");

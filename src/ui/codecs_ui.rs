@@ -7,6 +7,7 @@ use ffenc::cmd::common::{AudioEncode, VideoEncode};
 use ffenc::ffmpeg::probe::MediaInfo;
 
 use super::common::{audio_encode_ui, audio_filters_ui, bitrate_ui_ex, hint, named, num_u32, video_encode_ui, warn};
+use super::option_tips;
 
 /// Facts from the probed source used for notes and AC3 channel handling.
 pub fn source_pix_fmt(info: Option<&MediaInfo>) -> Option<String> {
@@ -37,7 +38,7 @@ pub fn video_codec_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&E
 
 /// Like [`video_codec_ui`], with optional extra hover/hint on the 10-bit checkbox (Frameserver).
 pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&Encoders>, src_pix_fmt: Option<&str>, ten_bit_hover: Option<&str>) {
-    crate::ui::common::row_label(ui, "Video codec");
+    crate::ui::common::row_label_tip(ui, "Video codec", option_tips::VIDEO_CODEC);
     ui.vertical(|ui| {
         let before = v.codec;
         egui::ComboBox::from_id_salt(format!("{id}_codec")).width(300.0).selected_text(v.codec.label()).show_ui(ui, |ui| {
@@ -70,7 +71,7 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option
     match v.codec {
         VideoCodec::H264 => video_encode_ui(ui, id, v, true),
         VideoCodec::Hevc | VideoCodec::Av1 => {
-            crate::ui::common::row_label(ui, "CRF");
+            crate::ui::common::row_label_tip(ui, "CRF", option_tips::CRF);
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     num_u32(ui, &mut v.crf, v.codec.crf_range(), "");
@@ -96,7 +97,7 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option
                 });
             }
             ui.end_row();
-            crate::ui::common::row_label(ui, "10-bit");
+            crate::ui::common::row_label_tip(ui, "10-bit", option_tips::TEN_BIT);
             ui.vertical(|ui| {
                 let r = ui.checkbox(&mut v.ten_bit, "10-bit output (yuv420p10le)");
                 if let Some(h) = ten_bit_hover {
@@ -120,7 +121,7 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option
                 });
                 ui.end_row();
             } else {
-                crate::ui::common::row_label(ui, "Film grain");
+                crate::ui::common::row_label_tip(ui, "Film grain", option_tips::FILM_GRAIN);
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
                         num_u32(ui, &mut v.film_grain, 0..=FILM_GRAIN_MAX, "");
@@ -140,7 +141,7 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option
 
 /// Audio rows inside a 2-column Grid. `allow_copy` = false where audio is mixed (join).
 pub fn audio_codec_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode, enc: Option<&Encoders>, allow_copy: bool) {
-    crate::ui::common::row_label(ui, "Audio codec");
+    crate::ui::common::row_label_tip(ui, "Audio codec", option_tips::AUDIO_CODEC);
     ui.vertical(|ui| {
         egui::ComboBox::from_id_salt(format!("{id}_acodec")).width(300.0).selected_text(a.codec.label()).show_ui(ui, |ui| {
             for c in AudioCodec::ALL {

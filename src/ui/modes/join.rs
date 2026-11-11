@@ -13,6 +13,7 @@ use ffenc::cmd::join::{self, JoinInput, JoinMethod, JoinParams};
 use ffenc::ffmpeg::probe;
 use ffenc::ffmpeg::runner::JobSpec;
 use ffenc::settings::Settings;
+use crate::ui::option_tips;
 use ffenc::util::{fmt_hms, has_ext, stem, ANY_VIDEO_EXTS};
 
 const CONTAINERS: &[&str] = &["mp4", "mkv", "mov"];
@@ -333,10 +334,10 @@ impl Mode for JoinMode {
         section(ui, "Chapters & output");
         let mut rename = false;
         egui::Grid::new("joino").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            crate::ui::common::row_label(ui, "Chapters");
+            crate::ui::common::row_label_tip(ui, "Chapters", option_tips::CHAPTERS_JOIN);
             ui.checkbox(&mut self.st.chapters_per_file, "One chapter per source file (titled with the file name)");
             ui.end_row();
-            crate::ui::common::row_label(ui, "Container");
+            crate::ui::common::row_label_tip(ui, "Container", option_tips::CONTAINER);
             ui.horizontal(|ui| {
                 for c in CONTAINERS {
                     rename |= ui.radio_value(&mut self.st.container, c.to_string(), *c).changed();

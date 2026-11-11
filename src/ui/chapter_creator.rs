@@ -9,6 +9,7 @@ use ffenc::ffmpeg::probe::MediaInfo;
 use ffenc::util::fmt_hms;
 
 use super::common::{hint, icon_button, num_f64};
+use super::option_tips;
 
 /// The preset fields the creator edits.
 pub struct Spec<'a> {
@@ -90,7 +91,7 @@ impl ChapterCreator {
         });
         ui.end_row();
 
-        crate::ui::common::row_label(ui, "Chapters");
+        crate::ui::common::row_label_tip(ui, "Chapters", option_tips::CHAPTERS);
         ui.horizontal(|ui| {
             mode_combo(ui, &format!("{id}_mode"), spec.mode);
             if ui.button("Chapter creator…").on_hover_text("Auto / manual chapters, import a list, preview and validate").clicked() {
@@ -99,7 +100,7 @@ impl ChapterCreator {
         });
         ui.end_row();
         if spec.mode.auto() {
-            crate::ui::common::row_label(ui, "Interval");
+            crate::ui::common::row_label_tip(ui, "Interval", option_tips::INTERVAL);
             num_f64(ui, spec.interval_min, 0.1..=600.0, 0.1, " min");
             ui.end_row();
         }

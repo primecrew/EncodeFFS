@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{default_audio, default_video, restore, Ctx, Mode, Plan};
 use crate::ui::common::*;
+use crate::ui::option_tips;
 use ffenc::cmd::batch::{self, BatchInput, BatchSettings};
 use ffenc::ffmpeg::probe::{self, MediaInfo};
 use ffenc::ffmpeg::runner::JobSpec;
@@ -155,7 +156,7 @@ impl Mode for BatchMode {
         let any_interlaced = self.rows.iter().any(|r| r.include && r.info.as_ref().ok().and_then(|i| i.video_summary().ok()).map(|v| v.interlaced).unwrap_or(false));
         section(ui, "Shared settings");
         egui::Grid::new("m7s").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            crate::ui::common::row_label(ui, "Container");
+            crate::ui::common::row_label_tip(ui, "Container", option_tips::CONTAINER);
             ui.horizontal(|ui| {
                 ui.radio_value(&mut bs.container, "mp4".to_string(), "MP4");
                 ui.radio_value(&mut bs.container, "mkv".to_string(), "MKV");
@@ -164,7 +165,7 @@ impl Mode for BatchMode {
             crate::ui::common::row_label(ui, "Name suffix");
             ui.text_edit_singleline(&mut bs.suffix);
             ui.end_row();
-            crate::ui::common::row_label(ui, "Trim");
+            crate::ui::common::row_label_tip(ui, "Trim", option_tips::TRIM);
             ui.horizontal(|ui| {
                 ui.label("start");
                 num_f64(ui, &mut bs.trim_start, 0.0..=1.0e7, 0.1, " s");
@@ -173,7 +174,7 @@ impl Mode for BatchMode {
             });
             ui.end_row();
             passthrough_ui(ui, "m7_pt", &mut bs.passthrough);
-            crate::ui::common::row_label(ui, "Chapters");
+            crate::ui::common::row_label_tip(ui, "Chapters", option_tips::CHAPTERS_BATCH);
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut bs.auto_chapters_if_none, "Create chapters for files without any, every");
@@ -190,7 +191,7 @@ impl Mode for BatchMode {
             egui::Grid::new("m7v").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                 crate::ui::codecs_ui::video_codec_ui(ui, "m7", &mut bs.video, cx.encoders.as_ref(), None);
                 range_ui(ui, &mut bs.range_convert);
-                crate::ui::common::row_label(ui, "Deinterlace");
+                crate::ui::common::row_label_tip(ui, "Deinterlace", option_tips::DEINTERLACE);
                 ui.vertical(|ui| {
                     ui.checkbox(&mut bs.deinterlace, "bwdif double-rate deinterlace for files detected as interlaced");
                     if !any_interlaced && !self.rows.is_empty() {
