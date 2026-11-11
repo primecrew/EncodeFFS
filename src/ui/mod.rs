@@ -1631,6 +1631,7 @@ impl App {
             ui.label("• Everything in the menus and forms can be reached with Tab; the focused control has a thick outline.");
             ui.label("• Screen readers (Narrator, NVDA) can read buttons, labels, check boxes and text fields through UI Automation. Some parts (the queue list, the drag-and-drop file list order, colours) are only partly announced.");
             ui.label("• Every action in a preset's right-click menu is also in the Presets menu.");
+            ui.label("• The left list has Default Presets (built-ins, including Experimental codecs) and User Presets (your saved, duplicated and imported presets). Pin a preset to put it in Favorites at the top.");
         });
         if !open || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.show_help = false;

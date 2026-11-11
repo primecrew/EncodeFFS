@@ -209,12 +209,13 @@ Re-encode.
   the script and the full command; the copied PowerShell command writes the script first.
 
 ## Main window (HandBrake-style)
-- **Left – presets:** every preset, built-in and yours, in your order. One click selects; **double-click** (or **▶ Run**,
+- **Left – presets:** **Default Presets** (the built-ins, including the **Experimental codecs** folder) and **User Presets**
+  (your saved, duplicated and imported presets; empty until you add one). One click selects; **double-click** (or **▶ Run**,
   F5) loads the current input into that preset and opens the command preview, from where it goes to the queue.
   `*` = unsaved changes. Quick buttons **New… / Duplicate / Import… / Export**, a **search** box (name, type, folder,
   description), **Pin** to put favourites in a "Favorites" group at the top, and optional **folders**
-  (right-click › Set folder…; groups only appear once you use them). ⬆/⬇ reorder within a group; right-click has
-  everything else. The **Presets** menu has the full set of actions too.
+  (right-click › Set folder…; built-in folders stay under Default Presets, your folders under User Presets). ⬆/⬇ reorder
+  within a group; right-click has everything else. The **Presets** menu has the full set of actions too.
 - **Middle – the selected preset's form**, with Save preset / Revert / Save as new….
 - **Right – Source** (View › Source info panel): ffprobe's summary of the input — container, duration, size, bitrate,
   video codec/profile, resolution, frame rate, pixel format, interlaced/progressive (field order), every audio track
@@ -238,8 +239,8 @@ Everything in the preset panel is a **preset**: a named, saved set of options fo
     still work.
   - **Presets › Restore built-in presets…** shows hidden built-ins again and throws away unsaved changes in them.
     Your own presets are not touched.
-- **Your own presets** (New…, Duplicate, Save as new…) are fully editable: **Save preset** (Ctrl+S) stores the
-  changes, **Revert** drops them, and you can rename and delete them.
+- **Your own presets** (New…, Duplicate, Save as new…) appear under **User Presets**. They are fully editable:
+  **Save preset** (Ctrl+S) stores the changes, **Revert** drops them, and you can rename and delete them.
 - **Upgrading from 0.4 or older:** if a built-in had been edited or renamed, your version is kept as a new preset
   (“Re-encode video (your edits)”, or the name you gave it) and the built-in goes back to factory. Built-ins you had
   deleted come back hidden. User presets that used a built-in's name are renamed (“… (2)”). The log lists every change.
@@ -330,7 +331,7 @@ commands as 0.5.3 (`tests/h264_unchanged.rs`).
   - Warnings: HEVC/AV1 don't play in every browser; an 8-bit source with 10-bit on (fine, explains why).
 - **Audio**: AAC (default), AC3 (384 / 448 / 640 kb/s, up to 5.1; more channels are downmixed to 5.1),
   or Keep original (stream copy; not for Join).
-- **Presets**: four read-only built-ins in the sidebar folder **Experimental codecs** (below the others):
+- **Presets**: four read-only built-ins in the **Experimental codecs** folder at the bottom of **Default Presets**:
   Archive – HEVC 10-bit (game / camera footage) CRF 20 / 18 slow, Archive – AV1 10-bit (game / camera
   footage) CRF 28 / 26 preset 5 (grain off); audio AAC. Existing presets files get them on first load;
   your own presets are untouched (18 built-ins in total).
