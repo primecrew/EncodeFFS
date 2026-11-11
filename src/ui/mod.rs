@@ -375,6 +375,22 @@ impl App {
         queue.set_keep_temp(settings.keep_temp_files);
         let registry = settings::logs_dir().join("partial-outputs.txt");
         queue.set_partials_registry(Some(registry.clone()));
+        // leftover FFmpeg update staging (next to the app-managed copy only; older than 1 h so a live download in another instance is left alone)
+        {
+            let q = queue.clone();
+            std::thread::spawn(move || {
+                for n in ffenc::updater::install::cleanup_stale_staging(&ffenc::updater::install::staging_roots(), ffenc::updater::install::STALE_STAGING_AGE) {
+                    match n {
+                        ffenc::updater::install::StaleStaging::Removed(p) => {
+                            q.log(format!("Removed a leftover FFmpeg update folder left behind by an interrupted download: {}", p.display()));
+                        }
+                        ffenc::updater::install::StaleStaging::Failed(p, e) => {
+                            q.log(format!("Could not remove leftover FFmpeg update folder {}: {e}", p.display()));
+                        }
+                    }
+                }
+            });
+        }
         if settings.keep_temp_files {
             queue.log("Keep temporary files for debugging is on: temporary files are kept and not cleaned up at startup.");
         } else {
