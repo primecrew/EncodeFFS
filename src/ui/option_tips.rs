@@ -40,7 +40,7 @@ pub const TRIM_FRAMES: &str = "Encode only part of the timeline, by first and la
 
 pub const COLOUR_FORMAT: &str = "Converts the picture to a colour layout in the AviSynth script. YUV 4:2:0 is the usual choice and plays everywhere. Change this only if a filter needs a different layout.";
 
-pub const COLOUR_MATRIX: &str = "How the script converts between RGB and YUV, and how the file is tagged. Rec709 is the right default for HD projects.";
+pub const COLOUR_MATRIX: &str = "Vegas 8-bit projects keep video levels as-is, so PC.709 avoids a second squeeze. Use Rec709 for 32-bit full-range Vegas projects. Grey blacks usually mean the picture was squeezed twice.";
 
 pub const SIGNPOST_FORMAT: &str = "The colour layout requested from the frameserver. Leave this on Automatic unless the picture looks skewed or the colours look wrong.";
 

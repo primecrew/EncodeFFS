@@ -43,6 +43,8 @@ struct State {
     pixel_type: PixelType,
     audio_mode: AudioMode,
     color: Color,
+    /// When omitted from an old saved preset, loads as Rec709 (the previous default).
+    #[serde(default = "ffenc::cmd::frameserve::missing_matrix")]
     matrix: Matrix,
     interlaced: bool,
     trim: bool,
@@ -88,7 +90,7 @@ impl State {
             pixel_type: PixelType::Auto,
             audio_mode: AudioMode::Keep,
             color: Color::Yuv420,
-            matrix: Matrix::Rec709,
+            matrix: Matrix::Pc709,
             interlaced: false,
             trim: false,
             trim_first: 0,
@@ -376,7 +378,7 @@ If AviSource can't open the signpost, other AviSynth source filters such as Dire
 
 Video and audio codecs: the default is H.264 (libx264) and AAC, the same as before. You can also pick HEVC or AV1, and AC3 or keep the original audio, just like Re-encode. MP4 and MKV both work for these.
 
-Colour range: Rec709, Rec601 and Rec2020 already convert to TV (limited) range in the script. The default is not to apply a second full-to-TV conversion (that would look washed out). You can still tick “Convert full range to TV range” if you want to; a warning is shown and the encode still runs. PC.709 and PC.601 keep the full range from the editor; the file is tagged as full range, not TV, unless you tick that box.
+Colour range: the default colour matrix is PC.709, which keeps full range (recommended for Vegas 8-bit projects). Rec709, Rec601 and Rec2020 already convert to TV (limited) range in the script; use Rec709 for 32-bit full-range Vegas projects. The default is not to apply a second full-to-TV conversion (that would look washed out). You can still tick “Convert full range to TV range” if you want to; a warning is shown and the encode still runs. PC.709 and PC.601 keep the full range from the editor; the file is tagged as full range, not TV, unless you tick that box.
 
 10-bit: for HEVC and AV1, the 10-bit box in the codec section both writes a 10-bit pixel format and adds ConvertBits(10) at the end of the script (after the colour conversion), so FFmpeg does not convert back to 8-bit. H.264 is always 8-bit. Unusual combinations (for example 10-bit with YV12) show a warning and still run. If you edit the script by hand and its bit depth does not match the encoder, a warning offers a one-click fix.";
 
@@ -506,7 +508,7 @@ impl Mode for FrameserveMode {
                     }).response.labelled_by(l.id);
                     ui.checkbox(&mut st.interlaced, "Interlaced source (interlaced=true)");
                 });
-                hint(ui, "Used when converting between RGB and YUV. Rec709 suits HD projects.");
+                hint(ui, "Used when converting between RGB and YUV. PC.709 is the usual choice for Vegas 8-bit projects; Rec709 squeezes to TV range.");
                 if matches!(st.color, Color::None | Color::Rgb32) {
                     hint(ui, "No YUV conversion in the script, so the matrix is not applied.");
                 } else {
@@ -855,12 +857,13 @@ mod tests {
     fn defaults_yuv420_and_paths() {
         let m = FrameserveMode::default();
         assert_eq!(m.st.color, Color::Yuv420, "default colour conversion is ConvertToYUV420()");
+        assert_eq!(m.st.matrix, Matrix::Pc709, "new jobs default to PC.709");
         assert_eq!(m.st.place, Place::Temp);
         let mut st = State { signpost: r"/v/My Clip.avi".into(), ..State::default() };
         st.regen_name();
         assert_eq!(st.out_name, "My Clip_frameserved.mp4");
         let t = st.script().unwrap();
-        assert!(t.contains("ConvertToYUV420(matrix=\"Rec709\")"), "{t}");
+        assert!(t.contains("ConvertToYUV420(matrix=\"PC.709\")"), "{t}");
         // temp script: fresh temp path, not kept
         let (p, keep) = st.script_path().unwrap();
         assert!(!keep && p.starts_with(std::env::temp_dir()));
@@ -883,7 +886,26 @@ mod tests {
     }
 
     #[test]
+    fn omitted_matrix_stays_rec709_and_new_jobs_are_pc709() {
+        assert_eq!(FrameserveMode::default().st.matrix, Matrix::Pc709);
+        let v = serde_json::json!({
+            "signpost": r"C:\clips\a.avi",
+            "color": "Yuv420"
+        });
+        let mut m = FrameserveMode::default();
+        m.load(&v, &Settings::default());
+        assert_eq!(m.st.matrix, Matrix::Rec709, "old presets that omitted matrix keep Rec709");
+        let mut m = FrameserveMode::default();
+        m.load(&serde_json::json!({ "matrix": "Rec709" }), &Settings::default());
+        assert_eq!(m.st.matrix, Matrix::Rec709, "an explicitly saved Rec709 matrix is unchanged");
+        let mut m = FrameserveMode::default();
+        m.load(&serde_json::json!({ "matrix": "Pc709" }), &Settings::default());
+        assert_eq!(m.st.matrix, Matrix::Pc709);
+    }
+
+    #[test]
     fn old_json_loads_as_h264_aac_and_no_range_convert() {
+
         let v = serde_json::json!({
             "signpost": r"C:\clips\a.avi",
             "out_dir": r"D:\Videos\Out",
@@ -994,6 +1016,7 @@ mod tests {
         assert_ne!(st.color, color_before);
         assert!(msgs(&st).iter().all(|m| !m.contains("ConvertToYV12")), "{:?}", msgs(&st));
 
+        st.matrix = Matrix::Rec709;
         st.range_convert = true;
         assert!(msgs(&st).iter().any(|m| m.contains("washed out")));
         st.apply_conflict(ConflictKind::DoubleRangeSqueeze);

@@ -176,10 +176,13 @@ Re-encode.
   - **Video and audio codecs:** H.264 (libx264) + AAC is the default (same command as before). HEVC, AV1, AC3
     and “keep original audio” are offered with the same pickers as Re-encode. Old saved presets without those
     fields still load as H.264 + AAC.
-  - **Colour matrix:** `matrix="Rec709"` by default (Rec601, PC.709, PC.601 and Rec2020 are also offered), plus
+  - **Colour matrix:** `matrix="PC.709"` by default, recommended for Vegas 8-bit projects that keep video
+    levels unchanged (Rec709, Rec601, PC.601 and Rec2020 are also offered), plus
     **Interlaced source** (`interlaced=true`). Rec709 / Rec601 / Rec2020 already convert to TV (limited) range
-    in the script; a second full-to-TV filter is not applied. PC.709 / PC.601 keep full range and are tagged as
-    full range, with an optional **Convert full range to TV range** choice. See **Colour range and Vegas frameserving**.
+    in the script; a second full-to-TV filter is not applied. Use Rec709 for 32-bit full-range Vegas projects.
+    PC.709 / PC.601 keep full range and are tagged as full range, with an optional **Convert full range to TV range**
+    choice. Saved presets keep the matrix they stored; older files that omitted the field still load as Rec709.
+    See **Colour range and Vegas frameserving**.
   - **Bit depth:** 8-bit, or 10-bit with `ConvertBits(10)` and a 10-bit encoder format. 10-bit isn't offered with
     YV12 or RGB32.
   - **Signpost format:** AviSource `pixel_type`; leave on Automatic.
@@ -192,7 +195,7 @@ Re-encode.
   Example script:
   ```
   AviSource("C:\Users\you\Documents\project.avi", audio=true)
-  ConvertToYUV420(matrix="Rec709")
+  ConvertToYUV420(matrix="PC.709")
   ```
 - **Preview and edit:** the script is shown with a **Copy script** button. **Edit the script by hand** lets you change
   it, for example to use DirectShowSource or FFVideoSource (FFMS2) instead of AviSource if AviSource can't open the
@@ -370,7 +373,7 @@ These notes are approximate. The only reliable check is a dark scene on the scre
 
 **OBS and other captures.** The compatible tagged choice is NV12, Rec.709, Limited (TV) range. For a direct encode in this app, leave **Convert full-range to limited-range** off. If the file is already tagged as TV range and that conversion is on, a warning offers a one-click fix that turns the conversion off, or you can run as set. If the file has no range tag, there is no warning — only a short note on the Colour range hover.
 
-**Vegas frameserving.** An 8-bit Vegas project usually passes video levels through unchanged, so the script should use **PC.709** (keeps full range). A 32-bit full-range Vegas project should use **Rec709**, which squeezes to TV range in the script. The Frameserver colour-matrix default is still Rec709. Check a dark scene; grey blacks often mean the levels were squeezed twice. ffprobe shows `color_range`, `color_space`, `color_primaries` and `color_transfer` when the file has them.
+**Vegas frameserving.** An 8-bit Vegas project usually passes video levels through unchanged, so the script should use **PC.709** (keeps full range). That is now the Frameserver default, and is marked recommended for Vegas 8-bit. A 32-bit full-range Vegas project should use **Rec709**, which squeezes to TV range in the script. Saved presets keep the matrix they stored; older files that omitted the field still load as Rec709. Check a dark scene; grey blacks often mean the levels were squeezed twice. ffprobe shows `color_range`, `color_space`, `color_primaries` and `color_transfer` when the file has them.
 
 ## Input / output folders (0.5.5-codecs.1)
 Input and output folders are remembered at the app level (File › Settings), not in presets. On first run they

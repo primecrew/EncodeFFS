@@ -96,7 +96,7 @@ pub enum Matrix {
 }
 
 impl Matrix {
-    pub const ALL: [Matrix; 6] = [Matrix::Rec709, Matrix::Rec601, Matrix::Pc709, Matrix::Pc601, Matrix::Rec2020, Matrix::Default];
+    pub const ALL: [Matrix; 6] = [Matrix::Pc709, Matrix::Rec709, Matrix::Rec601, Matrix::Pc601, Matrix::Rec2020, Matrix::Default];
     pub fn value(self) -> Option<&'static str> {
         match self {
             Matrix::Default => None,
@@ -110,9 +110,9 @@ impl Matrix {
     pub fn label(self) -> &'static str {
         match self {
             Matrix::Default => "Not set (AviSynth default, Rec601)",
-            Matrix::Rec709 => "Rec709 – HD and most editor projects (recommended)",
+            Matrix::Rec709 => "Rec709 – HD, squeeze to TV range (Vegas 32-bit full-range)",
             Matrix::Rec601 => "Rec601 – standard definition (DVD, 480/576 lines)",
-            Matrix::Pc709 => "PC.709 – HD, keep full range",
+            Matrix::Pc709 => "PC.709 – HD, keep full range (recommended for Vegas 8-bit)",
             Matrix::Pc601 => "PC.601 – SD, keep full range",
             Matrix::Rec2020 => "Rec2020 – UHD / HDR projects",
         }
@@ -143,6 +143,11 @@ impl Matrix {
             (Matrix::Default, _) => vec![],
         }
     }
+}
+
+/// When a saved preset omitted `matrix`, the effective value used to be Rec709.
+pub fn missing_matrix() -> Matrix {
+    Matrix::Rec709
 }
 
 /// AviSource pixel_type (what the decompressor is asked to deliver).
@@ -231,7 +236,7 @@ impl ScriptOptions {
             pixel_type: PixelType::Auto,
             audio: AudioMode::Keep,
             color: Color::Yuv420,
-            matrix: Matrix::Rec709,
+            matrix: Matrix::Pc709,
             interlaced: false,
             trim: None,
             fps: None,
@@ -480,14 +485,15 @@ mod tests {
     }
 
     #[test]
-    fn default_script_is_yuv420_rec709() {
-        let o = ScriptOptions::new(r"C:\Users\alex\Documents\clip.avi");
+    fn default_script_is_yuv420_pc709() {
+        let o = ScriptOptions::new(r"C:\Users\you\Documents\clip.avi");
         assert_eq!(o.color, Color::Yuv420);
+        assert_eq!(o.matrix, Matrix::Pc709);
         assert_eq!(Color::default(), Color::Yuv420);
         let s = script(&o).unwrap();
         assert!(s.ends_with("\r\n") && !s.starts_with('\u{feff}'));
         assert!(!s.contains('\n') || s.matches('\n').count() == s.matches("\r\n").count(), "CRLF only");
-        assert_eq!(lines(&s), [r#"AviSource("C:\Users\alex\Documents\clip.avi", audio=true)"#, r#"ConvertToYUV420(matrix="Rec709")"#]);
+        assert_eq!(lines(&s), [r#"AviSource("C:\Users\you\Documents\clip.avi", audio=true)"#, r#"ConvertToYUV420(matrix="PC.709")"#]);
     }
 
     #[test]
