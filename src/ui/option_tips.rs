@@ -22,7 +22,7 @@ pub const FILM_GRAIN_DENOISE: &str = "Cleans the source before encoding so the f
 /// Disabled “Denoise first” when film grain is off.
 pub const FILM_GRAIN_DENOISE_OFF: &str = "Turn film grain on first. Denoise only applies when grain is being signaled.";
 
-pub const COLOUR_RANGE: &str = "Converts full-range (PC) video to TV (limited) range and tags the file that way. Leave this off (the default) if the source is already TV range, or blacks can look grey.";
+pub const COLOUR_RANGE: &str = "Converts full-range (PC) video to TV (limited) range and tags the file that way. Most game captures and camera files are already TV range. Squeezing twice gives grey blacks — check a dark scene, and leave this off unless the source is full range.";
 
 pub const FASTSTART: &str = "Moves the MP4 index to the front so playback can start before the whole file loads (web, Plex over network, phones). Adds a short rewrite at the end. MP4/MOV only.";
 

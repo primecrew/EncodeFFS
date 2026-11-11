@@ -206,7 +206,7 @@ impl Mode for ReencodeMode {
                     }
                 });
                 ui.end_row();
-                range_ui(ui, &mut st.range_convert);
+                range_ui(ui, &mut st.range_convert, self.probe.info().map(|i| i.video_color_range()));
                 crate::ui::common::row_label_tip(ui, "Deinterlace", option_tips::DEINTERLACE);
                 let interlaced = summary.as_ref().map(|s| s.interlaced).unwrap_or(false);
                 ui.vertical(|ui| {
@@ -329,11 +329,11 @@ impl Mode for ReencodeMode {
 
     fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {
         let out = PathBuf::from(self.st.out_dir.trim()).join(self.st.out_name.trim());
-        ffenc::cmd::conflicts::detect(&super::media_choices(&self.st.video, &self.st.audio, &self.st.container, &self.st.out_name, &self.st.last_auto, out))
+        ffenc::cmd::conflicts::detect(&super::media_choices(&self.st.video, &self.st.audio, &self.st.container, &self.st.out_name, &self.st.last_auto, out, self.st.range_convert, self.probe.info().and_then(|i| i.video_color_range())))
     }
 
     fn apply_conflict_fix(&mut self, kind: ffenc::cmd::conflicts::ConflictKind) {
         let out = PathBuf::from(self.st.out_dir.trim()).join(self.st.out_name.trim());
-        super::apply_media_fix(kind, &mut self.st.video, &mut self.st.audio, &mut self.st.container, &mut self.st.out_name, &mut self.st.last_auto, out);
+        super::apply_media_fix(kind, &mut self.st.video, &mut self.st.audio, &mut self.st.container, &mut self.st.out_name, &mut self.st.last_auto, out, Some(&mut self.st.range_convert));
     }
 }

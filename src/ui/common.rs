@@ -506,13 +506,26 @@ pub fn compressor_params_ui(ui: &mut Ui, id: &str, c: &mut CompressorParams) {
     });
 }
 
-pub fn range_ui(ui: &mut Ui, v: &mut bool) {
+/// Colour-range checkbox. `probed` is `None` when there is no source probe yet,
+/// `Some(None)` when the file was probed but the range is missing or unknown
+/// (a mild hover-only note, no warning), and `Some(Limited/Full)` when tagged.
+pub fn range_ui(ui: &mut Ui, v: &mut bool, probed: Option<Option<ffenc::cmd::common::ColorRange>>) {
     row_label_tip(ui, "Colour range", option_tips::COLOUR_RANGE);
     ui.vertical(|ui| {
         ui.checkbox(v, "Convert full-range to limited-range BT.709 and tag it");
         hint(ui, "Use for full-range PC/capture sources. Skip if the source is already limited/video range (avoids grey blacks).");
+        if matches!(probed, Some(None)) {
+            hint(ui, "This file's colour range is not tagged. Most captures are already TV range. Check a dark scene.");
+        }
     });
     ui.end_row();
+    if let Some(c) = ffenc::cmd::conflicts::source_already_limited(*v, probed.flatten()) {
+        ui.label("");
+        if let ConflictAction::Fix(_) = conflict_warning_ui(ui, &c, false) {
+            *v = false;
+        }
+        ui.end_row();
+    }
 }
 
 pub fn faststart_ui(ui: &mut Ui, v: &mut bool, enabled: bool) {

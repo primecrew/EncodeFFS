@@ -235,7 +235,7 @@ impl Mode for CustomMode {
                     }
                 });
                 ui.end_row();
-                range_ui(ui, &mut o.range_convert);
+                range_ui(ui, &mut o.range_convert, self.probe.info().map(|i| i.video_color_range()));
                 crate::ui::common::row_label_tip(ui, "Deinterlace", option_tips::DEINTERLACE);
                 ui.checkbox(&mut o.deinterlace, "bwdif double-rate, only when ffprobe reports interlaced video");
                 ui.end_row();
@@ -478,11 +478,11 @@ impl Mode for CustomMode {
 
     fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {
         let out = PathBuf::from(self.st.out_dir.trim()).join(self.st.out_name.trim());
-        ffenc::cmd::conflicts::detect(&super::media_choices(&self.st.o.video_encode, &self.st.o.audio_encode, &self.st.o.container, &self.st.out_name, &self.st.last_auto, out))
+        ffenc::cmd::conflicts::detect(&super::media_choices(&self.st.o.video_encode, &self.st.o.audio_encode, &self.st.o.container, &self.st.out_name, &self.st.last_auto, out, self.st.o.range_convert, self.probe.info().and_then(|i| i.video_color_range())))
     }
 
     fn apply_conflict_fix(&mut self, kind: ffenc::cmd::conflicts::ConflictKind) {
         let out = PathBuf::from(self.st.out_dir.trim()).join(self.st.out_name.trim());
-        super::apply_media_fix(kind, &mut self.st.o.video_encode, &mut self.st.o.audio_encode, &mut self.st.o.container, &mut self.st.out_name, &mut self.st.last_auto, out);
+        super::apply_media_fix(kind, &mut self.st.o.video_encode, &mut self.st.o.audio_encode, &mut self.st.o.container, &mut self.st.out_name, &mut self.st.last_auto, out, Some(&mut self.st.o.range_convert));
     }
 }

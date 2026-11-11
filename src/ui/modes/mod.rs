@@ -78,7 +78,16 @@ pub trait Mode {
 }
 
 /// Conflict-check fields shared by Re-encode, Batch, Join and Custom.
-pub fn media_choices(video: &ffenc::cmd::common::VideoEncode, audio: &ffenc::cmd::common::AudioEncode, container: &str, out_name: &str, last_auto: &str, output: PathBuf) -> ffenc::cmd::conflicts::Choices {
+pub fn media_choices(
+    video: &ffenc::cmd::common::VideoEncode,
+    audio: &ffenc::cmd::common::AudioEncode,
+    container: &str,
+    out_name: &str,
+    last_auto: &str,
+    output: PathBuf,
+    range_convert: bool,
+    source_range: Option<ffenc::cmd::common::ColorRange>,
+) -> ffenc::cmd::conflicts::Choices {
     ffenc::cmd::conflicts::Choices {
         video: video.clone(),
         audio: audio.clone(),
@@ -88,6 +97,9 @@ pub fn media_choices(video: &ffenc::cmd::common::VideoEncode, audio: &ffenc::cmd
         output,
         bits: ffenc::cmd::conflicts::script_bit_depth(video),
         bt709_tags: false,
+        range_convert,
+        source_range,
+        uses_script_matrix: false,
         ..Default::default()
     }
 }
@@ -100,14 +112,19 @@ pub fn apply_media_fix(
     out_name: &mut String,
     last_auto: &mut String,
     output: PathBuf,
+    range_convert: Option<&mut bool>,
 ) {
-    let mut c = media_choices(video, audio, container, out_name, last_auto, output);
+    let current_range = range_convert.as_deref().copied().unwrap_or(false);
+    let mut c = media_choices(video, audio, container, out_name, last_auto, output, current_range, None);
     ffenc::cmd::conflicts::apply(&mut c, kind);
     *video = c.video;
     *audio = c.audio;
     *container = c.container;
     *out_name = c.out_name;
     *last_auto = c.last_auto;
+    if let Some(r) = range_convert {
+        *r = c.range_convert;
+    }
 }
 
 /// Deserialize remembered state or fall back to `default`.

@@ -170,7 +170,7 @@ impl Mode for SubsMode {
             if !st.copy_only {
                 video_encode_ui(ui, "m8", &mut st.video, false);
                 bitrate_ui(ui, "AAC bitrate", &mut st.audio_bitrate_k);
-                range_ui(ui, &mut st.range_convert);
+                range_ui(ui, &mut st.range_convert, self.dprobe.info().map(|i| i.video_color_range()));
             }
             if st.container == "mp4" {
                 crate::ui::common::row_label_tip(ui, "MP4 subtitles", "MP4 only supports text subtitles as mov_text. Converting is the safe choice; copying as-is can fail for other formats (e.g. ASS, PGS).");
@@ -263,5 +263,34 @@ impl Mode for SubsMode {
         self.sprobe = ProbeSlot::default();
         self.dprobe = ProbeSlot::default();
         self.selected.clear();
+    }
+
+    fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {
+        if self.st.copy_only {
+            return vec![];
+        }
+        let out = PathBuf::from(self.st.out_dir.trim()).join(self.st.out_name.trim());
+        let audio = ffenc::cmd::common::AudioEncode { bitrate_k: self.st.audio_bitrate_k, ..Default::default() };
+        ffenc::cmd::conflicts::detect(&super::media_choices(
+            &self.st.video,
+            &audio,
+            &self.st.container,
+            &self.st.out_name,
+            &self.st.last_auto,
+            out,
+            self.st.range_convert,
+            self.dprobe.info().and_then(|i| i.video_color_range()),
+        ))
+    }
+
+    fn apply_conflict_fix(&mut self, kind: ffenc::cmd::conflicts::ConflictKind) {
+        let out = PathBuf::from(self.st.out_dir.trim()).join(self.st.out_name.trim());
+        let mut audio = ffenc::cmd::common::AudioEncode { bitrate_k: self.st.audio_bitrate_k, ..Default::default() };
+        let mut name = self.st.out_name.clone();
+        let mut last = self.st.last_auto.clone();
+        super::apply_media_fix(kind, &mut self.st.video, &mut audio, &mut self.st.container, &mut name, &mut last, out, Some(&mut self.st.range_convert));
+        self.st.out_name = name;
+        self.st.last_auto = last;
+        self.st.audio_bitrate_k = audio.bitrate_k;
     }
 }

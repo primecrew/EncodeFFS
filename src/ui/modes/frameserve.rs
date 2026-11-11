@@ -174,6 +174,8 @@ impl State {
             output: PathBuf::from(self.out_dir.trim()).join(self.out_name.trim()),
             edit_script: self.edit_script,
             script_text,
+            uses_script_matrix: true,
+            source_range: None,
         }
     }
 

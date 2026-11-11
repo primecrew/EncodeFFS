@@ -19,6 +19,26 @@ pub const RANGE_FILTER: &str = "scale=in_range=full:out_range=tv";
 /// bwdif double-rate deinterlace used by the script.
 pub const DEINTERLACE_FILTER: &str = "bwdif=mode=send_field:parity=auto:deint=interlaced";
 
+/// Colour range tagged on a source file (ffprobe `color_range`), when known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorRange {
+    /// TV / mpeg / limited.
+    Limited,
+    /// PC / jpeg / full.
+    Full,
+}
+
+impl ColorRange {
+    /// Parse an ffprobe `color_range` value. Unknown, unspecified, or empty is `None`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "tv" | "mpeg" | "limited" | "1" => Some(Self::Limited),
+            "pc" | "jpeg" | "full" | "2" => Some(Self::Full),
+            _ => None,
+        }
+    }
+}
+
 /// BT.709 limited-range tags (script: Get-ColorRangeMetadataArgs).
 pub fn color_tag_args() -> Vec<String> {
     ["-color_range", "tv", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]
@@ -384,6 +404,22 @@ pub fn missing_faststart() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn color_range_parse() {
+        assert_eq!(ColorRange::parse("tv"), Some(ColorRange::Limited));
+        assert_eq!(ColorRange::parse("MPEG"), Some(ColorRange::Limited));
+        assert_eq!(ColorRange::parse("limited"), Some(ColorRange::Limited));
+        assert_eq!(ColorRange::parse("1"), Some(ColorRange::Limited));
+        assert_eq!(ColorRange::parse("pc"), Some(ColorRange::Full));
+        assert_eq!(ColorRange::parse("JPEG"), Some(ColorRange::Full));
+        assert_eq!(ColorRange::parse("full"), Some(ColorRange::Full));
+        assert_eq!(ColorRange::parse("2"), Some(ColorRange::Full));
+        assert_eq!(ColorRange::parse("unknown"), None);
+        assert_eq!(ColorRange::parse("unspecified"), None);
+        assert_eq!(ColorRange::parse(""), None);
+        assert_eq!(ColorRange::parse("n/a"), None);
+    }
 
     #[test]
     fn compressor_presets_match_script() {

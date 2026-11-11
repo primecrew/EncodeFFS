@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use super::codecs::{self, AudioCodec, VideoCodec};
-use super::common::{AudioEncode, CompressorPreset, VideoEncode};
+use super::common::{AudioEncode, ColorRange, CompressorPreset, VideoEncode};
 use super::frameserve::{self, BitDepth, Color, Matrix, ScriptOptions};
 
 /// One unusual combination the user can keep or (when a fix exists) correct.
@@ -16,6 +16,8 @@ pub enum ConflictKind {
     TenBitEightBitColor,
     /// Colour matrix already squeezes to TV range, and a second full→TV conversion is on.
     DoubleRangeSqueeze,
+    /// Source file is tagged limited/TV, and a full→TV conversion is also on.
+    SourceAlreadyLimited,
     /// Full-range (PC) script tagged as TV range, with no squeeze.
     PcTaggedAsTv,
     /// HEVC/AV1 10-bit is on, but the script is 8-bit.
@@ -72,6 +74,12 @@ pub struct Choices {
     pub output: PathBuf,
     pub edit_script: bool,
     pub script_text: String,
+    /// True for Frameserver (the colour matrix applies in the AviSynth script).
+    /// Re-encode and other direct modes leave this false so a default Rec709 matrix
+    /// does not look like a script double-squeeze.
+    pub uses_script_matrix: bool,
+    /// Tagged colour range of the source video, when ffprobe reported a known value.
+    pub source_range: Option<ColorRange>,
 }
 
 impl Default for Choices {
@@ -90,6 +98,8 @@ impl Default for Choices {
             output: PathBuf::from(r"C:\out\a.mp4"),
             edit_script: false,
             script_text: String::new(),
+            uses_script_matrix: false,
+            source_range: None,
         }
     }
 }
@@ -195,7 +205,7 @@ pub fn detect(c: &Choices) -> Vec<Conflict> {
         });
     }
 
-    if c.range_convert && yuv_conversion(c.color) && (c.matrix.squeezes_to_tv() || c.matrix == Matrix::Default) {
+    if c.uses_script_matrix && c.range_convert && yuv_conversion(c.color) && (c.matrix.squeezes_to_tv() || c.matrix == Matrix::Default) {
         let message = if c.matrix == Matrix::Default {
             "The colour matrix is not set, so AviSynth uses Rec601 (TV range) when it converts. A full-to-TV conversion is also on and may squeeze the picture twice. The encode will still run as you set it.".into()
         } else {
@@ -207,6 +217,17 @@ pub fn detect(c: &Choices) -> Vec<Conflict> {
             fix: Some(Fix {
                 button: "Turn off the extra range conversion",
                 hint: "Turns off “Convert full range to TV range”, so the picture is not squeezed twice.",
+            }),
+        });
+    }
+
+    if c.range_convert && c.source_range == Some(ColorRange::Limited) {
+        out.push(Conflict {
+            message: "This source is already tagged as TV (limited) range, and a full-to-TV conversion is also on, which can squeeze the picture twice and make blacks look grey. The encode will still run.".into(),
+            kind: ConflictKind::SourceAlreadyLimited,
+            fix: Some(Fix {
+                button: "Turn off the range conversion",
+                hint: "Turns off “Convert full-range to limited-range”, so a TV-range source is not squeezed again.",
             }),
         });
     }
@@ -310,7 +331,7 @@ pub fn apply(c: &mut Choices, kind: ConflictKind) {
         ConflictKind::TenBitEightBitColor => {
             c.color = Color::Yuv420;
         }
-        ConflictKind::DoubleRangeSqueeze => {
+        ConflictKind::DoubleRangeSqueeze | ConflictKind::SourceAlreadyLimited => {
             c.range_convert = false;
         }
         ConflictKind::PcTaggedAsTv => {
@@ -359,6 +380,12 @@ pub fn messages(cs: &[Conflict]) -> Vec<String> {
     cs.iter().map(|c| c.message.clone()).collect()
 }
 
+/// Warning when a probed source is tagged TV range and the full→TV conversion is on.
+pub fn source_already_limited(range_convert: bool, source: Option<ColorRange>) -> Option<Conflict> {
+    let c = Choices { range_convert, source_range: source, ..Choices::default() };
+    detect(&c).into_iter().find(|w| w.kind == ConflictKind::SourceAlreadyLimited)
+}
+
 /// Script-only unusual combinations (10-bit with YV12/RGB32).
 pub fn script_conflicts(o: &ScriptOptions) -> Vec<Conflict> {
     let c = Choices { color: o.color, bits: o.bits, bt709_tags: false, ..Choices::default() };
@@ -383,6 +410,8 @@ pub fn encode_conflicts(pr: &frameserve::EncodeParams) -> Vec<Conflict> {
         output: pr.output.clone(),
         edit_script: false,
         script_text: pr.script_text.clone(),
+        uses_script_matrix: true,
+        source_range: None,
     };
     detect(&c).into_iter().filter(|w| {
         matches!(
@@ -437,7 +466,7 @@ mod tests {
 
     #[test]
     fn fix_double_range_squeeze_turns_convert_off() {
-        let mut c = Choices { range_convert: true, matrix: Matrix::Rec709, ..Choices::default() };
+        let mut c = Choices { range_convert: true, matrix: Matrix::Rec709, uses_script_matrix: true, ..Choices::default() };
         assert!(kinds(&detect(&c)).contains(&ConflictKind::DoubleRangeSqueeze));
         assert!(detect(&c).iter().any(|w| w.message.contains("washed out")));
         let before = c.clone();
@@ -448,7 +477,7 @@ mod tests {
 
     #[test]
     fn fix_default_matrix_double_squeeze() {
-        let mut c = Choices { range_convert: true, matrix: Matrix::Default, bt709_tags: false, ..Choices::default() };
+        let mut c = Choices { range_convert: true, matrix: Matrix::Default, bt709_tags: false, uses_script_matrix: true, ..Choices::default() };
         assert!(detect(&c).iter().any(|w| w.kind == ConflictKind::DoubleRangeSqueeze && w.message.contains("Rec601")));
         apply(&mut c, ConflictKind::DoubleRangeSqueeze);
         assert!(!c.range_convert);
@@ -618,5 +647,34 @@ mod tests {
     fn playback_and_pixfmt_notes_have_no_fix() {
         // these are not in detect() as fixable conflicts; informational only
         assert!(Fix { button: "x", hint: "y" }.button.len() > 0); // type is public
+    }
+
+    #[test]
+    fn limited_source_plus_squeeze_warns_and_fix_turns_it_off() {
+        let mut c = Choices { range_convert: true, source_range: Some(ColorRange::Limited), ..Choices::default() };
+        assert!(kinds(&detect(&c)).contains(&ConflictKind::SourceAlreadyLimited));
+        assert!(detect(&c).iter().any(|w| w.message.contains("already tagged") && w.fix.is_some()));
+        let before = c.clone();
+        apply(&mut c, ConflictKind::SourceAlreadyLimited);
+        only_changed(&before, &c, |x| x.range_convert = false);
+        assert!(!kinds(&detect(&c)).contains(&ConflictKind::SourceAlreadyLimited));
+    }
+
+    #[test]
+    fn missing_or_full_source_range_does_not_warn() {
+        for source in [None, Some(ColorRange::Full)] {
+            let c = Choices { range_convert: true, source_range: source, ..Choices::default() };
+            assert!(!kinds(&detect(&c)).contains(&ConflictKind::SourceAlreadyLimited), "{source:?}");
+        }
+        let c = Choices { range_convert: false, source_range: Some(ColorRange::Limited), ..Choices::default() };
+        assert!(detect(&c).is_empty());
+    }
+
+    #[test]
+    fn direct_modes_do_not_get_the_script_double_squeeze_warning() {
+        let c = Choices { range_convert: true, matrix: Matrix::Rec709, uses_script_matrix: false, ..Choices::default() };
+        assert!(!kinds(&detect(&c)).contains(&ConflictKind::DoubleRangeSqueeze));
+        let c = Choices { range_convert: true, matrix: Matrix::Rec709, uses_script_matrix: true, ..Choices::default() };
+        assert!(kinds(&detect(&c)).contains(&ConflictKind::DoubleRangeSqueeze));
     }
 }

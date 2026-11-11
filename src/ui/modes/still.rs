@@ -108,7 +108,7 @@ impl Mode for StillMode {
             }
             bitrate_ui(ui, "AAC bitrate", &mut st.bitrate_k);
             faststart_ui(ui, &mut st.faststart, true);
-            range_ui(ui, &mut st.range_convert);
+            range_ui(ui, &mut st.range_convert, None);
         });
     }
 

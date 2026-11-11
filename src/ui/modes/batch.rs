@@ -49,6 +49,27 @@ pub fn list_videos(dir: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 impl BatchMode {
+    /// Probe summary for the colour-range row: Limited if any included file is tagged TV
+    /// range, Full if any is tagged full and none are limited, `Some(None)` when videos
+    /// were probed but none are tagged, and `None` when there is nothing to judge yet.
+    fn probed_color_range(&self) -> Option<Option<ffenc::cmd::common::ColorRange>> {
+        use ffenc::cmd::common::ColorRange;
+        let infos: Vec<_> = self.rows.iter().filter(|r| r.include).filter_map(|r| r.info.as_ref().ok()).collect();
+        if infos.is_empty() {
+            return None;
+        }
+        if infos.iter().any(|i| i.video_color_range() == Some(ColorRange::Limited)) {
+            return Some(Some(ColorRange::Limited));
+        }
+        if infos.iter().any(|i| i.video_color_range() == Some(ColorRange::Full)) {
+            return Some(Some(ColorRange::Full));
+        }
+        if infos.iter().any(|i| i.video().is_some()) {
+            return Some(None);
+        }
+        None
+    }
+
     fn start_scan(&mut self, cx: &Ctx) {
         let Some(fp) = cx.ffprobe.map(|p| p.to_path_buf()) else {
             self.rows.clear();
@@ -152,6 +173,7 @@ impl Mode for BatchMode {
         }
 
         let without = self.rows.iter().filter(|r| r.include && r.info.as_ref().map(|i| !i.has_chapters()).unwrap_or(false)).count();
+        let probed_range = self.probed_color_range();
         let bs = &mut self.st.bs;
         let any_interlaced = self.rows.iter().any(|r| r.include && r.info.as_ref().ok().and_then(|i| i.video_summary().ok()).map(|v| v.interlaced).unwrap_or(false));
         section(ui, "Shared settings");
@@ -190,7 +212,7 @@ impl Mode for BatchMode {
             section(ui, &format!("Video ({})", bs.video.codec.encoder()));
             egui::Grid::new("m7v").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                 crate::ui::codecs_ui::video_codec_ui(ui, "m7", &mut bs.video, cx.encoders.as_ref(), None);
-                range_ui(ui, &mut bs.range_convert);
+                range_ui(ui, &mut bs.range_convert, probed_range);
                 crate::ui::common::row_label_tip(ui, "Deinterlace", option_tips::DEINTERLACE);
                 ui.vertical(|ui| {
                     ui.checkbox(&mut bs.deinterlace, "bwdif double-rate deinterlace for files detected as interlaced");
@@ -284,13 +306,13 @@ impl Mode for BatchMode {
 
     fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {
         let dummy = PathBuf::from(format!("out.{}", self.st.bs.container));
-        ffenc::cmd::conflicts::detect(&super::media_choices(&self.st.bs.video, &self.st.bs.audio, &self.st.bs.container, &format!("out.{}", self.st.bs.container), "", dummy))
+        ffenc::cmd::conflicts::detect(&super::media_choices(&self.st.bs.video, &self.st.bs.audio, &self.st.bs.container, &format!("out.{}", self.st.bs.container), "", dummy, self.st.bs.range_convert, self.probed_color_range().flatten()))
     }
 
     fn apply_conflict_fix(&mut self, kind: ffenc::cmd::conflicts::ConflictKind) {
         let dummy = PathBuf::from(format!("out.{}", self.st.bs.container));
         let mut name = format!("out.{}", self.st.bs.container);
         let mut last = String::new();
-        super::apply_media_fix(kind, &mut self.st.bs.video, &mut self.st.bs.audio, &mut self.st.bs.container, &mut name, &mut last, dummy);
+        super::apply_media_fix(kind, &mut self.st.bs.video, &mut self.st.bs.audio, &mut self.st.bs.container, &mut name, &mut last, dummy, Some(&mut self.st.bs.range_convert));
     }
 }

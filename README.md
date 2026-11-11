@@ -179,7 +179,7 @@ Re-encode.
   - **Colour matrix:** `matrix="Rec709"` by default (Rec601, PC.709, PC.601 and Rec2020 are also offered), plus
     **Interlaced source** (`interlaced=true`). Rec709 / Rec601 / Rec2020 already convert to TV (limited) range
     in the script; a second full-to-TV filter is not applied. PC.709 / PC.601 keep full range and are tagged as
-    full range, with an optional **Convert full range to TV range** choice.
+    full range, with an optional **Convert full range to TV range** choice. See **Colour range and Vegas frameserving**.
   - **Bit depth:** 8-bit, or 10-bit with `ConvertBits(10)` and a 10-bit encoder format. 10-bit isn't offered with
     YV12 or RGB32.
   - **Signpost format:** AviSource `pixel_type`; leave on Automatic.
@@ -362,6 +362,15 @@ Rough starting points for 1080p gameplay (try a clip and adjust):
 Film grain is mainly for camera footage that already has grain; leave it off for typical game recordings.
 
 **Frameserving and audio.** When an editor such as Vegas serves the timeline, the audio arrives as PCM, so there is no compressed-audio passthrough — you get one lossy encode. If the result is quiet, raise levels in the editor, or use this app's pre-gain, then the compressor, then make-up gain.
+
+For colour range and Vegas levels, see **Colour range and Vegas frameserving**.
+
+## Colour range and Vegas frameserving
+These notes are approximate. The only reliable check is a dark scene on the screen you will actually watch. Grey, milky blacks usually mean the picture was squeezed from full (PC) range to TV (limited) range twice.
+
+**OBS and other captures.** The compatible tagged choice is NV12, Rec.709, Limited (TV) range. For a direct encode in this app, leave **Convert full-range to limited-range** off. If the file is already tagged as TV range and that conversion is on, a warning offers a one-click fix that turns the conversion off, or you can run as set. If the file has no range tag, there is no warning — only a short note on the Colour range hover.
+
+**Vegas frameserving.** An 8-bit Vegas project usually passes video levels through unchanged, so the script should use **PC.709** (keeps full range). A 32-bit full-range Vegas project should use **Rec709**, which squeezes to TV range in the script. The Frameserver colour-matrix default is still Rec709. Check a dark scene; grey blacks often mean the levels were squeezed twice. ffprobe shows `color_range`, `color_space`, `color_primaries` and `color_transfer` when the file has them.
 
 ## Input / output folders (0.5.5-codecs.1)
 Input and output folders are remembered at the app level (File › Settings), not in presets. On first run they
