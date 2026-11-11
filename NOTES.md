@@ -2,6 +2,30 @@
 
 Detailed implementation notes. The user-facing history is in [CHANGELOG.md](CHANGELOG.md).
 
+## 0.5.5-codecs.3 — One-click fixes, sidebar, bitrate and Speed drop-downs, hover help, leftover-update cleanup
+- **One-click conflict fixes** (`src/cmd/conflicts.rs`, form buttons and the pre-run `ConflictDlg`): unusual
+  combinations offer “Fix it” (says exactly what will change) or “Keep my setting” / “Run as set”. Settings
+  are never changed unless the user clicks. Warnings with no single obvious fix still only warn.
+- **Frameserver 10-bit** is one control: the HEVC/AV1 10-bit box also adds `ConvertBits(10)` to the script.
+  The separate script Bit depth row is gone. H.264 stays 8-bit. Old presets that had script bits set to
+  10-bit turn the codec 10-bit box on when the codec supports it.
+- **Sidebar:** “Presets” is now **Default Presets** (built-ins, including Experimental codecs) and a
+  always-visible **User Presets** section (empty until the user adds one; old files with `builtin: None`
+  land there automatically). Favourites are unchanged.
+- **Audio bitrate** is a ComboBox of typical rates (AAC: 96–320; AC3: 192–640) plus Custom…; stored fields
+  and the **Will encode: N kb/s** readout are unchanged.
+- **Hover help** on technical labels that had none lives in `src/ui/option_tips.rs` (`row_label_tip`).
+- **Leftover FFmpeg update folders:** `cleanup_stale_staging` in `src/updater/install.rs` runs on startup
+  in a background thread. Only the app-managed roots are scanned; a folder is removed only if it matches
+  `.ffmpeg-update-*`, looks like our staging, is not a symlink/junction, and is older than one hour.
+  `bin` / `bin.previous` and the user's own FFmpeg folder are never touched. Always runs, even if
+  “Keep temporary files for debugging” is on. Plain-words log only.
+- **HEVC/AV1 Speed:** the Preset row is renamed Speed (H.264 stays Preset). AV1 is a drop-down of useful
+  SVT speeds (`SVT_SPEEDS`: 2, 4, 5, 6, 8, 10, 12, 13) plus Custom… (typed 0–13), same pattern as audio
+  bitrate. Stored field remains `svt_preset`. Film grain / Denoise first have plain-words tips; Denoise
+  first is disabled when film grain is 0. Codec and CRF notes are one line each, with the full comparison
+  in the hover; the expanding ⓘ blocks are gone.
+
 ## 0.5.5-codecs.2 — Frameserver codec pickers; 10-bit range squeeze in one step
 - **Frameserver** uses the same `video_codec_ui` / `audio_codec_ui` as Re-encode. Default remains
   H.264 (libx264) + AAC, and `frameserve::build` goes through `codecs::video_args` / `audio_args`
