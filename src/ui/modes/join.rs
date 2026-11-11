@@ -29,6 +29,7 @@ struct State {
     container: String,
     method: JoinMethod,
     chapters_per_file: bool,
+    #[serde(default = "ffenc::cmd::common::missing_faststart")]
     faststart: bool,
     video: VideoEncode,
     audio: AudioEncode,
@@ -45,7 +46,7 @@ impl Default for State {
             container: "mp4".into(),
             method: JoinMethod::Copy,
             chapters_per_file: true,
-            faststart: true,
+            faststart: false,
             video: VideoEncode::default(),
             audio: AudioEncode::default(),
         }

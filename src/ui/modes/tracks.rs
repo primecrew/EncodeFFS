@@ -43,6 +43,7 @@ struct State {
     out_name: String,
     last_auto: String,
     suffix: String,
+    #[serde(default = "ffenc::cmd::common::missing_faststart")]
     faststart: bool,
     add_kind: AddKind,
     add_title: String,
@@ -75,7 +76,7 @@ impl State {
             out_name: String::new(),
             last_auto: String::new(),
             suffix: "_tracks".into(),
-            faststart: true,
+            faststart: false,
             add_kind: AddKind::Commentary,
             add_title: s.commentary_name.clone(),
             add_lang: "eng".into(),

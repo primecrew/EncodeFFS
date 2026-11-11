@@ -69,6 +69,7 @@ struct State {
     chapter_interval_min: f64,
     manual: Vec<ManualChapter>,
     auto_chapters_if_none: bool,
+    #[serde(default = "ffenc::cmd::common::missing_faststart")]
     faststart: bool,
     /// Session-only: “Keep my setting” hides a warning until the combo changes.
     #[serde(skip)]
@@ -109,7 +110,7 @@ impl State {
             chapter_interval_min: s.chapter_interval_min,
             manual: vec![],
             auto_chapters_if_none: false,
-            faststart: true,
+            faststart: false,
             dismissed: vec![],
         }
     }
@@ -876,6 +877,7 @@ mod tests {
         assert_eq!(m.st.video.codec, ffenc::cmd::codecs::VideoCodec::H264);
         assert_eq!(m.st.audio.codec, ffenc::cmd::codecs::AudioCodec::Aac);
         assert!(!m.st.range_convert);
+        assert!(!m.st.faststart, "new jobs default faststart off");
     }
 
     #[test]
@@ -900,6 +902,7 @@ mod tests {
         assert_eq!(m.st.video.crf, 22);
         assert_eq!(m.st.audio.bitrate_k, 192);
         assert!(!m.st.range_convert, "old presets do not enable a range squeeze");
+        assert!(m.st.faststart, "old presets that omitted faststart keep it on");
         assert_eq!(m.st.matrix, Matrix::Rec709);
         let o = m.st.options();
         let pr = EncodeParams {
@@ -915,7 +918,7 @@ mod tests {
             matrix: m.st.matrix,
             range_convert: m.st.range_convert,
             chapters: None,
-            faststart: true,
+            faststart: m.st.faststart,
         };
         let b = fs::build(&pr).unwrap();
         assert_eq!(

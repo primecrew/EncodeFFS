@@ -24,7 +24,7 @@ pub const FILM_GRAIN_DENOISE_OFF: &str = "Turn film grain on first. Denoise only
 
 pub const COLOUR_RANGE: &str = "Converts full-range (PC) video to TV (limited) range and tags the file that way. Leave this off (the default) if the source is already TV range, or blacks can look grey.";
 
-pub const FASTSTART: &str = "Moves the file's index to the front so players can start sooner (MP4 only). Leave this on for MP4; it has no effect on MKV.";
+pub const FASTSTART: &str = "Moves the MP4 index to the front so playback can start before the whole file loads (web, Plex over network, phones). Adds a short rewrite at the end. MP4/MOV only.";
 
 pub const CONTAINER: &str = "The kind of output file: MP4 plays in more places; MKV can keep more kinds of audio, subtitles and attachments. Where Auto is offered, MKV inputs stay MKV and everything else becomes MP4.";
 

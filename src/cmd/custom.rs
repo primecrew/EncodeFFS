@@ -430,6 +430,7 @@ pub struct CustomOptions {
     pub drop_chapters: bool,
     /// With chapters "off": generate chapters every `chapter_interval_min` when the input has none.
     pub auto_chapters_if_none: bool,
+    #[serde(default = "crate::cmd::common::missing_faststart")]
     pub faststart: bool,
     pub input_args: String,
     pub output_args: String,
@@ -459,7 +460,7 @@ impl Default for CustomOptions {
             manual: vec![],
             drop_chapters: false,
             auto_chapters_if_none: false,
-            faststart: true,
+            faststart: false,
             input_args: String::new(),
             output_args: String::new(),
         }
@@ -710,5 +711,16 @@ mod tests {
         assert_eq!(split_args("  ").unwrap(), Vec::<String>::new());
         assert_eq!(split_args(r#"-x """#).unwrap(), s(&["-x", ""]));
         assert!(split_args("\"open").is_err());
+    }
+
+    #[test]
+    fn new_jobs_default_faststart_off_and_old_files_keep_it_on() {
+        assert!(!CustomOptions::default().faststart);
+        let old: CustomOptions = serde_json::from_value(serde_json::json!({ "container": "mp4" })).unwrap();
+        assert!(old.faststart, "omitted field in an old custom preset still means on");
+        let off: CustomOptions = serde_json::from_value(serde_json::json!({ "faststart": false })).unwrap();
+        assert!(!off.faststart);
+        let on: CustomOptions = serde_json::from_value(serde_json::json!({ "faststart": true })).unwrap();
+        assert!(on.faststart);
     }
 }

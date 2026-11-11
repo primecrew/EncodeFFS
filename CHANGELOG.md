@@ -6,6 +6,7 @@ This edition is experimental and is not merged into the stable build. It include
 
 ## Unreleased
 
+- Faststart (`-movflags +faststart` on MP4/MOV) is off by default for new jobs. Saved presets keep the value they stored; older files that omitted the field still load as on. The Faststart hover text was updated.
 - README has a **Choosing a codec** chapter: when to use H.264, HEVC or AV1, rough starting points, a short test-clip method, and a note on frameserved audio.
 
 ## 0.5.5-codecs.3

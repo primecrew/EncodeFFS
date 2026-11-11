@@ -32,6 +32,7 @@ struct State {
     audio_bitrate_k: u32,
     range_convert: bool,
     mp4_handling: Mp4SubHandling,
+    #[serde(default = "ffenc::cmd::common::missing_faststart")]
     faststart: bool,
 }
 fn sfx() -> String {
@@ -54,7 +55,7 @@ impl State {
             audio_bitrate_k: s.audio_bitrate_k,
             range_convert: false,
             mp4_handling: Mp4SubHandling::ConvertMovText,
-            faststart: true,
+            faststart: false,
         }
     }
     fn regen_name(&mut self) {

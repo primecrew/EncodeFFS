@@ -376,6 +376,11 @@ pub fn faststart_args() -> Vec<String> {
     vec!["-movflags".into(), "+faststart".into()]
 }
 
+/// When a saved preset omitted `faststart`, those modes used to default to on. New jobs default to off.
+pub fn missing_faststart() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
