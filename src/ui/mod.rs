@@ -1685,7 +1685,7 @@ impl App {
                     ed.crf = v.crf;
                     ed.preset = v.preset;
                     common::bitrate_ui(ui, "Audio bitrate", &mut ed.audio_bitrate_k);
-                    crate::ui::common::row_label(ui, "Gain");
+                    crate::ui::common::row_label_tip(ui, "Gain", "Pre-gain in decibels, applied before the compressor (+6 dB is roughly twice as loud). 0 = unchanged.");
                     common::num_f64(ui, &mut ed.gain_db, -30.0..=30.0, 0.1, " dB");
                     ui.end_row();
                     crate::ui::common::row_label(ui, "Trim start / end");

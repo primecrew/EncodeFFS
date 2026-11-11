@@ -168,12 +168,21 @@ Re-encode.
       but bigger files and fewer players.
     - **RGB32 (`ConvertToRGB32()`):** only for filters that need RGB.
     - **None:** keeps what the signpost gives.
-  - **Colour matrix:** `matrix="Rec709"` by default (Rec601, PC.709, PC.601 and Rec2020 are also offered), plus
-    **Interlaced source** (`interlaced=true`).
+  - **Video and audio codecs:** H.264 (libx264) + AAC is the default (same command as before). HEVC, AV1, AC3
+    and “keep original audio” are offered with the same pickers as Re-encode. Old saved presets without those
+    fields still load as H.264 + AAC.
+  - **Colour matrix:** `matrix="PC.709"` by default, recommended for Vegas 8-bit projects that keep video
+    levels unchanged (Rec709, Rec601, PC.601 and Rec2020 are also offered), plus
+    **Interlaced source** (`interlaced=true`). Rec709 / Rec601 / Rec2020 already convert to TV (limited) range
+    in the script; a second full-to-TV filter is not applied. Use Rec709 for 32-bit full-range Vegas projects.
+    PC.709 / PC.601 keep full range and are tagged as full range, with an optional **Convert full range to TV range**
+    choice. Saved presets keep the matrix they stored; older files that omitted the field still load as Rec709.
+    See **Colour range and Vegas frameserving**.
   - **Bit depth:** 8-bit, or 10-bit with `ConvertBits(10)` and a 10-bit encoder format. 10-bit isn't offered with
     YV12 or RGB32.
   - **Signpost format:** AviSource `pixel_type`; leave on Automatic.
   - **Audio:** keep the audio, keep it converted to 16-bit (`ConvertAudioTo16bit()`), or no audio (`audio=false`).
+    The signpost's audio is PCM, so there is no compressed-audio passthrough (one lossy encode). See **Choosing a codec**.
   - **Force a frame rate:** `AssumeFPS(num, den)`, e.g. 30000/1001.
   - **Only part of the timeline:** `Trim(first, last)` in frames; last = 0 means to the end.
 - **Script file:** the path is written as-is in quotes; AviSynth has no escapes, and Windows paths can't contain `"`.
@@ -181,7 +190,7 @@ Re-encode.
   Example script:
   ```
   AviSource("C:\Users\you\Documents\project.avi", audio=true)
-  ConvertToYUV420(matrix="Rec709")
+  ConvertToYUV420(matrix="PC.709")
   ```
 - **Preview and edit:** the script is shown with a **Copy script** button. **Edit the script by hand** lets you change
   it, for example to use DirectShowSource or FFVideoSource (FFMS2) instead of AviSource if AviSource can't open the
@@ -194,12 +203,14 @@ Re-encode.
     temporary files for debugging** is on; leftovers are cleaned at start-up).
   - You can also keep it **next to the signpost** or **in a folder you choose**, as `<signpost name>_ffenc.avs`.
   - **Save the .avs now** writes it without encoding.
-- **Encoding:** x264 (CRF / preset / tune), optional resize, AAC (bitrate / gain / compressor), chapters, MP4 or MKV,
-  faststart. Overwrite protection and the partial output file work as in every other preset. The confirmation shows
-  the script and the full command; the copied PowerShell command writes the script first.
+- **Encoding:** H.264 (default) or HEVC / AV1, optional resize, AAC (default) or AC3 / copy, gain / compressor,
+  chapters, MP4 or MKV, Faststart (off by default for new jobs; saved presets keep their stored value). Overwrite
+  protection and the partial output file work as in every other preset. The confirmation shows the script and the
+  full command; the copied PowerShell command writes the script first.
 
 ## Main window (HandBrake-style)
-- **Left – presets:** every preset, built-in and yours, in your order. One click selects; **double-click** (or **▶ Run**,
+- **Left – presets:** **Default Presets** (the built-ins, including the **Experimental codecs** folder) and **User Presets**
+  (your saved, duplicated and imported presets; empty until you add one). One click selects; **double-click** (or **▶ Run**,
   F5) loads the current input into that preset and opens the command preview, from where it goes to the queue.
   `*` = unsaved changes. Quick buttons **New… / Duplicate / Import… / Export**, a **search** box (name, type, folder,
   description), **Pin** to put favourites in a "Favorites" group at the top, and optional **folders**
@@ -215,8 +226,9 @@ Re-encode.
 ## Presets
 Everything in the preset panel is a **preset**: a named, saved set of options for an operation **type**.
 
-- Ships with 14 **built-in** presets: the 9 script modes, **Audio & subtitles**, **Join / stitch files**,
-  **Frameserver (AviSynth script)**, **Custom pipeline** and **Add chapters (no re-encode)**.
+- Ships with 19 **built-in** presets: the 9 script modes, **Create Slideshow**, **Audio & subtitles**,
+  **Join / stitch files**, **Frameserver (AviSynth script)**, **Custom pipeline**, **Add chapters (no re-encode)**,
+  and four **Archive** HEVC/AV1 presets in the **Experimental codecs** folder.
 - **Built-in presets are read-only.** They show a padlock and “Built-in, read-only” (screen readers hear
   “built-in, read-only” in the preset list), and they always have the values that ship with the app, so an update
   refreshes them. You can still change the form to try something:
@@ -246,7 +258,7 @@ Everything in the preset panel is a **preset**: a named, saved set of options fo
 ### Preset types
 | Type | What it does |
 |------|--------------|
-| Re-encode video | libx264 + AAC. Trim start/end, duration override, resize (keeps aspect, even dims), full→limited range + BT.709 tags, bwdif deinterlace (auto when interlaced), gain + compressor (light/medium/strong/custom), chapters (off / every N min / manual list / both), passthrough video or audio, container (auto/mp4/mkv/mov), name suffix, faststart. Keeps all audio tracks with titles/languages, subtitles, attachments where the container allows. |
+| Re-encode video | H.264 + AAC by default; optional HEVC / AV1 and AC3 or stream-copy audio. Trim start/end, duration override, resize (keeps aspect, even dims), full→limited range + BT.709 tags (warns if the source is already tagged TV range), bwdif deinterlace (auto when interlaced), gain + compressor (light/medium/strong/advanced…), chapters (off / every N min / manual list / both), passthrough video or audio, container (auto/mp4/mkv/mov), name suffix, Faststart (off for new jobs). Keeps all audio tracks with titles/languages, subtitles, attachments where the container allows. |
 | MP4 from still image | Image + audio → H.264 MP4 (tune stillimage, RGB→BT.709 limited). Length = audio (`-shortest`) or fixed seconds. |
 | Add commentary track | Copies video + all original audio, adds an audio file as a new AAC track named “Commentary Track” (configurable). |
 | Extract audio to WAV | Picks a track; PCM s16le, original sample rate (fallback 48000), stereo. |
@@ -257,7 +269,8 @@ Everything in the preset panel is a **preset**: a named, saved set of options fo
 | Remux MKV → MP4 | Stream copy, never overwrites, optional delete of source only after the MP4 verifies; summary in the script's wording. |
 | **Join / stitch files** | Concatenate several videos: lossless concat demuxer or re-encode with the concat filter, chapter per file (see above). |
 | **Audio & subtitles** | Keep/remove/rename/reorder tracks, add commentary or second-language audio, replace audio, add/remove subtitles, extract audio or subtitles (see above). |
-| **Frameserver (AviSynth script)** | DebugMode FrameServer signpost .avi -> generated AviSynth script -> x264/AAC MP4/MKV (see above). |
+| **Create Slideshow** | Still images → H.264/AAC MP4 with optional audio and crossfades (see above). |
+| **Frameserver (AviSynth script)** | DebugMode FrameServer signpost .avi → generated AviSynth script → H.264/AAC (default) or HEVC / AV1, MP4/MKV (see above). |
 | **Custom pipeline** | Build your own from independent choices (below). |
 | **Add chapters (no re-encode)** | Custom pipeline preset: copies every stream, adds chapters every 5 min (or your list), same container as the input, suffix `_chapters`. |
 
@@ -292,8 +305,8 @@ Re-encode, Custom pipeline (single file and folder batch) and Batch re-encode ca
 
 ### Custom pipeline options
 - **Input:** single file (video or audio) or every video in a folder (with per-file include).
-- **Video:** copy / re-encode x264 (CRF, preset, tune, optional resize, range conversion, deinterlace) / drop.
-- **Audio:** copy all / AAC all / drop / replace with a file / mix all tracks into one / copy + add a file as an extra
+- **Video:** copy / re-encode (H.264 default; optional HEVC / AV1, CRF, speed/preset, tune, optional resize, range conversion, deinterlace) / drop.
+- **Audio:** copy all / encode all (AAC default, or AC3) / drop / replace with a file / mix all tracks into one / copy + add a file as an extra
   track — with bitrate, gain and compressor, and an optional track title. Folder batches pick the audio file with the
   same name next to each video (`game.mkv` + `game.wav`).
 - **Subtitles:** copy / convert text subs (MP4: mov_text, others: SRT) / drop / import from a file (optionally keeping
@@ -341,7 +354,7 @@ commands as 0.5.3 (`tests/h264_unchanged.rs`).
 - **Presets**: four read-only built-ins in the **Experimental codecs** folder at the bottom of **Default Presets**:
   Archive – HEVC 10-bit (game / camera footage) CRF 20 / 18 slow, Archive – AV1 10-bit (game / camera
   footage) CRF 28 / 26 speed 5 (grain off); audio AAC. Existing presets files get them on first load;
-  your own presets are untouched (18 built-ins in total).
+  your own presets are untouched (19 built-ins in total, including Create Slideshow).
   For when to pick H.264, HEVC or AV1, and a way to choose a CRF, see **Choosing a codec**.
 
 ## Choosing a codec
@@ -360,6 +373,7 @@ These figures are approximate and vary a lot by content. The only reliable check
 Rough starting points for 1080p gameplay (try a clip and adjust):
 
 - H.264: CRF 18–20, preset slow.
+- HEVC: CRF 18–22, preset slow, 10-bit. 18 for camera footage, 20 for game footage is a reasonable start.
 - AV1: CRF 28–32, Speed 4–6, film grain 0. 10-bit often helps dark scenes.
 
 **A short test.** Cut 1–2 minutes with motion and dark scenes. Encode an H.264 CRF 18 reference, then AV1 at CRF 28, 32 and 35 (Speed 5, 10-bit). Watch them on the real screen, not a tiny preview, and pick the highest AV1 CRF you cannot tell apart from the reference. That is the one that saves the most space without a difference you can see.
