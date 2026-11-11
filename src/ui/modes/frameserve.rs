@@ -656,12 +656,14 @@ impl Mode for FrameserveMode {
         egui::Grid::new("fs_v").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             crate::ui::codecs_ui::video_codec_ui_ex(ui, "fs", &mut st.video, cx.encoders.as_ref(), None, Some("Also sets the AviSynth script to 10-bit."));
             st.bits = conflicts::script_bit_depth(&st.video);
+            ui.label("");
             show_conflicts(ui, st, &[
                 ConflictKind::TenBitEightBitColor,
                 ConflictKind::EncoderTenBitScriptEight,
                 ConflictKind::ScriptTenBitEncoderEight,
                 ConflictKind::ScriptTenBitH264,
             ]);
+            ui.end_row();
             crate::ui::common::row_label_tip(ui, "Resize", option_tips::RESIZE);
             ui.horizontal_wrapped(|ui| {
                 ui.checkbox(&mut st.resize, "New vertical resolution");
@@ -683,7 +685,9 @@ impl Mode for FrameserveMode {
             section(ui, "Audio");
             egui::Grid::new("fs_a").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                 crate::ui::codecs_ui::audio_codec_ui(ui, "fsa", &mut st.audio, cx.encoders.as_ref(), true);
+                ui.label("");
                 show_conflicts(ui, st, &[ConflictKind::CopyIgnoresFilters]);
+                ui.end_row();
             });
         }
 
