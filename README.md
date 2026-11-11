@@ -17,7 +17,7 @@ This is the **Codecs** edition (`FFmpegEncoder-Codecs.exe`, version 0.5.5-codecs
 
 **Accessibility:** System, Dark, Light, and High contrast themes; text size 75–300%; a visible keyboard focus ring; and screen-reader names through UI Automation (AccessKit). High contrast uses a black background, white text, and a yellow accent.
 
-Version history is in [CHANGELOG.md](CHANGELOG.md). Developer-facing notes are in [NOTES.md](NOTES.md). See **Video & audio codecs** below for this edition's extra options.
+Version history is in [CHANGELOG.md](CHANGELOG.md). Developer-facing notes are in [NOTES.md](NOTES.md). See **Video & audio codecs** and **Choosing a codec** below for this edition's extra options.
 
 ## Run
 1. Copy the exe anywhere (for example `C:\Apps\FFmpegEncoder\`) and run it.
@@ -184,6 +184,7 @@ Re-encode.
     YV12 or RGB32.
   - **Signpost format:** AviSource `pixel_type`; leave on Automatic.
   - **Audio:** keep the audio, keep it converted to 16-bit (`ConvertAudioTo16bit()`), or no audio (`audio=false`).
+    The signpost's audio is PCM, so there is no compressed-audio passthrough (one lossy encode). See **Choosing a codec**.
   - **Force a frame rate:** `AssumeFPS(num, den)`, e.g. 30000/1001.
   - **Only part of the timeline:** `Trim(first, last)` in frames; last = 0 means to the end.
 - **Script file:** the path is written as-is in quotes; AviSynth has no escapes, and Windows paths can't contain `"`.
@@ -336,6 +337,32 @@ commands as 0.5.3 (`tests/h264_unchanged.rs`).
   Archive – HEVC 10-bit (game / camera footage) CRF 20 / 18 slow, Archive – AV1 10-bit (game / camera
   footage) CRF 28 / 26 speed 5 (grain off); audio AAC. Existing presets files get them on first load;
   your own presets are untouched (18 built-ins in total).
+  For when to pick H.264, HEVC or AV1, and a way to choose a CRF, see **Choosing a codec**.
+
+## Choosing a codec
+These figures are approximate and vary a lot by content. The only reliable check is a short test on the screen you will actually watch.
+
+- **H.264** (2003, ITU/MPEG; this app uses x264) plays almost everywhere and encodes quickly. The file is usually the largest of the three.
+- **HEVC** (H.265, 2013, same standards bodies; this app uses x265) is often about 30–50% smaller than H.264 at a similar look. Most recent TVs and phones can play it. Patent licensing around HEVC is messy, which is one reason some browsers and platforms prefer something else.
+- **AV1** (2018, Alliance for Open Media; royalty-free; this app uses SVT-AV1 from Intel/Netflix) is often about 20–30% smaller than HEVC at a similar look, but it takes longer to encode and needs newer hardware to decode smoothly — for example an NVIDIA RTX 30-series or later, Intel Arc or 11th-generation Core, AMD RX 6000 or later, or a recent TV or phone. You also need an FFmpeg build with `libsvtav1` (BtbN GPL builds include it; **Help › Check for FFmpeg updates…** can download one).
+
+“Better” here means fewer bits for the same look, as measured in viewing tests and scores such as VMAF. A newer codec does not automatically win.
+
+**When to use which.** H.264 if it has to play on almost anything, or you want a fast encode. HEVC if you want a smaller file and the players you care about already handle it. AV1 if you want the smallest file, can wait for the encode, and the playback devices are recent enough.
+
+**CRF, not a target size.** You pick a quality (CRF); the encoder spends whatever bits it needs. A lower CRF is higher quality and a larger file. The number scales differ between encoders: the same CRF on H.264, HEVC and AV1 is not the same quality.
+
+Rough starting points for 1080p gameplay (try a clip and adjust):
+
+- H.264: CRF 18–20, preset slow.
+- AV1: CRF 28–32, Speed 4–6, film grain 0. 10-bit often helps dark scenes.
+
+**A short test.** Cut 1–2 minutes with motion and dark scenes. Encode an H.264 CRF 18 reference, then AV1 at CRF 28, 32 and 35 (Speed 5, 10-bit). Watch them on the real screen, not a tiny preview, and pick the highest AV1 CRF you cannot tell apart from the reference. That is the one that saves the most space without a difference you can see.
+
+Film grain is mainly for camera footage that already has grain; leave it off for typical game recordings.
+
+**Frameserving and audio.** When an editor such as Vegas serves the timeline, the audio arrives as PCM, so there is no compressed-audio passthrough — you get one lossy encode. If the result is quiet, raise levels in the editor, or use this app's pre-gain, then the compressor, then make-up gain.
+
 ## Input / output folders (0.5.5-codecs.1)
 Input and output folders are remembered at the app level (File › Settings), not in presets. On first run they
 default to the Windows Videos folder. Switching presets or File › New does not change them. Exporting a preset
