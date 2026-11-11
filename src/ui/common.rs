@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 
 use eframe::egui::{self, RichText, Ui};
+use ffenc::cmd::codecs::AAC_BITRATES;
 use ffenc::cmd::common::*;
 use ffenc::ffmpeg::probe::{self, MediaInfo};
 use ffenc::util::fmt_hms;
@@ -362,7 +363,40 @@ pub fn output_fps_ui(ui: &mut Ui, fps: &mut String) {
     ui.end_row();
 }
 
+/// Closed drop-down label: a listed rate, or "Custom" when the value is typed / Custom… was chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BitrateMenu {
+    Listed(u32),
+    Custom,
+}
+
+pub fn bitrate_menu_selection(value: u32, choices: &[u32], custom_open: bool) -> BitrateMenu {
+    if custom_open || !choices.contains(&value) {
+        BitrateMenu::Custom
+    } else {
+        BitrateMenu::Listed(value)
+    }
+}
+
+/// `picked` is `Some(kbps)` for a typical rate, or `None` for Custom…. The stored value is unchanged when opening Custom.
+pub fn apply_bitrate_menu(current: u32, picked: Option<u32>) -> (u32, bool) {
+    match picked {
+        Some(b) => (b, false),
+        None => (current, true),
+    }
+}
+
+pub fn show_custom_bitrate_field(value: u32, choices: &[u32], custom_open: bool) -> bool {
+    matches!(bitrate_menu_selection(value, choices, custom_open), BitrateMenu::Custom)
+}
+
+/// AAC (and other standalone AAC rows): typical rates plus Custom….
 pub fn bitrate_ui(ui: &mut Ui, label: &str, k: &mut u32) {
+    bitrate_ui_ex(ui, label, k, &AAC_BITRATES, 8..=1024);
+}
+
+/// Bitrate drop-down of `choices` plus Custom… (typed box next to it). Keeps the "Will encode: N kb/s" readout.
+pub fn bitrate_ui_ex(ui: &mut Ui, label: &str, k: &mut u32, choices: &[u32], range: std::ops::RangeInclusive<u32>) {
     row_label(ui, label);
     let pal = crate::ui::theme::c();
     ui.vertical(|ui| {
@@ -370,37 +404,41 @@ pub fn bitrate_ui(ui: &mut Ui, label: &str, k: &mut u32) {
         let color = if pal.high_contrast { pal.accent } else { ui.visuals().strong_text_color() };
         let r = ui.label(RichText::new(&readout).strong().size(15.0).color(color));
         named(r, egui::WidgetType::Label, &readout);
-        ui.add_space(10.0);
-        hint(ui, "Available bitrates");
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            for b in [128, 160, 192, 256, 320] {
-                let selected = *k == b;
-                let text = if selected {
-                    let c = if pal.high_contrast { pal.accent } else { pal.on_pill };
-                    RichText::new(format!("{b}")).strong().color(c)
-                } else {
-                    RichText::new(format!("{b}"))
-                };
-                let mut btn = egui::Button::new(text);
-                if selected {
-                    if pal.high_contrast {
-                        btn = btn.fill(egui::Color32::BLACK).stroke(egui::Stroke::new(pal.focus_width.max(2.0), pal.accent));
-                    } else {
-                        btn = btn.fill(pal.accent).stroke(egui::Stroke::new(2.0_f32, pal.accent));
+        ui.add_space(6.0);
+        let custom_id = ui.id().with(("bitrate_custom", label));
+        let mut custom_open = ui.data(|d| d.get_temp::<bool>(custom_id)).unwrap_or(false);
+        let sel = bitrate_menu_selection(*k, choices, custom_open);
+        let selected_text = match sel {
+            BitrateMenu::Listed(b) => format!("{b} kb/s"),
+            BitrateMenu::Custom => "Custom".to_string(),
+        };
+        ui.horizontal(|ui| {
+            let combo = egui::ComboBox::from_id_salt(format!("bitrate:{label}")).width(140.0).selected_text(RichText::new(&selected_text).strong());
+            let r = combo.show_ui(ui, |ui| {
+                for &b in choices {
+                    let on = sel == BitrateMenu::Listed(b);
+                    if ui.selectable_label(on, format!("{b} kb/s")).clicked() {
+                        let (v, c) = apply_bitrate_menu(*k, Some(b));
+                        *k = v;
+                        custom_open = c;
                     }
                 }
-                let name = if selected { format!("{b} kb/s (selected)") } else { format!("{b} kb/s") };
-                if named(ui.add(btn), egui::WidgetType::Button, &name).clicked() {
-                    *k = b;
+                if ui.selectable_label(sel == BitrateMenu::Custom, "Custom…").clicked() {
+                    let (v, c) = apply_bitrate_menu(*k, None);
+                    *k = v;
+                    custom_open = c;
                 }
+            });
+            named(r.response, egui::WidgetType::ComboBox, &format!("{label}: {selected_text}. Choose a typical rate, or Custom… to type another value."));
+            if show_custom_bitrate_field(*k, choices, custom_open) {
+                let nr = num_u32(ui, k, range, " kbps");
+                if nr.changed() && choices.contains(k) {
+                    custom_open = false;
+                }
+                named(nr, egui::WidgetType::DragValue, &format!("{label} custom value (kbps)"));
             }
         });
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            hint(ui, "Or type a custom value");
-            num_u32(ui, k, 8..=1024, " kbps");
-        });
+        ui.data_mut(|d| d.insert_temp(custom_id, custom_open));
     });
     ui.end_row();
 }
@@ -666,5 +704,50 @@ mod row_label_tests {
         // stable across more frames
         let again = frame(&ctx, true);
         assert_eq!(again.2, h);
+    }
+}
+
+#[cfg(test)]
+mod bitrate_menu_tests {
+    use super::*;
+    use ffenc::cmd::codecs::{AAC_BITRATES, AC3_BITRATES};
+
+    #[test]
+    fn typical_aac_and_ac3_lists() {
+        assert_eq!(AAC_BITRATES, [96, 128, 160, 192, 256, 320]);
+        assert_eq!(AC3_BITRATES, [192, 256, 384, 448, 640]);
+        assert!(AAC_BITRATES.contains(&192), "default AAC rate is in the list");
+        assert!(AC3_BITRATES.contains(&448), "default AC3 rate is in the list");
+    }
+
+    #[test]
+    fn listed_value_shows_as_itself_until_custom_is_chosen() {
+        assert_eq!(bitrate_menu_selection(192, &AAC_BITRATES, false), BitrateMenu::Listed(192));
+        assert_eq!(bitrate_menu_selection(96, &AAC_BITRATES, false), BitrateMenu::Listed(96));
+        assert_eq!(bitrate_menu_selection(320, &AAC_BITRATES, false), BitrateMenu::Listed(320));
+        assert!(!show_custom_bitrate_field(192, &AAC_BITRATES, false));
+    }
+
+    #[test]
+    fn value_not_in_the_list_is_custom_and_shows_the_box() {
+        assert_eq!(bitrate_menu_selection(200, &AAC_BITRATES, false), BitrateMenu::Custom);
+        assert_eq!(bitrate_menu_selection(64, &AAC_BITRATES, false), BitrateMenu::Custom);
+        assert!(show_custom_bitrate_field(200, &AAC_BITRATES, false));
+        assert_eq!(bitrate_menu_selection(320, &AC3_BITRATES, false), BitrateMenu::Custom);
+        assert_eq!(bitrate_menu_selection(448, &AC3_BITRATES, false), BitrateMenu::Listed(448));
+    }
+
+    #[test]
+    fn choosing_custom_keeps_the_stored_rate_and_opens_the_box() {
+        assert_eq!(apply_bitrate_menu(192, None), (192, true));
+        assert_eq!(bitrate_menu_selection(192, &AAC_BITRATES, true), BitrateMenu::Custom);
+        assert!(show_custom_bitrate_field(192, &AAC_BITRATES, true));
+    }
+
+    #[test]
+    fn choosing_a_listed_rate_stores_it_and_closes_custom() {
+        assert_eq!(apply_bitrate_menu(200, Some(256)), (256, false));
+        assert_eq!(apply_bitrate_menu(192, Some(96)), (96, false));
+        assert!(!show_custom_bitrate_field(256, &AAC_BITRATES, false));
     }
 }

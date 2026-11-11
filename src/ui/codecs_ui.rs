@@ -6,7 +6,7 @@ use ffenc::cmd::codecs::{self, AudioCodec, Encoders, VideoCodec, AC3_BITRATES, C
 use ffenc::cmd::common::{AudioEncode, VideoEncode};
 use ffenc::ffmpeg::probe::MediaInfo;
 
-use super::common::{audio_encode_ui, audio_filters_ui, hint, named, num_u32, video_encode_ui, warn};
+use super::common::{audio_encode_ui, audio_filters_ui, bitrate_ui_ex, hint, named, num_u32, video_encode_ui, warn};
 
 /// Facts from the probed source used for notes and AC3 channel handling.
 pub fn source_pix_fmt(info: Option<&MediaInfo>) -> Option<String> {
@@ -167,13 +167,7 @@ pub fn audio_codec_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode, enc: Option<&E
     match a.codec {
         AudioCodec::Aac => audio_encode_ui(ui, id, a),
         AudioCodec::Ac3 => {
-            crate::ui::common::row_label(ui, "AC3 bitrate");
-            ui.horizontal(|ui| {
-                for b in AC3_BITRATES {
-                    ui.radio_value(&mut a.ac3_bitrate_k, b, format!("{b} kbps"));
-                }
-            });
-            ui.end_row();
+            bitrate_ui_ex(ui, "AC3 bitrate", &mut a.ac3_bitrate_k, &AC3_BITRATES, 96..=640);
             audio_filters_ui(ui, id, a);
         }
         AudioCodec::Copy => {}

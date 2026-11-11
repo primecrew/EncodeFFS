@@ -233,7 +233,10 @@ impl AudioCodec {
     }
 }
 
-pub const AC3_BITRATES: [u32; 3] = [384, 448, 640];
+/// Typical AAC bitrates in the dropdown. Any other value is shown as Custom.
+pub const AAC_BITRATES: [u32; 6] = [96, 128, 160, 192, 256, 320];
+/// Typical AC3 bitrates in the dropdown (stereo through 5.1). Any other value in 96–640 is Custom.
+pub const AC3_BITRATES: [u32; 5] = [192, 256, 384, 448, 640];
 
 /// Audio encoder arguments. AAC = exactly [`AudioEncode::aac_args`].
 pub fn audio_args(au: &AudioEncode) -> Vec<String> {

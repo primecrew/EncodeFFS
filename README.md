@@ -329,8 +329,8 @@ commands as 0.5.3 (`tests/h264_unchanged.rs`).
   - Codecs the FFmpeg build lacks (checked with `ffmpeg -encoders`, cached per FFmpeg path) are disabled
     with an explanation.
   - Warnings: HEVC/AV1 don't play in every browser; an 8-bit source with 10-bit on (fine, explains why).
-- **Audio**: AAC (default), AC3 (384 / 448 / 640 kb/s, up to 5.1; more channels are downmixed to 5.1),
-  or Keep original (stream copy; not for Join).
+- **Audio**: AAC (default), AC3 (up to 5.1; more channels are downmixed to 5.1),
+  or Keep original (stream copy; not for Join). Bitrate is a drop-down of typical rates plus Custom….
 - **Presets**: four read-only built-ins in the **Experimental codecs** folder at the bottom of **Default Presets**:
   Archive – HEVC 10-bit (game / camera footage) CRF 20 / 18 slow, Archive – AV1 10-bit (game / camera
   footage) CRF 28 / 26 preset 5 (grain off); audio AAC. Existing presets files get them on first load;
@@ -340,9 +340,10 @@ Input and output folders are remembered at the app level (File › Settings), no
 default to the Windows Videos folder. Switching presets or File › New does not change them. Exporting a preset
 omits folder paths.
 
-## Audio bitrate (0.5.5-codecs.1)
-The audio bitrate row shows **Will encode: N kb/s**, then the 128 / 160 / 192 / 256 / 320 choices with the
-selected value highlighted, and a field for a custom rate.
+## Audio bitrate
+The audio bitrate row shows **Will encode: N kb/s**, then a drop-down of typical rates for the selected
+codec (AAC: 96, 128, 160, 192, 256, 320; AC3: 192, 256, 384, 448, 640) and **Custom…** to type another
+value. A rate that is not in the list shows as Custom, with the typed box next to the drop-down.
 
 ## File › New (0.5.4)
 **File › New** (Ctrl+N) starts a new job with the selected preset: the form goes back to the preset's settings
