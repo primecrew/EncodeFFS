@@ -407,6 +407,16 @@ impl Mode for JoinMode {
         self.st = restore(v, State { out_dir: s.output_folder.clone(), video: default_video(s), audio: default_audio(s), ..Default::default() });
         self.probes.clear();
     }
+
+    fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {
+        let out = PathBuf::from(self.st.out_dir.trim()).join(self.st.out_name.trim());
+        ffenc::cmd::conflicts::detect(&super::media_choices(&self.st.video, &self.st.audio, &self.st.container, &self.st.out_name, &self.st.last_auto, out))
+    }
+
+    fn apply_conflict_fix(&mut self, kind: ffenc::cmd::conflicts::ConflictKind) {
+        let out = PathBuf::from(self.st.out_dir.trim()).join(self.st.out_name.trim());
+        super::apply_media_fix(kind, &mut self.st.video, &mut self.st.audio, &mut self.st.container, &mut self.st.out_name, &mut self.st.last_auto, out);
+    }
 }
 
 #[cfg(test)]

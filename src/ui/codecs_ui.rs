@@ -32,6 +32,11 @@ fn info_toggle(ui: &mut Ui, id: &str, name: &str, text: &str) {
 
 /// Video rows inside a 2-column Grid. `enc` = encoders of the current FFmpeg (None = unknown yet).
 pub fn video_codec_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&Encoders>, src_pix_fmt: Option<&str>) {
+    video_codec_ui_ex(ui, id, v, enc, src_pix_fmt, None);
+}
+
+/// Like [`video_codec_ui`], with optional extra hover/hint on the 10-bit checkbox (Frameserver).
+pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&Encoders>, src_pix_fmt: Option<&str>, ten_bit_hover: Option<&str>) {
     crate::ui::common::row_label(ui, "Video codec");
     ui.vertical(|ui| {
         let before = v.codec;
@@ -93,7 +98,11 @@ pub fn video_codec_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&E
             ui.end_row();
             crate::ui::common::row_label(ui, "10-bit");
             ui.vertical(|ui| {
-                ui.checkbox(&mut v.ten_bit, "10-bit output (yuv420p10le)");
+                let r = ui.checkbox(&mut v.ten_bit, "10-bit output (yuv420p10le)");
+                if let Some(h) = ten_bit_hover {
+                    r.on_hover_text(h);
+                    hint(ui, h);
+                }
                 hint(ui, "Smoother gradients, less banding, often smaller files. Some older TVs/phones can't play 10-bit.");
                 if let Some(n) = codecs::ten_bit_note(src_pix_fmt, v) {
                     hint(ui, n);

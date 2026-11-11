@@ -222,6 +222,14 @@ impl Preview {
     }
 }
 
+/// Pre-run popup for unusual settings that have a one-click fix.
+struct ConflictDlg {
+    items: Vec<ffenc::cmd::conflicts::Conflict>,
+    plan: Plan,
+    program: PathBuf,
+    focus_run_as_set: bool,
+}
+
 /// First-run / "FFmpeg not found" dialog state.
 struct LocateDlg {
     path: String,
@@ -250,6 +258,7 @@ pub struct App {
     ff_check: Option<Result<FfmpegCheck, String>>,
     ff_task: Option<Bg<Result<FfmpegCheck, String>>>,
     preview: Option<Preview>,
+    conflict_dlg: Option<ConflictDlg>,
     error: Option<String>,
     info: Option<(String, String)>,
     /// Feedback after a file drop: (text, accepted, when).
@@ -427,6 +436,7 @@ impl App {
             ff_check: None,
             ff_task: None,
             preview: None,
+            conflict_dlg: None,
             error: None,
             info: match &imported {
                 Some(Ok(r)) => Some(("Imported from the stable version".into(), format!("This is the experimental Codecs build; it keeps its own settings, separate from the stable version. Your stable FFmpeg Encoder settings and presets were copied in:\n\n{}\n\nThe stable version's files were only read, not changed.", r.notes.join("\n")))),
@@ -681,10 +691,15 @@ impl App {
         let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
         match self.pre.editor(idx, &self.settings).mode.build(&cx) {
             Ok(plan) => {
-                self.preview = Some(Preview::new(plan, ff.ffmpeg.clone(), self.settings.when_exists));
                 let preset_name = self.pre.list[idx].name.clone();
                 let values = self.pre.editor(idx, &self.settings).mode.save();
                 self.preview_origin = Some(ffenc::job_history::Origin { preset_name, values });
+                let items = self.pre.editor(idx, &self.settings).mode.conflict_warnings();
+                if ffenc::cmd::conflicts::any_fixable(&items) {
+                    self.conflict_dlg = Some(ConflictDlg { items, plan, program: ff.ffmpeg.clone(), focus_run_as_set: true });
+                } else {
+                    self.preview = Some(Preview::new(plan, ff.ffmpeg.clone(), self.settings.when_exists));
+                }
             }
             Err(e) => {
                 // double-click / Run right after switching presets: the form probes its input first
@@ -1041,6 +1056,63 @@ impl App {
             });
             if close {
                 self.info = None;
+            }
+        }
+
+        // unusual-settings popup (before the command preview)
+        if self.preview.is_none() {
+            if let Some(mut dlg) = self.conflict_dlg.take() {
+                let mut run_as_set = false;
+                let mut fix = None;
+                let mut close = false;
+                let focus = dlg.focus_run_as_set;
+                dlg.focus_run_as_set = false;
+                common::fit(egui::Window::new("Unusual settings")
+                    .collapsible(false)
+                    .resizable(true)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]), ctx, true)
+                    .show(ctx, |ui| {
+                        ui.set_max_width(640.0);
+                        ui.label(RichText::new("These choices are unusual. The encode can still run as you set it. You can fix a setting, or keep it and continue.").strong());
+                        ui.add_space(8.0);
+                        egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                            for c in &dlg.items {
+                                match common::conflict_warning_ui(ui, c, false) {
+                                    common::ConflictAction::Fix(k) => fix = Some(k),
+                                    _ => {}
+                                }
+                                ui.add_space(8.0);
+                            }
+                        });
+                        ui.separator();
+                        ui.horizontal_wrapped(|ui| {
+                            let r = ui.add(egui::Button::new(RichText::new("Run as set").strong()).min_size(egui::vec2(140.0, 32.0)));
+                            let r = common::named(r, egui::WidgetType::Button, "Run as set: keep these settings and continue to the command preview");
+                            if focus {
+                                r.request_focus();
+                            }
+                            if r.clicked() {
+                                run_as_set = true;
+                            }
+                            if ui.add(egui::Button::new("Cancel").min_size(egui::vec2(80.0, 32.0))).clicked() {
+                                close = true;
+                            }
+                        });
+                    });
+                if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    close = true;
+                }
+                if let Some(k) = fix {
+                    let idx = self.pre.current;
+                    self.pre.editor(idx, &self.settings).mode.apply_conflict_fix(k);
+                    self.preview_origin = None;
+                } else if run_as_set {
+                    self.preview = Some(Preview::new(dlg.plan, dlg.program, self.settings.when_exists));
+                } else if close {
+                    self.preview_origin = None;
+                } else {
+                    self.conflict_dlg = Some(dlg);
+                }
             }
         }
 

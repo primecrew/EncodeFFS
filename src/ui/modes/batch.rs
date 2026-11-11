@@ -280,4 +280,16 @@ impl Mode for BatchMode {
         self.rows.clear();
         self.scanned_dir.clear();
     }
+
+    fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {
+        let dummy = PathBuf::from(format!("out.{}", self.st.bs.container));
+        ffenc::cmd::conflicts::detect(&super::media_choices(&self.st.bs.video, &self.st.bs.audio, &self.st.bs.container, &format!("out.{}", self.st.bs.container), "", dummy))
+    }
+
+    fn apply_conflict_fix(&mut self, kind: ffenc::cmd::conflicts::ConflictKind) {
+        let dummy = PathBuf::from(format!("out.{}", self.st.bs.container));
+        let mut name = format!("out.{}", self.st.bs.container);
+        let mut last = String::new();
+        super::apply_media_fix(kind, &mut self.st.bs.video, &mut self.st.bs.audio, &mut self.st.bs.container, &mut name, &mut last, dummy);
+    }
 }

@@ -474,4 +474,14 @@ impl Mode for CustomMode {
         self.scanned.clear();
         self.scan = None;
     }
+
+    fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {
+        let out = PathBuf::from(self.st.out_dir.trim()).join(self.st.out_name.trim());
+        ffenc::cmd::conflicts::detect(&super::media_choices(&self.st.o.video_encode, &self.st.o.audio_encode, &self.st.o.container, &self.st.out_name, &self.st.last_auto, out))
+    }
+
+    fn apply_conflict_fix(&mut self, kind: ffenc::cmd::conflicts::ConflictKind) {
+        let out = PathBuf::from(self.st.out_dir.trim()).join(self.st.out_name.trim());
+        super::apply_media_fix(kind, &mut self.st.o.video_encode, &mut self.st.o.audio_encode, &mut self.st.o.container, &mut self.st.out_name, &mut self.st.last_auto, out);
+    }
 }

@@ -322,35 +322,12 @@ pub fn script(o: &ScriptOptions) -> Result<String, String> {
 
 /// Unusual but still runnable script choices. Empty when the options are the safe defaults.
 pub fn script_warnings(o: &ScriptOptions) -> Vec<String> {
-    let mut w = vec![];
-    if o.bits == BitDepth::Ten && matches!(o.color, Color::Yv12 | Color::Rgb32) {
-        let name = o.color.function().unwrap_or("this colour format");
-        w.push(format!(
-            "10-bit with {name} is unusual: that colour format is 8-bit only, so the script will convert to 8-bit first and then ConvertBits(10). YUV420, YUV422 or YUV444 is the better 10-bit choice. The encode will still run."
-        ));
-    }
-    w
+    super::conflicts::messages(&super::conflicts::script_conflicts(o))
 }
 
 /// Unusual encode choices (range, tags, bit depth). These are warnings, not errors — the command is still built as requested.
 pub fn encode_choice_warnings(pr: &EncodeParams) -> Vec<String> {
-    let mut w = vec![];
-    if pr.range_convert && pr.matrix.squeezes_to_tv() {
-        w.push("The script's colour matrix (Rec709, Rec601 or Rec2020) already converts to TV (limited) range. A second full-to-TV conversion is also on, which can look washed out (grey blacks). The encode will still run as you set it.".into());
-    }
-    if pr.range_convert && pr.matrix == Matrix::Default {
-        w.push("The colour matrix is not set, so AviSynth uses Rec601 (TV range) when it converts. A full-to-TV conversion is also on and may squeeze the picture twice. The encode will still run as you set it.".into());
-    }
-    if pr.matrix.keeps_full_range() && !pr.range_convert && pr.bt709_tags {
-        w.push("The script keeps full (PC) range, but TV-range (limited) tags were also requested. Players may treat the full-range picture as TV range and crush the blacks. The encode will still run as you set it.".into());
-    }
-    let pix_is_10 = pr.pix_fmt.contains("10");
-    if super::codecs::ten_bit_output(&pr.video) && !pix_is_10 {
-        w.push("The HEVC/AV1 encoder has 10-bit ticked, but the script bit depth is 8-bit. The encoder is given the script's 8-bit pixel format so the two don't silently disagree. Tick 10-bit under Bit depth too if you want 10-bit output. The encode will still run.".into());
-    } else if pr.video.codec != super::codecs::VideoCodec::H264 && !super::codecs::ten_bit_output(&pr.video) && pix_is_10 {
-        w.push("The script is 10-bit, but 10-bit is unticked on the HEVC/AV1 encoder. The encoder is still given the script's 10-bit pixel format so FFmpeg does not drop back to 8-bit. The encode will still run.".into());
-    }
-    w
+    super::conflicts::messages(&super::conflicts::encode_conflicts(pr))
 }
 
 /// Unique temporary script path in %TEMP%.

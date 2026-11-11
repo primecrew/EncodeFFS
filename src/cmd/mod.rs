@@ -6,6 +6,7 @@
 
 pub mod common;
 pub mod codecs;     // HEVC / AV1 / AC3 / audio copy (codecs branch)
+pub mod conflicts;  // unusual option warnings and one-click fixes
 pub mod chapters;
 pub mod reencode;   // mode 1 + mode 7 (batch uses the same builder per file)
 pub mod still;      // mode 2

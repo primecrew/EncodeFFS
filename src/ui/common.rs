@@ -586,6 +586,40 @@ pub fn row_label_tip(ui: &mut Ui, text: &str, tip: &str) -> egui::Response {
     row_label(ui, text).on_hover_text(tip)
 }
 
+
+/// Result of a one-click warning row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictAction {
+    None,
+    Fix(ffenc::cmd::conflicts::ConflictKind),
+    Keep(ffenc::cmd::conflicts::ConflictKind),
+}
+
+/// Plain-words warning plus optional “fix it” / “keep my setting” buttons.
+/// Large, keyboard-focusable buttons; uses the theme warning colour (including High contrast).
+pub fn conflict_warning_ui(ui: &mut Ui, c: &ffenc::cmd::conflicts::Conflict, show_keep: bool) -> ConflictAction {
+    ui.add_space(4.0);
+    ui.label(RichText::new(format!("⚠ {}", c.message)).color(crate::ui::theme::c().warn));
+    let mut action = ConflictAction::None;
+    if let Some(fix) = c.fix {
+        ui.horizontal_wrapped(|ui| {
+            let r = ui.add(egui::Button::new(RichText::new(fix.button).strong()).min_size(egui::vec2(24.0, 32.0)));
+            let r = named(r, egui::WidgetType::Button, &format!("Fix it for me: {}", fix.hint));
+            if r.on_hover_text(fix.hint).clicked() {
+                action = ConflictAction::Fix(c.kind);
+            }
+            if show_keep {
+                let r = ui.add(egui::Button::new("Keep my setting").min_size(egui::vec2(24.0, 32.0)));
+                let r = named(r, egui::WidgetType::Button, "Keep my setting: leave this as it is");
+                if r.clicked() {
+                    action = ConflictAction::Keep(c.kind);
+                }
+            }
+        });
+    }
+    action
+}
+
 #[cfg(test)]
 mod row_label_tests {
     use super::*;
