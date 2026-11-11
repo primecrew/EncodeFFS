@@ -2,6 +2,32 @@
 
 Detailed implementation notes. The user-facing history is in [CHANGELOG.md](CHANGELOG.md).
 
+## 0.5.5-codecs.2 — Frameserver codec pickers; 10-bit range squeeze in one step
+- **Frameserver** uses the same `video_codec_ui` / `audio_codec_ui` as Re-encode. Default remains
+  H.264 (libx264) + AAC, and `frameserve::build` goes through `codecs::video_args` / `audio_args`
+  so the default command is byte-identical to 0.5.5-codecs.1. Old JSON without codec keys loads as
+  H.264 / AAC (`serde` defaults). The encoder `-pix_fmt` still follows the script's colour format
+  and bit depth (including 4:2:2 / 4:4:4), so a 10-bit script is not forced back to 8-bit.
+- **Bit depth** and the HEVC/AV1 10-bit checkbox stay in sync. ConvertBits(10) remains after the
+  colour conversion in the script; the encoder is given the matching 10-bit pixel format.
+- **Colour range in Frameserver:** Rec709 / Rec601 / Rec2020 already squeeze to TV range in the
+  AviSynth script. The default is not to apply `RANGE_FILTER` as well (a second squeeze would look
+  washed out). If the user still ticks “Convert full range to TV range”, the squeeze is honoured,
+  a plain-words warning is shown on the form and in the pre-run check, and the encode is not
+  blocked. Those outputs are tagged to match (`tv` + bt709 / smpte170m / bt2020). PC.709 / PC.601
+  keep full range and are tagged `-color_range pc` (not `tv`) unless that box is ticked, which
+  applies one `scale=in_range=full:out_range=tv` (and `format=<10-bit pix_fmt>` when the codec is
+  10-bit HEVC/AV1) and then tags TV range. Other unusual combos (10-bit with YV12/RGB32, encoder
+  10-bit not matching script bit depth, TV tags on unsqueezed PC range) warn the same way and
+  still run. Only combinations FFmpeg or AviSynth cannot do (empty script, missing encoder, bad
+  path quoting, invalid CRF/preset, container the muxer rejects) remain errors.
+- **Re-encode / Batch / Custom / Join, 10-bit HEVC or AV1:** when a full→TV range conversion is
+  on, the filter is `scale=in_range=full:out_range=tv,format=yuv420p10le` (plus `-pix_fmt
+  yuv420p10le` and the existing tags). H.264 and 8-bit paths still emit the historic
+  `scale=in_range=full:out_range=tv` only. Join does not use `RANGE_FILTER`, but its re-encode
+  concat graph uses `format=yuv420p10le` instead of `format=yuv420p` when the output is 10-bit,
+  so the concat does not drop back to 8-bit. Golden H.264 commands are unchanged.
+
 ## 0.5.5-codecs.1 — App-level input/output folders; clearer audio bitrate choice
 - **Input and output folders are app-level**, not part of a preset. Presets describe only *how* to
   encode. The remembered input folder and output folder are shared by every preset and survive

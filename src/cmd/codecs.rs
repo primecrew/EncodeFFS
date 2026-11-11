@@ -89,6 +89,28 @@ pub fn pix_fmt(ten_bit: bool) -> &'static str {
     }
 }
 
+/// HEVC/AV1 with 10-bit output (H.264 always writes 8-bit yuv420p).
+pub fn ten_bit_output(v: &VideoEncode) -> bool {
+    v.codec != VideoCodec::H264 && v.ten_bit
+}
+
+/// The full-range → TV-range filter. For 10-bit HEVC/AV1 the squeeze and the 10-bit
+/// conversion happen in one step (`scale=in_range=full:out_range=tv,format=yuv420p10le`
+/// or `format=<pix>` when a non-4:2:0 layout is requested) so the squeeze is not done
+/// at 8-bit. H.264 and 8-bit paths return the historic [`RANGE_FILTER`] string unchanged.
+pub fn range_filter(v: &VideoEncode) -> String {
+    range_filter_pix(v, pix_fmt(true))
+}
+
+/// Like [`range_filter`], but uses `pix` (e.g. `yuv422p10le`) when squeezing at 10-bit.
+pub fn range_filter_pix(v: &VideoEncode, pix: &str) -> String {
+    if ten_bit_output(v) {
+        format!("{},format={}", super::common::RANGE_FILTER, pix)
+    } else {
+        super::common::RANGE_FILTER.to_string()
+    }
+}
+
 fn mp4_like_ext(ext: &str) -> bool {
     matches!(ext, "mp4" | "m4v" | "mov")
 }
@@ -415,5 +437,24 @@ mod tests {
         assert!(ten_bit_note(Some("yuv420p10le"), &h).unwrap().contains("keeps"));
         assert_eq!(ten_bit_note(Some("yuv420p"), &VideoEncode::default()), None);
         assert_eq!(ten_bit_note(None, &h), None);
+    }
+
+    #[test]
+    fn range_filter_stays_identical_for_h264_and_8bit() {
+        use super::super::common::RANGE_FILTER;
+        assert_eq!(range_filter(&VideoEncode::default()), RANGE_FILTER);
+        let mut h = v(VideoCodec::Hevc);
+        h.ten_bit = false;
+        assert_eq!(range_filter(&h), RANGE_FILTER);
+        let mut a = v(VideoCodec::Av1);
+        a.ten_bit = false;
+        assert_eq!(range_filter(&a), RANGE_FILTER);
+        // 10-bit HEVC/AV1: squeeze + 10-bit format in one step; default 10-bit is on
+        let h10 = v(VideoCodec::Hevc);
+        assert!(h10.ten_bit);
+        assert_eq!(range_filter(&h10), format!("{RANGE_FILTER},format=yuv420p10le"));
+        assert_eq!(range_filter_pix(&h10, "yuv422p10le"), format!("{RANGE_FILTER},format=yuv422p10le"));
+        let a10 = v(VideoCodec::Av1);
+        assert_eq!(range_filter(&a10), format!("{RANGE_FILTER},format=yuv420p10le"));
     }
 }

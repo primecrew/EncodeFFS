@@ -1,5 +1,6 @@
 //! Frameserver (AviSynth script): point at a DebugMode FrameServer signpost .avi,
-//! get an .avs script that opens it, and encode the script with x264/AAC.
+//! get an .avs script that opens it, and encode the script with H.264/AAC by default
+//! (HEVC / AV1 and AC3 / copy are offered, same pickers as Re-encode).
 
 use std::path::{Path, PathBuf};
 
@@ -49,6 +50,10 @@ struct State {
     fps_num: u32,
     fps_den: u32,
     bits: BitDepth,
+    /// Only used with PC.709 / PC.601: squeeze full range to TV range in FFmpeg.
+    /// Rec709 / Rec601 / Rec2020 already squeeze in the script; this stays off.
+    #[serde(default)]
+    range_convert: bool,
     place: Place,
     script_folder: String,
     /// Use `script_text` (typed by the user) instead of the generated script.
@@ -86,6 +91,7 @@ impl State {
             fps_num: 30000,
             fps_den: 1001,
             bits: BitDepth::Eight,
+            range_convert: false,
             place: Place::Temp,
             script_folder: String::new(),
             edit_script: false,
@@ -287,9 +293,42 @@ impl FrameserveMode {
     }
 }
 
+
+/// Plain-words warnings for unusual combinations. The form is not changed, and the encode is not blocked.
+fn apply_codec_bit_depth_default(st: &mut State, codec_before: ffenc::cmd::codecs::VideoCodec) {
+    if st.video.codec != codec_before {
+        st.video.ten_bit = st.bits == BitDepth::Ten;
+    }
+}
+
+fn choice_warnings(st: &State) -> Vec<String> {
+    let mut w = fs::script_warnings(&st.options());
+    let yuv = !matches!(st.color, Color::None | Color::Rgb32);
+    if st.range_convert && yuv && (st.matrix.squeezes_to_tv() || st.matrix == Matrix::Default) {
+        w.push("This colour matrix already converts to TV (limited) range in the script. A second full-to-TV conversion is also on, which can look washed out (grey blacks). The encode will still run as you set it.".into());
+    }
+    if st.video.codec != ffenc::cmd::codecs::VideoCodec::H264 {
+        let script_10 = st.bits == BitDepth::Ten;
+        if st.video.ten_bit != script_10 {
+            w.push(if st.video.ten_bit {
+                "The HEVC/AV1 encoder has 10-bit ticked, but Bit depth is 8-bit. The script stays 8-bit unless you also pick 10-bit under Bit depth. The encode will still run.".into()
+            } else {
+                "Bit depth is 10-bit, but 10-bit is unticked on the HEVC/AV1 encoder. The encoder will still be given the script's 10-bit pixel format so FFmpeg does not drop back to 8-bit. The encode will still run.".into()
+            });
+        }
+    }
+    w
+}
+
 const HELP: &str = "How it works: your editor (Premiere, Vegas, After Effects…) serves the finished timeline through DebugMode FrameServer, which writes a small \"signpost\" .avi file. Pick that file here. This preset writes an AviSynth script (.avs) that opens the signpost with AviSource, and FFmpeg encodes the script to MP4 or MKV.\n\n\
 Before you run: 1) keep the project open and serving in the editor until the encode finishes – the signpost only works while it is serving; 2) AviSynth+ must be installed, and it must match FFmpeg: this 64-bit FFmpeg needs 64-bit AviSynth+ (the AviSynth+ installer puts both in Windows); 3) use \"Test the script\" to check that everything connects.\n\n\
-If AviSource can't open the signpost, other AviSynth source filters such as DirectShowSource or FFVideoSource (FFMS2 plugin) can sometimes read it – type them in the script editor below. They are not needed normally.";
+If AviSource can't open the signpost, other AviSynth source filters such as DirectShowSource or FFVideoSource (FFMS2 plugin) can sometimes read it – type them in the script editor below. They are not needed normally.
+
+Video and audio codecs: the default is H.264 (libx264) and AAC, the same as before. You can also pick HEVC or AV1, and AC3 or keep the original audio, just like Re-encode. MP4 and MKV both work for these.
+
+Colour range: Rec709, Rec601 and Rec2020 already convert to TV (limited) range in the script. The default is not to apply a second full-to-TV conversion (that would look washed out). You can still tick “Convert full range to TV range” if you want to; a warning is shown and the encode still runs. PC.709 and PC.601 keep the full range from the editor; the file is tagged as full range, not TV, unless you tick that box.
+
+Bit depth: 10-bit adds ConvertBits(10) at the end of the script (after the colour conversion) and tells the encoder to write a 10-bit pixel format, so FFmpeg does not convert back to 8-bit. The default is 8-bit. Unusual combinations (for example 10-bit with YV12, or the encoder 10-bit box not matching Bit depth) show a warning and still run.";
 
 impl Mode for FrameserveMode {
     fn key(&self) -> &'static str {
@@ -299,7 +338,7 @@ impl Mode for FrameserveMode {
         "Frameserver (AviSynth script)"
     }
     fn description(&self) -> &'static str {
-        "Encode straight from your editor through DebugMode FrameServer: pick the signpost .avi, the app writes the AviSynth script and encodes it with x264 + AAC."
+        "Encode straight from your editor through DebugMode FrameServer: pick the signpost .avi, the app writes the AviSynth script and encodes it with H.264 + AAC by default (or HEVC / AV1 and AC3 / copy)."
     }
     fn run_fields(&self) -> &'static [&'static str] {
         &["signpost", "out_name", "last_auto", "script_text", "edit_script"]
@@ -418,16 +457,33 @@ impl Mode for FrameserveMode {
                     ui.checkbox(&mut st.interlaced, "Interlaced source (interlaced=true)");
                 });
                 hint(ui, "Used when converting between RGB and YUV. Rec709 suits HD projects.");
+                if matches!(st.color, Color::None | Color::Rgb32) {
+                    hint(ui, "No YUV conversion in the script, so the matrix is not applied.");
+                } else {
+                    if st.matrix.squeezes_to_tv() || st.matrix == Matrix::Default {
+                        hint(ui, "This matrix already converts to TV (limited) range in the script. Leave the box below unticked unless you really want a second conversion.");
+                    } else if st.matrix.keeps_full_range() {
+                        hint(ui, "PC.709 / PC.601 keep the full (0–255) range from the editor. The file is tagged as full range, not TV, unless you tick the box below.");
+                    }
+                    ui.checkbox(&mut st.range_convert, "Convert full range to TV range");
+                    if st.range_convert && (st.matrix.squeezes_to_tv() || st.matrix == Matrix::Default) {
+                        warn(ui, "A second full-to-TV conversion can look washed out (grey blacks). The encode will still run as you set it.");
+                    } else if st.range_convert {
+                        hint(ui, "FFmpeg will squeeze full range to TV (16–235) once, then tag the file as TV range.");
+                    }
+                }
             });
             ui.end_row();
 
-            crate::ui::common::row_label(ui, "Bit depth");
-            ui.horizontal_wrapped(|ui| {
-                ui.radio_value(&mut st.bits, BitDepth::Eight, "8-bit (plays everywhere)");
-                let ten_ok = !matches!(st.color, Color::Yv12 | Color::Rgb32);
-                ui.add_enabled_ui(ten_ok, |ui| ui.radio_value(&mut st.bits, BitDepth::Ten, "10-bit (ConvertBits(10); smoother gradients, less compatible)"));
-                if !ten_ok && st.bits == BitDepth::Ten {
-                    st.bits = BitDepth::Eight;
+            crate::ui::common::row_label_tip(ui, "Bit depth", "8-bit plays everywhere (the default). 10-bit (ConvertBits(10) at the end of the script, after colour conversion) gives smoother gradients. The encoder is told to write the same depth, so FFmpeg does not convert a 10-bit script back to 8-bit. Unusual combinations show a warning and still run.");
+            ui.vertical(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.radio_value(&mut st.bits, BitDepth::Eight, "8-bit (plays everywhere)");
+                    ui.radio_value(&mut st.bits, BitDepth::Ten, "10-bit (ConvertBits(10); smoother gradients, less compatible)");
+                });
+                hint(ui, "ConvertBits(10) runs after the colour conversion. 10-bit output also sets the encoder pixel format (for example yuv420p10le), so the encode does not drop back to 8-bit.");
+                for msg in fs::script_warnings(&st.options()) {
+                    warn(ui, msg);
                 }
             });
             ui.end_row();
@@ -558,9 +614,14 @@ impl Mode for FrameserveMode {
             }
         }
 
-        section(ui, "Video (libx264)");
+        section(ui, &format!("Video ({})", st.video.codec.encoder()));
         egui::Grid::new("fs_v").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            video_encode_ui(ui, "fs", &mut st.video, true);
+            let codec_before = st.video.codec;
+            crate::ui::codecs_ui::video_codec_ui(ui, "fs", &mut st.video, cx.encoders.as_ref(), None);
+            apply_codec_bit_depth_default(st, codec_before);
+            for msg in choice_warnings(st).into_iter().filter(|m| m.contains("encoder") || m.contains("unticked") || m.contains("has 10-bit ticked")) {
+                warn(ui, msg);
+            }
             crate::ui::common::row_label(ui, "Resize");
             ui.horizontal_wrapped(|ui| {
                 ui.checkbox(&mut st.resize, "New vertical resolution");
@@ -574,13 +635,15 @@ impl Mode for FrameserveMode {
                 }
             });
             ui.end_row();
-            crate::ui::common::row_label(ui, "Encoder format");
+            crate::ui::common::row_label_tip(ui, "Encoder format", "The pixel format written by the encoder. It follows the colour format and bit depth above (not only 4:2:0), so a 10-bit script is not forced back to 8-bit.");
             hint(ui, format!("{} (follows the colour format and bit depth above)", st.color.pix_fmt(st.bits)));
             ui.end_row();
         });
         if st.audio_mode != AudioMode::None {
-            section(ui, "Audio (AAC)");
-            egui::Grid::new("fs_a").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| audio_encode_ui(ui, "fsa", &mut st.audio));
+            section(ui, "Audio");
+            egui::Grid::new("fs_a").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                crate::ui::codecs_ui::audio_codec_ui(ui, "fsa", &mut st.audio, cx.encoders.as_ref(), true);
+            });
         }
 
         section(ui, "Chapters & output");
@@ -620,6 +683,11 @@ impl Mode for FrameserveMode {
 
     fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
         ffenc::cmd::common::parse_output_fps(&self.st.video.output_fps)?;
+        crate::ui::codecs_ui::check_available(
+            cx.encoders.as_ref(),
+            Some(&self.st.video),
+            (self.st.audio_mode != AudioMode::None).then_some(&self.st.audio),
+        )?;
         if let Some(s) = &self.status {
             if s.demuxer == Some(false) {
                 return Err(avisynth::advice(s).into_iter().find(|a| a.0 == Level::Error).map(|a| a.1).unwrap_or_default());
@@ -657,20 +725,36 @@ impl Mode for FrameserveMode {
             let d = dur.ok_or("Chapters need the length: use “Test the script” first.")?;
             chapters::chapter_input(d, mode, st.chapter_interval_min * 60.0, &st.manual)?
         };
+        let yuv = !matches!(st.color, Color::None | Color::Rgb32);
+        let matrix = if yuv { st.matrix } else { Matrix::Default };
+        // Honour the checkbox even on Rec709/Rec601/Rec2020 (warned, not silently dropped).
+        let range_convert = st.range_convert;
+        let bt709_tags = yuv && matrix == Matrix::Rec709;
+        let mut audio = st.audio.clone();
+        audio.source_channels = crate::ui::codecs_ui::source_channels(
+            self.tested.as_ref().and_then(|(_, r)| r.as_ref().ok()).or(self.probe.info()),
+        );
         let pr = EncodeParams {
             script_path: script_path.clone(),
             script_text: text.clone(),
             output: output.clone(),
             video: st.video.clone(),
-            audio: st.audio.clone(),
+            audio,
             has_audio: st.audio_mode != AudioMode::None,
             pix_fmt: st.color.pix_fmt(st.bits),
             resize,
-            bt709_tags: st.color != Color::None && st.color != Color::Rgb32 && st.matrix == Matrix::Rec709,
+            bt709_tags,
+            matrix,
+            range_convert,
             chapters,
             faststart: st.faststart,
         };
         let mut cmd = fs::build(&pr)?;
+        for msg in fs::script_warnings(&st.options()) {
+            if !cmd.warnings.iter().any(|w| w == &msg) {
+                cmd.warnings.push(msg);
+            }
+        }
         if st.edit_script {
             cmd.warnings.push("Using your hand-edited script.".into());
         }
@@ -743,5 +827,101 @@ mod tests {
         assert_eq!(st.script().unwrap(), "AviSource(\"x.avi\")\r\n");
         assert_eq!(ffmpeg_of(Path::new("/f/ffprobe.exe")), PathBuf::from("/f/ffmpeg.exe"));
         assert_eq!(ffmpeg_of(Path::new("/f/ffprobe")), PathBuf::from("/f/ffmpeg"));
+        assert_eq!(m.st.video.codec, ffenc::cmd::codecs::VideoCodec::H264);
+        assert_eq!(m.st.audio.codec, ffenc::cmd::codecs::AudioCodec::Aac);
+        assert!(!m.st.range_convert);
+    }
+
+    #[test]
+    fn old_json_loads_as_h264_aac_and_no_range_convert() {
+        let v = serde_json::json!({
+            "signpost": r"C:\clips\a.avi",
+            "out_dir": r"D:\Videos\Out",
+            "out_name": "a_frameserved.mp4",
+            "last_auto": "a_frameserved.mp4",
+            "suffix": "_frameserved",
+            "container": "mp4",
+            "color": "Yuv420",
+            "matrix": "Rec709",
+            "bits": "Eight",
+            "video": { "crf": 22, "preset": "slow", "tune": null },
+            "audio": { "bitrate_k": 192 }
+        });
+        let mut m = FrameserveMode::default();
+        m.load(&v, &Settings::default());
+        assert_eq!(m.st.video.codec, ffenc::cmd::codecs::VideoCodec::H264, "missing codec field defaults to H.264");
+        assert_eq!(m.st.audio.codec, ffenc::cmd::codecs::AudioCodec::Aac, "missing codec field defaults to AAC");
+        assert_eq!(m.st.video.crf, 22);
+        assert_eq!(m.st.audio.bitrate_k, 192);
+        assert!(!m.st.range_convert, "old presets do not enable a range squeeze");
+        assert_eq!(m.st.matrix, Matrix::Rec709);
+        let o = m.st.options();
+        let pr = EncodeParams {
+            script_path: PathBuf::from(r"C:\T\ffenc_frameserve_1.avs"),
+            script_text: fs::script(&o).unwrap(),
+            output: PathBuf::from(r"C:\clips\a_frameserved.mp4"),
+            video: m.st.video.clone(),
+            audio: m.st.audio.clone(),
+            has_audio: true,
+            pix_fmt: m.st.color.pix_fmt(m.st.bits),
+            resize: None,
+            bt709_tags: true,
+            matrix: m.st.matrix,
+            range_convert: m.st.range_convert,
+            chapters: None,
+            faststart: true,
+        };
+        let b = fs::build(&pr).unwrap();
+        assert_eq!(
+            b.args,
+            [
+                "-y", "-i", r"C:\T\ffenc_frameserve_1.avs", "-map", "0:v:0", "-map", "0:a:0?",
+                "-c:v", "libx264", "-crf", "22", "-preset", "slow", "-pix_fmt", "yuv420p",
+                "-color_range", "tv", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", r"C:\clips\a_frameserved.mp4"
+            ]
+        );
+        assert!(!b.args.iter().any(|a| a.contains("in_range=full")));
+    }
+
+    #[test]
+    fn unusual_choices_warn_and_do_not_change_the_form() {
+        use ffenc::cmd::codecs::VideoCodec;
+        let mut st = State::default();
+        assert_eq!(st.bits, BitDepth::Eight);
+        assert!(!st.range_convert);
+        assert!(choice_warnings(&st).is_empty(), "safe defaults: {:?}", choice_warnings(&st));
+
+        // Picking HEVC starts from a safe 10-bit default matching Bit depth (8-bit here)
+        st.video.codec = VideoCodec::Hevc;
+        apply_codec_bit_depth_default(&mut st, VideoCodec::H264);
+        assert_eq!(st.bits, BitDepth::Eight);
+        assert!(!st.video.ten_bit);
+        assert!(choice_warnings(&st).iter().all(|m| !m.contains("encoder has 10-bit")), "{:?}", choice_warnings(&st));
+        // User then ticks 10-bit on the encoder only: form is not rewritten; warning, encode still allowed
+        st.video.ten_bit = true;
+        let w = choice_warnings(&st);
+        assert_eq!(st.bits, BitDepth::Eight);
+        assert!(st.video.ten_bit);
+        assert!(w.iter().any(|m| m.contains("encoder has 10-bit") && m.contains("still run")), "{w:?}");
+
+        // YV12 + 10-bit: not rewritten to 8-bit; warning; script still builds
+        st.color = Color::Yv12;
+        st.bits = BitDepth::Ten;
+        st.signpost = r"C:\clips\a.avi".into();
+        assert_eq!(st.bits, BitDepth::Ten);
+        let w = choice_warnings(&st);
+        assert!(w.iter().any(|m| m.contains("ConvertToYV12") && m.contains("still run")), "{w:?}");
+        assert!(st.options().bits == BitDepth::Ten && st.options().color == Color::Yv12);
+        let text = fs::script(&st.options()).unwrap();
+        assert!(text.contains("ConvertToYV12") && text.contains("ConvertBits(10)"));
+
+        // Rec709 + range_convert: not cleared; warning
+        st.color = Color::Yuv420;
+        st.matrix = Matrix::Rec709;
+        st.range_convert = true;
+        let w = choice_warnings(&st);
+        assert!(st.range_convert);
+        assert!(w.iter().any(|m| m.contains("washed out") && m.contains("still run")), "{w:?}");
     }
 }

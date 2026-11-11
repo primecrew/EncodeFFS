@@ -1,6 +1,6 @@
 [package]
 name = "ffmpeg-encoder"
-version = "0.5.5-codecs.1"
+version = "0.5.5-codecs.2"
 edition = "2021"
 description = "Windows GUI for common FFmpeg encoding jobs"
 build = "build.rs"

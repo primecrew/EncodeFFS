@@ -252,15 +252,18 @@ pub fn build(pr: &JoinParams) -> Result<BuiltCommand, String> {
             };
             let rate = fa.as_ref().and_then(|a| a.sample_rate).unwrap_or(48000);
             let layout = if fa.as_ref().and_then(|a| a.channels) == Some(1) { "mono" } else { "stereo" };
+            // H.264 / 8-bit stays format=yuv420p (golden test). 10-bit HEVC/AV1 uses
+            // yuv420p10le in the same graph so the concat does not drop back to 8-bit.
+            let vfmt = if super::codecs::ten_bit_output(&pr.video) { "yuv420p10le" } else { "yuv420p" };
             let mut g: Vec<String> = vec![];
             let mut pads = String::new();
             for (i, f) in pr.inputs.iter().enumerate() {
                 let d = fmt_num(f.duration_s);
                 if has_v {
                     if f.video.is_some() {
-                        g.push(format!("[{i}:v:0]scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format=yuv420p[v{i}]"));
+                        g.push(format!("[{i}:v:0]scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format={vfmt}[v{i}]"));
                     } else {
-                        g.push(format!("color=c=black:s={w}x{h}:r={fps}:d={d},format=yuv420p,setsar=1[v{i}]"));
+                        g.push(format!("color=c=black:s={w}x{h}:r={fps}:d={d},format={vfmt},setsar=1[v{i}]"));
                     }
                     pads.push_str(&format!("[v{i}]"));
                 }
@@ -413,5 +416,20 @@ anullsrc=r=44100:cl=stereo,atrim=duration=4[a1];\
         assert!(!g5.contains("30000/1001") && !b5.args.iter().any(|a| a == "-vf" || a == "-r"));
         pr.video.output_fps = "-5".into();
         assert!(build(&pr).is_err(), "invalid rate rejected");
+        // 10-bit HEVC: format=yuv420p10le in the graph so concat does not drop to 8-bit
+        pr.video.output_fps.clear();
+        pr.video.codec = super::super::codecs::VideoCodec::Hevc;
+        pr.video.crf = 20;
+        pr.video.ten_bit = true;
+        let b10 = build(&pr).unwrap();
+        let g10 = &b10.args[b10.args.iter().position(|x| x == "-filter_complex").unwrap() + 1];
+        assert_eq!(g10.matches("format=yuv420p10le").count(), 2, "{g10}");
+        assert!(!g10.contains("format=yuv420p["), "{g10}");
+        assert!(b10.args.windows(2).any(|w| w == ["-pix_fmt", "yuv420p10le"]));
+        pr.video.ten_bit = false;
+        let b8 = build(&pr).unwrap();
+        let g8 = &b8.args[b8.args.iter().position(|x| x == "-filter_complex").unwrap() + 1];
+        assert!(g8.contains("format=yuv420p["), "{g8}");
+        assert!(!g8.contains("yuv420p10le"), "{g8}");
     }
 }

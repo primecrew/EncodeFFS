@@ -84,7 +84,7 @@ pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
     ("builtin-subs", "subs", "Copy subtitle tracks", "Copy subtitle tracks from one file into another."),
     ("builtin-remux", "remux", "Remux MKV -> MP4", "Stream-copy every MKV in a folder to MP4 (never overwrites)."),
     ("builtin-join", "join", "Join / stitch files", "Concatenate several videos into one – lossless when they match, or re-encoded – with a chapter per file."),
-    ("builtin-frameserve", "frameserve", "Frameserver (AviSynth script)", "Encode straight from your editor through DebugMode FrameServer: pick the signpost .avi, the app writes the AviSynth script (ConvertToYUV420 by default) and encodes it with x264 + AAC."),
+    ("builtin-frameserve", "frameserve", "Frameserver (AviSynth script)", "Encode straight from your editor through DebugMode FrameServer: pick the signpost .avi, the app writes the AviSynth script (ConvertToYUV420 by default) and encodes it with H.264 + AAC by default (or HEVC / AV1 and AC3 / copy)."),
     ("builtin-custom", "custom", "Custom pipeline", "Build your own: video / audio / subtitle actions, trim, chapters, container, extra ffmpeg args."),
     ("builtin-addchapters", "custom", "Add chapters (no re-encode)", "Copy every stream and add chapters (every 5 min, your own list, or imported) – no quality loss."),
     ("builtin-hevc-game", "reencode", "Archive – HEVC 10-bit (game footage)", "Experimental: libx265 CRF 20, preset slow, 10-bit, AAC. Smaller files than H.264; not every device/browser plays HEVC."),

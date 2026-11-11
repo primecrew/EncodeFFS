@@ -276,7 +276,7 @@ pub fn build(pr: &CustomParams) -> Result<BuiltCommand, String> {
                 let filter = join_filters(&[
                     pr.deinterlace.then(|| DEINTERLACE_FILTER.to_string()),
                     pr.resize.map(|(w, h)| format!("scale={w}:{h}")),
-                    pr.range_convert.then(|| RANGE_FILTER.to_string()),
+                    pr.range_convert.then(|| super::codecs::range_filter(&pr.video_encode)),
                 ]);
                 warnings.extend(super::codecs::check_video(&pr.video_encode, &pr.output)?);
                 a.extend(super::codecs::video_args(&pr.video_encode, filter.as_deref(), pr.range_convert, &pr.output));
@@ -610,6 +610,17 @@ mod tests {
         assert!(!j.contains("0:t?"));
         assert!(j.ends_with("-movflags +faststart /out/x.mp4"));
         assert_eq!(c.warnings.len(), 2);
+        // 10-bit HEVC: squeeze and 10-bit format in one step; H.264 path above stays identical
+        pr.video_encode.codec = super::super::codecs::VideoCodec::Hevc;
+        pr.video_encode.crf = 20;
+        pr.video_encode.ten_bit = true;
+        let j10 = build(&pr).unwrap().args.join(" ");
+        assert!(j10.contains(&format!("-vf {DEINTERLACE_FILTER},scale=1280:720,{RANGE_FILTER},format=yuv420p10le")), "{j10}");
+        assert!(j10.contains("-pix_fmt yuv420p10le"), "{j10}");
+        pr.video_encode.ten_bit = false;
+        let j8 = build(&pr).unwrap().args.join(" ");
+        assert!(j8.contains(&format!("-vf {DEINTERLACE_FILTER},scale=1280:720,{RANGE_FILTER} -color_range tv")), "{j8}");
+        assert!(!j8.contains("format=yuv420p10le"), "{j8}");
     }
 
     #[test]

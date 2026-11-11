@@ -43,6 +43,8 @@ fn enc(script_path: PathBuf, text: String, output: PathBuf) -> EncodeParams {
         pix_fmt: "yuv420p".into(),
         resize: None,
         bt709_tags: true,
+        matrix: Matrix::Rec709,
+        range_convert: false,
         chapters: None,
         faststart: true,
     }

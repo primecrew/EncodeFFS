@@ -173,8 +173,13 @@ Re-encode.
       but bigger files and fewer players.
     - **RGB32 (`ConvertToRGB32()`):** only for filters that need RGB.
     - **None:** keeps what the signpost gives.
+  - **Video and audio codecs:** H.264 (libx264) + AAC is the default (same command as before). HEVC, AV1, AC3
+    and “keep original audio” are offered with the same pickers as Re-encode. Old saved presets without those
+    fields still load as H.264 + AAC.
   - **Colour matrix:** `matrix="Rec709"` by default (Rec601, PC.709, PC.601 and Rec2020 are also offered), plus
-    **Interlaced source** (`interlaced=true`).
+    **Interlaced source** (`interlaced=true`). Rec709 / Rec601 / Rec2020 already convert to TV (limited) range
+    in the script; a second full-to-TV filter is not applied. PC.709 / PC.601 keep full range and are tagged as
+    full range, with an optional **Convert full range to TV range** choice.
   - **Bit depth:** 8-bit, or 10-bit with `ConvertBits(10)` and a 10-bit encoder format. 10-bit isn't offered with
     YV12 or RGB32.
   - **Signpost format:** AviSource `pixel_type`; leave on Automatic.
@@ -262,7 +267,7 @@ Everything in the preset panel is a **preset**: a named, saved set of options fo
 | Remux MKV → MP4 | Stream copy, never overwrites, optional delete of source only after the MP4 verifies; summary in the script's wording. |
 | **Join / stitch files** | Concatenate several videos: lossless concat demuxer or re-encode with the concat filter, chapter per file (see above). |
 | **Audio & subtitles** | Keep/remove/rename/reorder tracks, add commentary or second-language audio, replace audio, add/remove subtitles, extract audio or subtitles (see above). |
-| **Frameserver (AviSynth script)** | DebugMode FrameServer signpost .avi -> generated AviSynth script -> x264/AAC MP4/MKV (see above). |
+| **Frameserver (AviSynth script)** | DebugMode FrameServer signpost .avi -> generated AviSynth script -> H.264/AAC by default (or HEVC / AV1 and AC3 / copy) in MP4/MKV (see above). |
 | **Custom pipeline** | Build your own from independent choices (below). |
 | **Add chapters (no re-encode)** | Custom pipeline preset: copies every stream, adds chapters every 5 min (or your list), same container as the input, suffix `_chapters`. |
 
