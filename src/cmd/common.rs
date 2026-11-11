@@ -197,7 +197,7 @@ impl CompressorPreset {
             CompressorPreset::Light => "light",
             CompressorPreset::Medium => "medium",
             CompressorPreset::Strong => "strong",
-            CompressorPreset::Advanced => "advanced",
+            CompressorPreset::Advanced => "advanced…",
         }
     }
     pub fn help(self) -> &'static str {
@@ -206,7 +206,7 @@ impl CompressorPreset {
             CompressorPreset::Light => "gentle control for a small boost",
             CompressorPreset::Medium => "balanced default for most speech and mixed content",
             CompressorPreset::Strong => "firmer peak control when pushing audio harder",
-            CompressorPreset::Advanced => "enter threshold, ratio, knee, makeup, attack, release",
+            CompressorPreset::Advanced => "set ratio, threshold, attack, release and make-up gain below",
         }
     }
 }

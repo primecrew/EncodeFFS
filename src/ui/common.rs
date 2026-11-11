@@ -453,7 +453,7 @@ pub fn audio_encode_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode) {
 
 /// Gain / compressor rows (any re-encoded audio codec).
 pub fn audio_filters_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode) {
-        row_label_tip(ui, "Gain", "Volume change applied to the audio, in decibels (+6 dB is roughly twice as loud). 0 = unchanged.");
+        row_label_tip(ui, "Gain", "Pre-gain in decibels, applied before the compressor (+6 dB is roughly twice as loud). 0 = unchanged.");
     ui.horizontal(|ui| {
         num_f64(ui, &mut a.gain_db, -30.0..=30.0, 0.1, " dB");
         hint(ui, "-30..+30");
@@ -485,23 +485,23 @@ pub fn audio_filters_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode) {
 
 pub fn compressor_params_ui(ui: &mut Ui, id: &str, c: &mut CompressorParams) {
     egui::Grid::new(id).num_columns(2).show(ui, |ui| {
-        row_label_tip(ui, "Threshold", "Level above which the compressor starts reducing the volume.");
-        num_f64(ui, &mut c.threshold_db, -60.0..=0.0, 0.1, " dB");
-        ui.end_row();
         row_label_tip(ui, "Ratio", "How strongly levels above the threshold are reduced (4:1 = 4 dB over becomes 1 dB over).");
         num_f64(ui, &mut c.ratio, 1.0..=20.0, 0.05, ":1");
         ui.end_row();
+        row_label_tip(ui, "Threshold", "Level above which the compressor starts reducing the volume.");
+        num_f64(ui, &mut c.threshold_db, -60.0..=0.0, 0.1, " dB");
+        ui.end_row();
         row_label_tip(ui, "Knee", "Softens the transition around the threshold (1 = hard, higher = gentler).");
         num_f64(ui, &mut c.knee, 1.0..=8.0, 0.05, "");
-        ui.end_row();
-        row_label_tip(ui, "Makeup", "Gain added after compression to make up for the reduced level.");
-        num_f64(ui, &mut c.makeup_db, -12.0..=12.0, 0.1, " dB");
         ui.end_row();
         row_label_tip(ui, "Attack", "How quickly the compressor reacts when the level rises above the threshold.");
         num_f64(ui, &mut c.attack_ms, 0.01..=2000.0, 0.5, " ms");
         ui.end_row();
         row_label_tip(ui, "Release", "How quickly the compressor lets go after the level drops below the threshold.");
         num_f64(ui, &mut c.release_ms, 1.0..=9000.0, 1.0, " ms");
+        ui.end_row();
+        row_label_tip(ui, "Make-up gain", "Gain added after compression to make up for the reduced level.");
+        num_f64(ui, &mut c.makeup_db, -12.0..=12.0, 0.1, " dB");
         ui.end_row();
     });
 }

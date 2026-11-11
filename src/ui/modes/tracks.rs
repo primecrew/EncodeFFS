@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{restore, Ctx, Mode, Plan};
 use crate::ui::common::*;
-use ffenc::cmd::common::CompressorPreset;
+use ffenc::cmd::common::{CompressorParams, CompressorPreset};
 use ffenc::cmd::tracks::{self as tr, AudioFormat, AudioTrack, Container, Fit, Length, Source, SubFormat, SubTrack, TracksParams};
 use ffenc::ffmpeg::probe::MediaInfo;
 use ffenc::ffmpeg::runner::JobSpec;
@@ -45,6 +45,9 @@ struct State {
     suffix: String,
     #[serde(default = "ffenc::cmd::common::missing_faststart")]
     faststart: bool,
+    /// Shared values used by any added file track set to Advanced.
+    #[serde(default)]
+    advanced: CompressorParams,
     add_kind: AddKind,
     add_title: String,
     add_lang: String,
@@ -77,6 +80,7 @@ impl State {
             last_auto: String::new(),
             suffix: "_tracks".into(),
             faststart: false,
+            advanced: s.compressor,
             add_kind: AddKind::Commentary,
             add_title: s.commentary_name.clone(),
             add_lang: "eng".into(),
@@ -446,6 +450,9 @@ impl TracksMode {
                                 ui.selectable_value(&mut t.compressor, c, format!("{} – {}", c.label(), c.help()));
                             }
                         }).response.labelled_by(l.id);
+                        if t.compressor == CompressorPreset::Advanced {
+                            hint(ui, "Advanced controls are below this list (shared by every track set to Advanced).");
+                        }
                     });
                     if let (Some(v), Some(d)) = (vdur, t.duration) {
                         let (diff, verdict) = tr::length_check(v, d, t.delay_ms, tol);
@@ -499,6 +506,13 @@ impl TracksMode {
                 }
                 _ => {}
             }
+        }
+
+        if st.audio.iter().any(|t| t.compressor == CompressorPreset::Advanced) {
+            ui.add_space(4.0);
+            ui.label(RichText::new("Advanced compressor").strong());
+            hint(ui, "These values apply to every added file track set to Advanced. Volume on the track row is pre-gain, applied before the compressor.");
+            compressor_params_ui(ui, "tracks_adv", &mut st.advanced);
         }
 
         // ---- subtitles
@@ -600,7 +614,7 @@ impl TracksMode {
             subs: self.st.subs.clone(),
             output: out,
             aac_bitrate_k: cx.settings.audio_bitrate_k,
-            advanced: cx.settings.compressor,
+            advanced: self.st.advanced,
             tolerance_s: cx.settings.duration_tolerance_s,
             faststart: self.st.faststart,
         }

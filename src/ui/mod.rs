@@ -1727,7 +1727,7 @@ impl App {
                     crate::ui::common::row_label_tip(ui, "Fallback sample rate", "Audio sample rate used when ffprobe cannot read the source's rate.");
                     common::num_u32(ui, &mut ed.fallback_sample_rate, 8000..=384000, " Hz");
                     ui.end_row();
-                    crate::ui::common::row_label(ui, "Advanced compressor");
+                    crate::ui::common::row_label_tip(ui, "Advanced compressor defaults", "Default values used when Compressor is set to Advanced on a form. On encode forms they appear under the Compressor drop-down; on Audio & subtitles they appear below the track list.");
                     common::compressor_params_ui(ui, "set_comp", &mut ed.compressor);
                     ui.end_row();
                 });
