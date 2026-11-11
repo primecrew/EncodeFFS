@@ -33,7 +33,7 @@ pub const OTHER_EDITION_DATA_DIR_NAMES: &[&str] = &[
     "FFmpegEncoder-Slideshow", // archived standalone edition
 ];
 
-/// Window title, e.g. "FFmpeg Encoder 0.6.0-rc.1".
+/// Window title, e.g. "FFmpeg Encoder 0.6.0-rc.2".
 pub fn full_title() -> String {
     format!("{APP_NAME} {APP_VERSION}")
 }

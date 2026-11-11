@@ -6,9 +6,11 @@ Create Slideshow is part of this stable build (the old **Slideshow** branch is a
 
 ## Unreleased
 
+## 0.6.0-rc.2
+
+- The Codecs edition is merged into the stable app: optional HEVC / AV1 video and AC3 or stream-copy audio (H.264 + AAC remains the default), hover help, one-click conflict fixes, colour-range warnings, and the Frameserver default colour matrix of PC.709. Create Slideshow from rc.1 is kept. The app identity stays FFmpegEncoder / %LOCALAPPDATA%\FFmpegEncoder; the standalone Codecs first-run import is not carried over.
 - README now describes the merged app in one place: Frameserver default colour matrix is PC.709 (example script updated), codec pickers on Frameserver and Custom pipeline, Create Slideshow in the preset list (19 built-ins), Default Presets / User Presets sidebar, Faststart off for new jobs, and HEVC starting points in **Choosing a codec**.
 - File › Settings › Encoding defaults: the Gain row uses the same pre-gain hover as the encode forms.
-
 - Advanced compressor controls are easier to find: the Compressor drop-down uses **advanced…**, and the ratio, threshold, knee, attack, release and make-up gain fields appear in that order (after the Gain / pre-gain row) when Advanced is selected. Audio & subtitles now shows those controls under the track list. File › Settings lists them as **Advanced compressor defaults**.
 - Frameserver colour matrix defaults to **PC.709** (keep full range, recommended for Vegas 8-bit). Rec709 is labelled as the squeeze-to-TV choice for 32-bit full-range Vegas projects. Saved presets keep the matrix they stored; older files that omitted the field still load as Rec709.
 - Re-encode, Batch, Custom pipeline and similar forms warn (but still run) when the source is tagged as TV (limited) range and **Convert full-range to limited-range** is on. A one-click fix turns the conversion off; **Run as set** keeps it. Missing or unknown tags are not warned about (a short hover notes that the range is untagged). README has a **Colour range and Vegas frameserving** section.
