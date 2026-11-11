@@ -78,7 +78,24 @@ pub const X265_PRESETS: [&str; 10] = ["ultrafast", "superfast", "veryfast", "fas
 /// x265 tunes offered (x264's film/stillimage don't exist in x265).
 pub const X265_TUNES: [&str; 4] = ["grain", "animation", "fastdecode", "zerolatency"];
 pub const SVT_PRESET_MAX: u32 = 13;
+/// Useful SVT-AV1 speeds shown in the Speed drop-down (Custom… covers the rest of 0–13).
+pub const SVT_SPEEDS: [u32; 8] = [2, 4, 5, 6, 8, 10, 12, 13];
 pub const FILM_GRAIN_MAX: u32 = 50;
+
+/// Closed drop-down / menu label for an SVT-AV1 speed. Unlisted values show as "Custom N".
+pub fn svt_speed_label(n: u32) -> String {
+    match n {
+        2 => "2 – very slow, smallest file".into(),
+        4 => "4 – slow".into(),
+        5 => "5 – archive default".into(),
+        6 => "6".into(),
+        8 => "8 – fast".into(),
+        10 => "10 – very fast, bigger file".into(),
+        12 => "12 – fastest, for tests".into(),
+        13 => "13 – fastest, for tests".into(),
+        n => format!("Custom {n}"),
+    }
+}
 
 /// Pixel format written for HEVC/AV1.
 pub fn pix_fmt(ten_bit: bool) -> &'static str {
@@ -357,6 +374,18 @@ mod tests {
         h.ten_bit = false;
         h.tune = Some("grain".into());
         assert_eq!(s(&video_args(&h, Some("scale=1280:720"), true, Path::new("/o/a.mkv"))), "-c:v libx265 -crf 20 -preset slow -pix_fmt yuv420p -vf scale=1280:720 -color_range tv -colorspace bt709 -color_primaries bt709 -color_trc bt709 -tune grain -x265-params log-level=error");
+    }
+
+    #[test]
+    fn av1_speed_labels() {
+        assert_eq!(SVT_SPEEDS, [2, 4, 5, 6, 8, 10, 12, 13]);
+        assert_eq!(svt_speed_label(2), "2 – very slow, smallest file");
+        assert_eq!(svt_speed_label(5), "5 – archive default");
+        assert_eq!(svt_speed_label(6), "6");
+        assert_eq!(svt_speed_label(13), "13 – fastest, for tests");
+        assert_eq!(svt_speed_label(0), "Custom 0");
+        assert_eq!(svt_speed_label(3), "Custom 3");
+        assert_eq!(svt_speed_label(11), "Custom 11");
     }
 
     #[test]

@@ -318,12 +318,13 @@ H.264 (libx264) + AAC stays the default everywhere; the existing presets produce
 commands as 0.5.3 (`tests/h264_unchanged.rs`).
 - **Video codec** (Re-encode, Batch re-encode, Custom pipeline video step, Join re-encode):
   - **H.264 (libx264)** — default, plays everywhere.
-  - **HEVC / H.265 (libx265)** — CRF (20 game / 18 camera), presets ultrafast…placebo (slow), tunes grain /
+  - **HEVC / H.265 (libx265)** — CRF (20 game / 18 camera), Speed ultrafast…placebo (slow), tunes grain /
     animation / fastdecode / zerolatency, 10-bit (yuv420p10le), `-tag:v hvc1` in MP4/MOV (Apple players),
     `-x265-params log-level=error`.
-  - **AV1 (SVT-AV1)** — CRF 0–63 (28 game / 26 camera), preset 0–13 (5), 10-bit, optional film grain
-    (`-svtav1-params film-grain=N:film-grain-denoise=0|1`).
-  - CRF values are not comparable across codecs. The ⓘ button explains player/browser compatibility.
+  - **AV1 (SVT-AV1)** — CRF 0–63 (28 game / 26 camera), Speed drop-down of useful values (default 5) plus
+    Custom… (0–13), 10-bit, optional film grain (`-svtav1-params film-grain=N:film-grain-denoise=0|1`).
+    Denoise first is off by default and disabled when film grain is 0.
+  - CRF values are not comparable across codecs. Hover the codec or CRF note for the full comparison.
   - Containers: MKV/MP4 OK for all; AV1 in MOV gets a caution; invalid combinations are refused with a
     plain message.
   - Codecs the FFmpeg build lacks (checked with `ffmpeg -encoders`, cached per FFmpeg path) are disabled
@@ -333,7 +334,7 @@ commands as 0.5.3 (`tests/h264_unchanged.rs`).
   or Keep original (stream copy; not for Join). Bitrate is a drop-down of typical rates plus Custom….
 - **Presets**: four read-only built-ins in the **Experimental codecs** folder at the bottom of **Default Presets**:
   Archive – HEVC 10-bit (game / camera footage) CRF 20 / 18 slow, Archive – AV1 10-bit (game / camera
-  footage) CRF 28 / 26 preset 5 (grain off); audio AAC. Existing presets files get them on first load;
+  footage) CRF 28 / 26 speed 5 (grain off); audio AAC. Existing presets files get them on first load;
   your own presets are untouched (18 built-ins in total).
 ## Input / output folders (0.5.5-codecs.1)
 Input and output folders are remembered at the app level (File › Settings), not in presets. On first run they

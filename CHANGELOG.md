@@ -12,6 +12,7 @@ This edition is experimental and is not merged into the stable build. It include
 - Audio bitrate is a drop-down of typical rates (AAC: 96, 128, 160, 192, 256, 320; AC3: 192, 256, 384, 448, 640) plus Custom… to type another value. The **Will encode: N kb/s** readout is unchanged.
 - Hover help was added on technical option labels that did not have it (codec, CRF, 10-bit, film grain, colour range, container, trim, resize, deinterlace, faststart, and the Frameserver colour/signpost/audio rows, plus chapters and interval).
 - Leftover FFmpeg update folders (`.ffmpeg-update-…`, left behind if the app was stopped mid-download) are removed in the background when the app starts. Only the app-managed FFmpeg folders are scanned; a download still in progress is left alone.
+- HEVC and AV1 encoder speed is labelled **Speed** (H.264 stays **Preset**). AV1 is a drop-down of useful speeds (2, 4, 5, 6, 8, 10, 12, 13) with short labels, plus Custom… to type any value from 0–13. Film grain and **Denoise first** have plain-words help; Denoise first is disabled when film grain is off. The codec and CRF notes are one line each; the full comparison is in the hover (the expanding ⓘ text is gone).
 
 ## 0.5.5-codecs.2
 

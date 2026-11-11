@@ -2,11 +2,14 @@
 //! options, and audio codec (AAC default / AC3 / copy). H.264 + AAC show exactly the 0.5.x rows.
 
 use eframe::egui::{self, RichText, Ui};
-use ffenc::cmd::codecs::{self, AudioCodec, Encoders, VideoCodec, AC3_BITRATES, CRF_NOTE, FILM_GRAIN_MAX, SVT_PRESET_MAX, X265_PRESETS, X265_TUNES};
+use ffenc::cmd::codecs::{self, AudioCodec, Encoders, VideoCodec, AC3_BITRATES, CRF_NOTE, FILM_GRAIN_MAX, SVT_PRESET_MAX, SVT_SPEEDS, X265_PRESETS, X265_TUNES};
 use ffenc::cmd::common::{AudioEncode, VideoEncode};
 use ffenc::ffmpeg::probe::MediaInfo;
 
-use super::common::{audio_encode_ui, audio_filters_ui, bitrate_ui_ex, hint, named, num_u32, video_encode_ui, warn};
+use super::common::{
+    apply_bitrate_menu, audio_encode_ui, audio_filters_ui, bitrate_menu_selection, bitrate_ui_ex, hint, named, num_u32,
+    show_custom_bitrate_field, video_encode_ui, warn, BitrateMenu,
+};
 use super::option_tips;
 
 /// Facts from the probed source used for notes and AC3 channel handling.
@@ -17,18 +20,57 @@ pub fn source_channels(info: Option<&MediaInfo>) -> Option<u32> {
     info?.of_type("audio").filter_map(|s| s.channels).max()
 }
 
-/// "ℹ" button that shows/hides a help text below (keyboard reachable, screen-reader named).
-fn info_toggle(ui: &mut Ui, id: &str, name: &str, text: &str) {
-    let key = egui::Id::new(("codec_info", id));
-    let mut open = ui.data(|d| d.get_temp::<bool>(key).unwrap_or(false));
-    let b = named(ui.small_button("ℹ"), egui::WidgetType::Button, name);
-    if b.clicked() {
-        open = !open;
-        ui.data_mut(|d| d.insert_temp(key, open));
-    }
-    if open {
-        ui.label(RichText::new(text).small());
-    }
+/// Full H.264 / HEVC / AV1 playback comparison, shown on hover of the selected codec's one-line note.
+fn codec_compat_hover() -> String {
+    format!(
+        "{}\n\n{}\n\n{}",
+        VideoCodec::H264.compat_note(),
+        VideoCodec::Hevc.compat_note(),
+        VideoCodec::Av1.compat_note()
+    )
+}
+
+/// AV1 Speed: listed useful values plus Custom… (typed box, 0–13). Stored field remains `svt_preset`.
+fn av1_speed_ui(ui: &mut Ui, id: &str, preset: &mut u32) {
+    let custom_id = ui.id().with(("svt_speed_custom", id));
+    let mut custom_open = ui.data(|d| d.get_temp::<bool>(custom_id)).unwrap_or(false);
+    let sel = bitrate_menu_selection(*preset, &SVT_SPEEDS, custom_open);
+    let selected_text = match sel {
+        BitrateMenu::Listed(n) => codecs::svt_speed_label(n),
+        BitrateMenu::Custom if SVT_SPEEDS.contains(preset) => "Custom".to_string(),
+        BitrateMenu::Custom => format!("Custom {preset}"),
+    };
+    ui.horizontal(|ui| {
+        let combo = egui::ComboBox::from_id_salt(format!("{id}_svtp")).width(260.0).selected_text(&selected_text);
+        let r = combo.show_ui(ui, |ui| {
+            for &n in &SVT_SPEEDS {
+                let on = sel == BitrateMenu::Listed(n);
+                if ui.selectable_label(on, codecs::svt_speed_label(n)).clicked() {
+                    let (v, c) = apply_bitrate_menu(*preset, Some(n));
+                    *preset = v;
+                    custom_open = c;
+                }
+            }
+            if ui.selectable_label(sel == BitrateMenu::Custom, "Custom…").clicked() {
+                let (v, c) = apply_bitrate_menu(*preset, None);
+                *preset = v;
+                custom_open = c;
+            }
+        });
+        named(
+            r.response,
+            egui::WidgetType::ComboBox,
+            &format!("Speed: {selected_text}. Choose a listed speed, or Custom… to type a number from 0 to 13."),
+        );
+        if show_custom_bitrate_field(*preset, &SVT_SPEEDS, custom_open) {
+            let nr = num_u32(ui, preset, 0..=SVT_PRESET_MAX, "");
+            if nr.changed() && SVT_SPEEDS.contains(preset) {
+                custom_open = false;
+            }
+            named(nr, egui::WidgetType::DragValue, "Speed custom value (0–13)");
+        }
+    });
+    ui.data_mut(|d| d.insert_temp(custom_id, custom_open));
 }
 
 /// Video rows inside a 2-column Grid. `enc` = encoders of the current FFmpeg (None = unknown yet).
@@ -62,10 +104,11 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option
         if enc.is_some_and(|e| !e.video(v.codec)) {
             warn(ui, codecs::missing_note(v.codec.encoder()));
         }
-        ui.horizontal_wrapped(|ui| {
-            hint(ui, v.codec.compat_note().split(':').next().unwrap_or(""));
-            info_toggle(ui, &format!("{id}_compat"), "Where does this codec play?", &format!("{}\n\n{}\n{}\n{}", v.codec.compat_note(), VideoCodec::H264.compat_note(), VideoCodec::Hevc.compat_note(), VideoCodec::Av1.compat_note()));
-        });
+        // One-line note for the selected codec; the full comparison is in the hover.
+        let note = v.codec.compat_note();
+        let r = ui.label(RichText::new(note).small().weak());
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, note));
+        r.on_hover_text(codec_compat_hover());
     });
     ui.end_row();
     match v.codec {
@@ -75,15 +118,17 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     num_u32(ui, &mut v.crf, v.codec.crf_range(), "");
-                    hint(ui, format!("lower = better quality / bigger file (archive: {} game, {} camera)", v.codec.default_crf(false), v.codec.default_crf(true)));
-                });
-                ui.horizontal_wrapped(|ui| {
-                    hint(ui, "CRF isn't comparable across codecs.");
-                    info_toggle(ui, &format!("{id}_crf"), "About CRF across codecs", CRF_NOTE);
+                    let line = format!(
+                        "lower = better quality / bigger file (archive: {} game, {} camera)",
+                        v.codec.default_crf(false),
+                        v.codec.default_crf(true)
+                    );
+                    let r = ui.label(RichText::new(&line).small().weak());
+                    r.on_hover_text(CRF_NOTE);
                 });
             });
             ui.end_row();
-            crate::ui::common::row_label_tip(ui, "Preset", "Encoder speed preset: slower presets compress better (smaller file at the same CRF) but take longer. Does not change the quality target.");
+            crate::ui::common::row_label_tip(ui, "Speed", option_tips::SPEED);
             if v.codec == VideoCodec::Hevc {
                 egui::ComboBox::from_id_salt(format!("{id}_x265p")).selected_text(v.preset.clone()).show_ui(ui, |ui| {
                     for p in X265_PRESETS {
@@ -91,10 +136,7 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option
                     }
                 });
             } else {
-                ui.horizontal(|ui| {
-                    num_u32(ui, &mut v.svt_preset, 0..=SVT_PRESET_MAX, "");
-                    hint(ui, "0 = slowest/best … 13 = fastest (5 is a good archive default)");
-                });
+                av1_speed_ui(ui, id, &mut v.svt_preset);
             }
             ui.end_row();
             crate::ui::common::row_label_tip(ui, "10-bit", option_tips::TEN_BIT);
@@ -125,9 +167,15 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
                         num_u32(ui, &mut v.film_grain, 0..=FILM_GRAIN_MAX, "");
-                        ui.add_enabled(v.film_grain > 0, egui::Checkbox::new(&mut v.film_grain_denoise, "Denoise first"));
+                        let r = ui.add_enabled(v.film_grain > 0, egui::Checkbox::new(&mut v.film_grain_denoise, "Denoise first"));
+                        let r = if v.film_grain == 0 {
+                            r.on_disabled_hover_text(option_tips::FILM_GRAIN_DENOISE_OFF)
+                        } else {
+                            r.on_hover_text(option_tips::FILM_GRAIN_DENOISE)
+                        };
+                        named(r, egui::WidgetType::Checkbox, "Denoise first");
                     });
-                    hint(ui, "0 = off. 4–10 re-creates the grain of noisy camera footage instead of spending bits on it.");
+                    hint(ui, "0 = off. Playback adds synthetic grain; the source is left as-is unless you tick Denoise first.");
                 });
                 ui.end_row();
             }
@@ -185,4 +233,42 @@ pub fn check_available(enc: Option<&Encoders>, v: Option<&VideoEncode>, a: Optio
         return Err(codecs::missing_note("ac3"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod speed_menu_tests {
+    use super::*;
+    use crate::ui::common::{apply_bitrate_menu, bitrate_menu_selection, show_custom_bitrate_field, BitrateMenu};
+
+    #[test]
+    fn listed_speeds_show_as_themselves_until_custom_is_chosen() {
+        assert_eq!(bitrate_menu_selection(5, &SVT_SPEEDS, false), BitrateMenu::Listed(5));
+        assert_eq!(bitrate_menu_selection(2, &SVT_SPEEDS, false), BitrateMenu::Listed(2));
+        assert_eq!(bitrate_menu_selection(13, &SVT_SPEEDS, false), BitrateMenu::Listed(13));
+        assert!(!show_custom_bitrate_field(5, &SVT_SPEEDS, false));
+    }
+
+    #[test]
+    fn value_not_in_the_list_is_custom_and_shows_the_box() {
+        assert_eq!(bitrate_menu_selection(0, &SVT_SPEEDS, false), BitrateMenu::Custom);
+        assert_eq!(bitrate_menu_selection(3, &SVT_SPEEDS, false), BitrateMenu::Custom);
+        assert_eq!(bitrate_menu_selection(7, &SVT_SPEEDS, false), BitrateMenu::Custom);
+        assert_eq!(bitrate_menu_selection(11, &SVT_SPEEDS, false), BitrateMenu::Custom);
+        assert!(show_custom_bitrate_field(3, &SVT_SPEEDS, false));
+        assert_eq!(codecs::svt_speed_label(3), "Custom 3");
+    }
+
+    #[test]
+    fn choosing_custom_keeps_the_stored_speed_and_opens_the_box() {
+        assert_eq!(apply_bitrate_menu(5, None), (5, true));
+        assert_eq!(bitrate_menu_selection(5, &SVT_SPEEDS, true), BitrateMenu::Custom);
+        assert!(show_custom_bitrate_field(5, &SVT_SPEEDS, true));
+    }
+
+    #[test]
+    fn choosing_a_listed_speed_stores_it_and_closes_custom() {
+        assert_eq!(apply_bitrate_menu(3, Some(8)), (8, false));
+        assert_eq!(apply_bitrate_menu(5, Some(2)), (2, false));
+        assert!(!show_custom_bitrate_field(8, &SVT_SPEEDS, false));
+    }
 }

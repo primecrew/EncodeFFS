@@ -12,7 +12,15 @@ pub const AUDIO_CODEC: &str = "How the sound is compressed: AAC is the default a
 
 pub const TEN_BIT: &str = "Records colour with 10 bits per channel instead of 8, which can smooth gradients and reduce banding. It is on by default for HEVC and AV1 (H.264 stays 8-bit); turn it off if you need to play the file on older TVs or phones.";
 
-pub const FILM_GRAIN: &str = "Re-creates film grain in AV1 instead of spending bits copying noisy camera footage. 0 is off (the default); try 4–10 for grainy camera material.";
+pub const SPEED: &str = "Slower takes longer and makes a smaller file at the same CRF. Try a short clip at two speeds and compare.";
+
+pub const FILM_GRAIN: &str = "How much synthetic grain AV1 should add when the file is played. 0 is off; try 4–10 for grainy camera material.";
+
+/// Hover on the “Denoise first” checkbox (disabled when film grain is 0).
+pub const FILM_GRAIN_DENOISE: &str = "Cleans the source before encoding so the file stays smaller; grain at playback is fully synthetic. Leave this off to keep the real noise and still signal grain on top.";
+
+/// Disabled “Denoise first” when film grain is off.
+pub const FILM_GRAIN_DENOISE_OFF: &str = "Turn film grain on first. Denoise only applies when grain is being signaled.";
 
 pub const COLOUR_RANGE: &str = "Converts full-range (PC) video to TV (limited) range and tags the file that way. Leave this off (the default) if the source is already TV range, or blacks can look grey.";
 
@@ -55,6 +63,7 @@ pub const LISTED_ROWS: &[(&str, &str)] = &[
     ("Video codec", VIDEO_CODEC),
     ("Audio codec", AUDIO_CODEC),
     ("10-bit", TEN_BIT),
+    ("Speed", SPEED),
     ("Film grain", FILM_GRAIN),
     ("Colour range", COLOUR_RANGE),
     ("Faststart", FASTSTART),
@@ -128,7 +137,13 @@ mod tests {
             assert!((1..=3).contains(&n), "{name}: expected one or two sentences, got {n}: {tip}");
         }
         // Variant tips used on the same label in other modes must also be real sentences.
-        for (name, tip) in [("Trim (frames)", TRIM_FRAMES), ("Chapters (batch)", CHAPTERS_BATCH), ("Chapters (join)", CHAPTERS_JOIN)] {
+        for (name, tip) in [
+            ("Trim (frames)", TRIM_FRAMES),
+            ("Chapters (batch)", CHAPTERS_BATCH),
+            ("Chapters (join)", CHAPTERS_JOIN),
+            ("Denoise first", FILM_GRAIN_DENOISE),
+            ("Denoise first (off)", FILM_GRAIN_DENOISE_OFF),
+        ] {
             assert!(tip.len() >= 40, "{name}: tip is too short");
             let n = sentences(tip);
             assert!((1..=3).contains(&n), "{name}: expected one or two sentences, got {n}: {tip}");
@@ -141,6 +156,7 @@ mod tests {
             "Video codec",
             "Audio codec",
             "10-bit",
+            "Speed",
             "Film grain",
             "Colour range",
             "Faststart",
@@ -193,7 +209,10 @@ mod tests {
             "option_tips::VIDEO_CODEC",
             "option_tips::AUDIO_CODEC",
             "option_tips::TEN_BIT",
+            "option_tips::SPEED",
             "option_tips::FILM_GRAIN",
+            "option_tips::FILM_GRAIN_DENOISE",
+            "option_tips::FILM_GRAIN_DENOISE_OFF",
             "option_tips::COLOUR_RANGE",
             "option_tips::FASTSTART",
             "option_tips::CONTAINER",
