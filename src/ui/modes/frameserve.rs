@@ -654,7 +654,7 @@ impl Mode for FrameserveMode {
 
         section(ui, &format!("Video ({})", st.video.codec.encoder()));
         egui::Grid::new("fs_v").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            crate::ui::codecs_ui::video_codec_ui_ex(ui, "fs", &mut st.video, cx.encoders.as_ref(), None, Some("Also sets the AviSynth script to 10-bit."));
+            crate::ui::codecs_ui::video_codec_ui_ex(ui, "fs", &mut st.video, cx.encoders.as_ref(), None, Some("Also sets the AviSynth script to 10-bit."), true);
             st.bits = conflicts::script_bit_depth(&st.video);
             ui.label("");
             show_conflicts(ui, st, &[

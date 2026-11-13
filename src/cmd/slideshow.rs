@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
+use super::codecs;
 use super::common::*;
 use super::{p, ArgVec, BuiltCommand};
 use crate::util::fmt_num;
@@ -190,7 +191,7 @@ pub struct SlideshowParams {
     pub small: SmallImage,
     pub fps: u32,
     pub video: VideoEncode,
-    pub audio_bitrate_k: u32,
+    pub audio_encode: AudioEncode,
     pub faststart: bool,
 }
 
@@ -460,15 +461,18 @@ pub fn build(pr: &SlideshowParams) -> Result<BuiltCommand, String> {
     let mut v = pr.video.clone();
     // slideshows are stills: don't also append the optional output_fps field
     v.output_fps.clear();
-    let mut venc = x264_args(&v, None, false);
-    // x264_args already sets pix_fmt; ensure no stray -vf
-    a.extend(venc.drain(..));
+    let mut warnings = codecs::check_video(&v, &pr.output)?;
+    warnings.extend(codecs::check_audio(&pr.audio_encode, &pr.output)?);
+    a.extend(codecs::video_args(&v, None, false, &pr.output));
     // force -t to the computed total so audio can't overrun
     a.push_all(["-t".to_string(), fmt_num(t.total_s)]);
 
     if let Some(ai) = audio_idx {
         a.push_all(["-map".to_string(), format!("{ai}:a:0?")]);
-        a.push_all(["-c:a".to_string(), "aac".into(), "-b:a".into(), format!("{}k", pr.audio_bitrate_k)]);
+        a.extend(codecs::audio_args(&pr.audio_encode));
+        if let Some(f) = pr.audio_encode.filter_chain() {
+            a.push_all(["-af", &f]);
+        }
         a.push("-shortest".into());
     } else {
         a.push_all(["-an"]);
@@ -478,7 +482,6 @@ pub fn build(pr: &SlideshowParams) -> Result<BuiltCommand, String> {
     }
     a.push(p(&pr.output));
 
-    let mut warnings = vec![];
     if pr.transition.needs_xfade() && !pr.has_xfade {
         warnings.push("This FFmpeg build has no xfade filter, so transitions fall back to hard cuts. Each image keeps its display time; transition time is not added. Install a full GPL build (Help › Check for FFmpeg updates…) for crossfades.".into());
     }
@@ -511,7 +514,7 @@ mod tests {
             small: SmallImage::BlackBorder,
             fps: 30,
             video: VideoEncode { crf: 18, preset: "medium".into(), ..Default::default() },
-            audio_bitrate_k: 192,
+            audio_encode: AudioEncode { bitrate_k: 192, ..Default::default() },
             faststart: true,
         }
     }
@@ -635,6 +638,18 @@ mod tests {
         assert_eq!(s.matches("-loop 1 -t 7").count(), 1, "{s}");
         assert!(s.contains("-t 17"), "forced output duration {s}");
     }
+
+    #[test]
+    fn default_h264_aac_command_is_unchanged() {
+        let mut pr = base(2);
+        pr.transition = Transition::None;
+        pr.audio = Some("/a/song.mp3".into());
+        let s = build(&pr).unwrap().args.join(" ");
+        assert!(s.contains("-c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p"), "{s}");
+        assert!(s.contains("-c:a aac -b:a 192k"), "{s}");
+        assert!(!s.contains("-af "), "{s}");
+    }
+
 
     #[test]
     fn with_audio_maps_aac() {

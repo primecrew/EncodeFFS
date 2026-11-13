@@ -155,7 +155,7 @@ Section "${APP_NAME} (required)" SecApp
   File "/oname=NOTES.md" "${SRC_DIR}\NOTES.md"
   ; tells the app it is installed: settings go to %APPDATA%, not next to the exe
   FileOpen $0 "$INSTDIR\${MARKER}" w
-  FileWrite $0 "Installed by setup. Settings and presets are kept in %APPDATA%\${DATA_DIR}.$\r$\n"
+  FileWrite $0 "Installed by setup. Settings and presets are kept in %APPDATA%\${DATA_PUBLISHER}\${DATA_DIR}.$\r$\n"
   FileClose $0
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
@@ -294,8 +294,12 @@ SectionEnd
 Section /o "un.Remove my settings and presets" UnSecSettings
   ; this user's settings, presets, logs and the FFmpeg this edition downloaded – never another edition's
   SetShellVarContext current
-  RMDir /r "$APPDATA\${DATA_DIR}"
-  RMDir /r "$LOCALAPPDATA\${DATA_DIR}"
+  RMDir /r "$APPDATA\${DATA_PUBLISHER}\${DATA_DIR}"
+  RMDir "$APPDATA\${DATA_PUBLISHER}" ; only if empty: other PrimeCrew apps keep the folder
+  RMDir /r "$LOCALAPPDATA\${DATA_PUBLISHER}\${DATA_DIR}"
+  RMDir "$LOCALAPPDATA\${DATA_PUBLISHER}"
+  RMDir /r "$APPDATA\${LEGACY_DATA_DIR}"
+  RMDir /r "$LOCALAPPDATA\${LEGACY_DATA_DIR}"
 SectionEnd
 
 Function un.onInit

@@ -57,7 +57,7 @@ fn encode_with_and_without_xfade() {
             small: SmallImage::BlackBorder,
             fps: 30,
             video: VideoEncode { crf: 28, preset: "ultrafast".into(), ..Default::default() },
-            audio_bitrate_k: 128,
+            audio_encode: ffenc::cmd::common::AudioEncode { bitrate_k: 128, ..Default::default() },
             faststart: true,
         };
         let cmd = build(&pr).unwrap();
@@ -92,7 +92,7 @@ fn encode_with_and_without_xfade() {
             small: SmallImage::BlackBorder,
             fps: 30,
             video: VideoEncode { crf: 28, preset: "ultrafast".into(), ..Default::default() },
-            audio_bitrate_k: 128,
+            audio_encode: ffenc::cmd::common::AudioEncode { bitrate_k: 128, ..Default::default() },
             faststart: true,
         };
         let t = timing(&pr).unwrap();

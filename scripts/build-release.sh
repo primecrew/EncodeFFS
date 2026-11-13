@@ -10,7 +10,9 @@ APP_NAME="Encode FFS"
 APP_ID="FFmpegEncoder"                        # Add/Remove Programs key; the experimental edition uses FFmpegEncoderExperimental
 APP_DIRNAME="FFmpeg Encoder"                 # install folder name
 FILE_STEM="FFmpegEncoder"                     # exe / zip / setup names
-DATA_DIR="FFmpegEncoder"                      # %APPDATA% / %LOCALAPPDATA% folder (src/lib.rs DATA_DIR_NAME)
+DATA_PUBLISHER="PrimeCrew Software"
+DATA_DIR="Encode FFS"                       # leaf under %APPDATA%/%LOCALAPPDATA%\$DATA_PUBLISHER (src/lib.rs DATA_DIR_NAME)
+LEGACY_DATA_DIR="FFmpegEncoder"              # pre-0.6.0-rc.3 data folder
 PUBLISHER="PrimeCrew Software"
 PREV_APP_NAME="FFmpeg Encoder"          # original Start Menu / desktop shortcut; removed on upgrade
 PREV_BRAND_APP_NAME="FFS Just Encode"   # 0.6.0-rc.3 visible name; brand-folder and root shortcuts removed on upgrade
@@ -24,6 +26,12 @@ EXE="$FILE_STEM.exe"
 
 echo "== $APP_NAME $VERSION ($VERSION4)"
 grep -q "pub const DATA_DIR_NAME: &str = \"$DATA_DIR\"" src/lib.rs || { echo "DATA_DIR differs from src/lib.rs" >&2; exit 1; }
+grep -q "pub const LEGACY_DATA_DIR_NAME: &str = \"$LEGACY_DATA_DIR\"" src/lib.rs || { echo "LEGACY_DATA_DIR differs from src/lib.rs" >&2; exit 1; }
+grep -q "pub const PUBLISHER: &str = \"$DATA_PUBLISHER\"" src/lib.rs || { echo "DATA_PUBLISHER differs from src/lib.rs" >&2; exit 1; }
+# Don't embed this machine's paths in panic messages (release only)
+src_root="$(pwd)"
+cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=${src_root}=. --remap-path-prefix=${cargo_home}=cargo"
 cargo build --release --target "$TARGET"
 BIN="target/$TARGET/release/$EXE"
 [ -f "$BIN" ] || { echo "missing $BIN" >&2; exit 1; }
@@ -48,7 +56,7 @@ command -v makensis >/dev/null || { echo "makensis not found (apt install nsis)"
 SETUP="$OUT_DIR/$FILE_STEM-$VERSION-setup.exe"
 makensis -V2 -INPUTCHARSET UTF8 \
   -DAPP_NAME="$APP_NAME" -DAPP_ID="$APP_ID" -DAPP_DIRNAME="$APP_DIRNAME" -DAPP_EXE="$EXE" \
-  -DAPP_VERSION="$VERSION" -DVERSION4="$VERSION4" -DPUBLISHER="$PUBLISHER" -DPREV_APP_NAME="$PREV_APP_NAME" -DPREV_BRAND_APP_NAME="$PREV_BRAND_APP_NAME" -DDATA_DIR="$DATA_DIR" \
+  -DAPP_VERSION="$VERSION" -DVERSION4="$VERSION4" -DPUBLISHER="$PUBLISHER" -DPREV_APP_NAME="$PREV_APP_NAME" -DPREV_BRAND_APP_NAME="$PREV_BRAND_APP_NAME" -DDATA_PUBLISHER="$DATA_PUBLISHER" -DDATA_DIR="$DATA_DIR" -DLEGACY_DATA_DIR="$LEGACY_DATA_DIR" \
   -DMARKER="$FILE_STEM.installed" -DICON="$PWD/assets/app.ico" -DEXE_PATH="$PWD/$BIN" -DSRC_DIR="$PWD" \
   -DOUTFILE="$PWD/$SETUP" installer/installer.nsi
 

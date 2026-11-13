@@ -7,7 +7,7 @@ use ffenc::cmd::common::{AudioEncode, VideoEncode};
 use ffenc::ffmpeg::probe::MediaInfo;
 
 use super::common::{
-    apply_bitrate_menu, audio_encode_ui, audio_filters_ui, bitrate_menu_selection, bitrate_ui_ex, hint, named, num_u32,
+    apply_bitrate_menu, audio_filters_ui, bitrate_menu_selection, bitrate_ui, bitrate_ui_ex, hint, named, num_u32,
     show_custom_bitrate_field, video_encode_ui, warn, BitrateMenu,
 };
 use super::option_tips;
@@ -75,11 +75,11 @@ fn av1_speed_ui(ui: &mut Ui, id: &str, preset: &mut u32) {
 
 /// Video rows inside a 2-column Grid. `enc` = encoders of the current FFmpeg (None = unknown yet).
 pub fn video_codec_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&Encoders>, src_pix_fmt: Option<&str>) {
-    video_codec_ui_ex(ui, id, v, enc, src_pix_fmt, None);
+    video_codec_ui_ex(ui, id, v, enc, src_pix_fmt, None, true);
 }
 
 /// Like [`video_codec_ui`], with optional extra hover/hint on the 10-bit checkbox (Frameserver).
-pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&Encoders>, src_pix_fmt: Option<&str>, ten_bit_hover: Option<&str>) {
+pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&Encoders>, src_pix_fmt: Option<&str>, ten_bit_hover: Option<&str>, show_output_fps: bool) {
     crate::ui::common::row_label_tip(ui, "Video codec", option_tips::VIDEO_CODEC);
     ui.vertical(|ui| {
         let before = v.codec;
@@ -112,7 +112,7 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option
     });
     ui.end_row();
     match v.codec {
-        VideoCodec::H264 => video_encode_ui(ui, id, v, true),
+        VideoCodec::H264 => video_encode_ui(ui, id, v, true, show_output_fps),
         VideoCodec::Hevc | VideoCodec::Av1 => {
             crate::ui::common::row_label_tip(ui, "CRF", option_tips::CRF);
             ui.vertical(|ui| {
@@ -181,14 +181,19 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option
             }
         }
     }
-    // H.264 shows it in video_encode_ui
-    if v.codec != VideoCodec::H264 {
+    // H.264 shows it in video_encode_ui when requested
+    if v.codec != VideoCodec::H264 && show_output_fps {
         super::common::output_fps_ui(ui, &mut v.output_fps);
     }
 }
 
 /// Audio rows inside a 2-column Grid. `allow_copy` = false where audio is mixed (join).
 pub fn audio_codec_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode, enc: Option<&Encoders>, allow_copy: bool) {
+    audio_codec_ui_ex(ui, id, a, enc, allow_copy, true);
+}
+
+/// Like [`audio_codec_ui`]; `show_filters` is false in Settings (gain / compressor have their own default rows).
+pub fn audio_codec_ui_ex(ui: &mut Ui, id: &str, a: &mut AudioEncode, enc: Option<&Encoders>, allow_copy: bool, show_filters: bool) {
     crate::ui::common::row_label_tip(ui, "Audio codec", option_tips::AUDIO_CODEC);
     ui.vertical(|ui| {
         egui::ComboBox::from_id_salt(format!("{id}_acodec")).width(300.0).selected_text(a.codec.label()).show_ui(ui, |ui| {
@@ -214,10 +219,17 @@ pub fn audio_codec_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode, enc: Option<&E
     });
     ui.end_row();
     match a.codec {
-        AudioCodec::Aac => audio_encode_ui(ui, id, a),
+        AudioCodec::Aac => {
+            bitrate_ui(ui, "AAC bitrate", &mut a.bitrate_k);
+            if show_filters {
+                audio_filters_ui(ui, id, a);
+            }
+        }
         AudioCodec::Ac3 => {
             bitrate_ui_ex(ui, "AC3 bitrate", &mut a.ac3_bitrate_k, &AC3_BITRATES, 96..=640);
-            audio_filters_ui(ui, id, a);
+            if show_filters {
+                audio_filters_ui(ui, id, a);
+            }
         }
         AudioCodec::Copy => {}
     }

@@ -317,7 +317,15 @@ pub fn staging_roots_for(current: &Path, default: &Path) -> Vec<PathBuf> {
 
 /// [`staging_roots_for`] for this process's current and default managed locations.
 pub fn staging_roots() -> Vec<PathBuf> {
-    staging_roots_for(&crate::ffmpeg::managed::current_root(), &crate::ffmpeg::managed::default_root())
+    let current = crate::ffmpeg::managed::current_root();
+    let default = crate::ffmpeg::managed::default_root();
+    let mut v = staging_roots_for(&current, &default);
+    // leftover staging next to a pre-rebrand app-managed copy (the folder itself is never deleted)
+    let legacy = crate::ffmpeg::locate::legacy_local_app_dir().join("ffmpeg");
+    if !v.iter().any(|p| crate::ffmpeg::locate::is_managed_dir(p, &legacy)) {
+        v.push(legacy);
+    }
+    v
 }
 
 /// Result of one attempted cleanup.

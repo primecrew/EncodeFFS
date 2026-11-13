@@ -88,14 +88,16 @@ pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
     ("builtin-frameserve", "frameserve", "Frameserver (AviSynth script)", "Encode straight from your editor through DebugMode FrameServer: pick the signpost .avi, the app writes the AviSynth script (ConvertToYUV420 by default) and encodes it with H.264 + AAC by default (or HEVC / AV1 and AC3 / copy)."),
     ("builtin-custom", "custom", "Custom pipeline", "Build your own: video / audio / subtitle actions, trim, chapters, container, extra ffmpeg args."),
     ("builtin-addchapters", "custom", "Add chapters (no re-encode)", "Copy every stream and add chapters (every 5 min, your own list, or imported) – no quality loss."),
-    ("builtin-hevc-game", "reencode", "Archive – HEVC 10-bit (game footage)", "Experimental: libx265 CRF 20, preset slow, 10-bit, AAC. Smaller files than H.264; not every device/browser plays HEVC."),
-    ("builtin-hevc-camera", "reencode", "Archive – HEVC 10-bit (camera footage)", "Experimental: libx265 CRF 18, preset slow, 10-bit, AAC. Smaller files than H.264; not every device/browser plays HEVC."),
-    ("builtin-av1-game", "reencode", "Archive – AV1 10-bit (game footage)", "Experimental: SVT-AV1 CRF 28, preset 5, 10-bit, AAC. Very small files; needs a recent player/GPU to decode."),
-    ("builtin-av1-camera", "reencode", "Archive – AV1 10-bit (camera footage)", "Experimental: SVT-AV1 CRF 26, preset 5, 10-bit, film grain off, AAC. Very small files; needs a recent player/GPU to decode."),
+    ("builtin-hevc-game", "reencode", "Archive – HEVC 10-bit (game footage)", "libx265 CRF 20, preset slow, 10-bit, AAC. Smaller files than H.264; not every device/browser plays HEVC."),
+    ("builtin-hevc-camera", "reencode", "Archive – HEVC 10-bit (camera footage)", "libx265 CRF 18, preset slow, 10-bit, AAC. Smaller files than H.264; not every device/browser plays HEVC."),
+    ("builtin-av1-game", "reencode", "Archive – AV1 10-bit (game footage)", "SVT-AV1 CRF 28, preset 5, 10-bit, AAC. Very small files; needs a recent player/GPU to decode."),
+    ("builtin-av1-camera", "reencode", "Archive – AV1 10-bit (camera footage)", "SVT-AV1 CRF 26, preset 5, 10-bit, film grain off, AAC. Very small files; needs a recent player/GPU to decode."),
 ];
 
-/// Sidebar folder the experimental-codec built-ins start in (below the others).
-pub const EXPERIMENTAL_GROUP: &str = "Experimental codecs";
+/// Sidebar folder the archive-codec built-ins start in (below the others).
+pub const EXPERIMENTAL_GROUP: &str = "Archive codecs";
+/// Folder name used up to 0.6.0-rc.3; rewritten to [`EXPERIMENTAL_GROUP`] on load.
+pub const EXPERIMENTAL_GROUP_OLD: &str = "Experimental codecs";
 
 /// Factory option values (null = the kind's defaults).
 pub fn factory_values(id: &str) -> Value {
@@ -126,7 +128,7 @@ pub fn factory(id: &str) -> Option<Preset> {
         builtin: Some(id.into()),
         values: factory_values(id),
         pinned: false,
-        category: if desc.starts_with("Experimental:") { EXPERIMENTAL_GROUP.into() } else { String::new() },
+        category: if id.starts_with("builtin-hevc-") || id.starts_with("builtin-av1-") { EXPERIMENTAL_GROUP.into() } else { String::new() },
         hidden: false,
     })
 }
@@ -284,6 +286,25 @@ pub fn enforce_builtins(list: &mut Vec<Preset>, known: &[String], differs: &dyn 
 
 /// Load presets; a missing file gives the factory list. A corrupt file is
 /// renamed to `*.bad` (so it is never silently overwritten) and the factory list is used.
+
+/// Rename the old “Experimental codecs” folder on load (built-ins and user presets).
+pub fn migrate_experimental_group(list: &mut [Preset]) -> Vec<String> {
+    let mut n = 0usize;
+    for p in list.iter_mut() {
+        if p.category == EXPERIMENTAL_GROUP_OLD {
+            p.category = EXPERIMENTAL_GROUP.to_string();
+            n += 1;
+        }
+    }
+    if n == 0 {
+        vec![]
+    } else {
+        vec![format!(
+            "Renamed the “{EXPERIMENTAL_GROUP_OLD}” folder to “{EXPERIMENTAL_GROUP}” ({n} preset(s))."
+        )]
+    }
+}
+
 pub fn load_from(path: &Path) -> (Vec<Preset>, Option<String>) {
     let (l, notes) = load_from_with(path, &differs_raw);
     (l, notes.into_iter().find(|n| n.contains("unreadable")))
@@ -295,7 +316,8 @@ pub fn load_from_with(path: &Path, differs: &dyn Fn(&Preset) -> bool) -> (Vec<Pr
         Err(_) => (factory_all(), vec![]),
         Ok(t) => match parse_file(&t) {
             Ok((mut l, known)) => {
-                let notes = enforce_builtins(&mut l, &known.unwrap_or_default(), differs);
+                let mut notes = migrate_experimental_group(&mut l);
+                notes.extend(enforce_builtins(&mut l, &known.unwrap_or_default(), differs));
                 (l, notes)
             }
             Err(e) => {
@@ -421,6 +443,28 @@ mod tests {
         assert_eq!(factory("builtin-addchapters").unwrap().values["container"], "same");
         let ids: std::collections::HashSet<_> = f.iter().map(|p| p.id.clone()).collect();
         assert_eq!(ids.len(), f.len());
+    }
+
+    #[test]
+    fn migrates_the_old_experimental_folder_name() {
+        let mut list = factory_all();
+        list.push(Preset {
+            id: "puser".into(),
+            name: "My HEVC".into(),
+            kind: "reencode".into(),
+            category: EXPERIMENTAL_GROUP_OLD.into(),
+            ..list[0].clone()
+        });
+        // pretend the built-ins still have the old folder
+        for p in &mut list {
+            if p.category == EXPERIMENTAL_GROUP {
+                p.category = EXPERIMENTAL_GROUP_OLD.into();
+            }
+        }
+        let notes = migrate_experimental_group(&mut list);
+        assert!(notes.iter().any(|n| n.contains(EXPERIMENTAL_GROUP)));
+        assert!(list.iter().all(|p| p.category != EXPERIMENTAL_GROUP_OLD));
+        assert_eq!(list.iter().filter(|p| p.category == EXPERIMENTAL_GROUP).count(), 5);
     }
 
     #[test]

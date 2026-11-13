@@ -5,9 +5,11 @@ use std::path::PathBuf;
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
-use super::{restore, Ctx, Mode, Plan};
+use super::{default_audio, restore, Ctx, Mode, Plan};
 use crate::ui::common::*;
-use ffenc::cmd::still::{self, StillParams};
+use ffenc::cmd::codecs::VideoCodec;
+use ffenc::cmd::common::{AudioEncode, VideoEncode};
+use ffenc::cmd::still::{self, still_default_video, StillParams};
 use ffenc::ffmpeg::runner::JobSpec;
 use ffenc::settings::Settings;
 use ffenc::util::{fmt_hms, stem, AUDIO_EXTS, IMAGE_EXTS};
@@ -24,7 +26,8 @@ struct State {
     suffix: String,
     use_audio_duration: bool,
     custom_duration: f64,
-    bitrate_k: u32,
+    video: VideoEncode,
+    audio_encode: AudioEncode,
     faststart: bool,
     range_convert: bool,
 }
@@ -40,7 +43,8 @@ impl State {
             suffix: sfx(),
             use_audio_duration: true,
             custom_duration: 60.0,
-            bitrate_k: s.audio_bitrate_k,
+            video: still_default_video(),
+            audio_encode: AudioEncode { bitrate_k: s.audio_bitrate_k, ..default_audio(s) },
             faststart: false,
             range_convert: false,
         }
@@ -75,7 +79,7 @@ impl Mode for StillMode {
         "MP4 from still image"
     }
     fn description(&self) -> &'static str {
-        "Loop a PNG/JPG over an audio file (libx264 stillimage + AAC)."
+        "Loop a PNG/JPG over an audio file (H.264 stillimage + AAC by default)."
     }
     fn run_fields(&self) -> &'static [&'static str] {
         &["image", "audio", "out_name", "last_auto"]
@@ -106,13 +110,18 @@ impl Mode for StillMode {
                 let p = PathBuf::from(st.image.trim());
                 set_image(st, &p);
             }
-            bitrate_ui(ui, "AAC bitrate", &mut st.bitrate_k);
+            let before = st.video.codec;
+            crate::ui::codecs_ui::video_codec_ui(ui, "m2", &mut st.video, cx.encoders.as_ref(), None);
+            if before != st.video.codec && st.video.codec == VideoCodec::H264 && st.video.tune.is_none() {
+                st.video.tune = Some("stillimage".into());
+            }
+            crate::ui::codecs_ui::audio_codec_ui(ui, "m2", &mut st.audio_encode, cx.encoders.as_ref(), false);
             faststart_ui(ui, &mut st.faststart, true);
             range_ui(ui, &mut st.range_convert, None);
         });
     }
 
-    fn build(&mut self, _cx: &Ctx) -> Result<Plan, String> {
+    fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
         let st = &self.st;
         let image = check_input(&st.image, IMAGE_EXTS, "image file")?;
         let audio = check_input(&st.audio, AUDIO_EXTS, "audio file")?;
@@ -123,11 +132,13 @@ impl Mode for StillMode {
             image,
             audio,
             output: output.clone(),
-            bitrate_k: st.bitrate_k,
+            video: st.video.clone(),
+            audio_encode: st.audio_encode.clone(),
             duration_s: if st.use_audio_duration { None } else { Some(st.custom_duration) },
             faststart: st.faststart,
             range_convert: st.range_convert,
         };
+        crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&st.video), Some(&st.audio_encode))?;
         let cmd = still::build(&pr)?;
         let dur = pr.duration_s.unwrap_or(audio_dur);
         Ok(Plan {
@@ -150,6 +161,42 @@ impl Mode for StillMode {
     }
     fn load(&mut self, v: &serde_json::Value, s: &Settings) {
         self.st = restore(v, State::from_settings(s));
+        if v.get("audio_encode").is_none() {
+            if let Some(k) = v.get("bitrate_k").and_then(|x| x.as_u64()) {
+                self.st.audio_encode.bitrate_k = k as u32;
+            }
+        }
+        if v.get("video").is_none() {
+            self.st.video = still_default_video();
+        }
         self.probe = ProbeSlot::default();
+    }
+
+    fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {
+        let out = std::path::Path::new(&self.st.out_dir).join(&self.st.out_name);
+        ffenc::cmd::conflicts::detect(&super::media_choices(
+            &self.st.video,
+            &self.st.audio_encode,
+            "mp4",
+            &self.st.out_name,
+            &self.st.last_auto,
+            out,
+            self.st.range_convert,
+            None,
+        ))
+    }
+
+    fn apply_conflict_fix(&mut self, kind: ffenc::cmd::conflicts::ConflictKind) {
+        let out = std::path::Path::new(&self.st.out_dir).join(&self.st.out_name);
+        super::apply_media_fix(
+            kind,
+            &mut self.st.video,
+            &mut self.st.audio_encode,
+            &mut String::from("mp4"),
+            &mut self.st.out_name,
+            &mut self.st.last_auto,
+            out,
+            Some(&mut self.st.range_convert),
+        );
     }
 }

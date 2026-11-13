@@ -9,8 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{default_audio, default_video, restore, Ctx, Mode, Plan};
 use crate::ui::common::*;
-use crate::ui::option_tips;
-use ffenc::cmd::common::{VideoEncode, PRESETS};
+use ffenc::cmd::common::{AudioEncode, VideoEncode};
 use ffenc::cmd::slideshow::{
     self, DurationMode, ImageInput, OutputSize, SmallImage, SlideshowParams, Transition, IMAGE_EXTS,
 };
@@ -38,15 +37,17 @@ struct State {
     small: SmallImage,
     fps: u32,
     video: VideoEncode,
-    audio_bitrate_k: u32,
+    audio_encode: AudioEncode,
     faststart: bool,
 }
 
 impl State {
     fn from_settings(s: &Settings) -> Self {
         let mut video = default_video(s);
-        video.crf = 18;
-        video.preset = "medium".into();
+        if video.codec == ffenc::cmd::codecs::VideoCodec::H264 {
+            video.crf = 18;
+            video.preset = "medium".into();
+        }
         video.output_fps.clear();
         State {
             images: vec![],
@@ -64,7 +65,7 @@ impl State {
             small: SmallImage::BlackBorder,
             fps: 30,
             video,
-            audio_bitrate_k: default_audio(s).bitrate_k,
+            audio_encode: default_audio(s),
             faststart: true,
         }
     }
@@ -653,8 +654,7 @@ impl Mode for SlideshowMode {
                 self.update_name();
             }
 
-            section(ui, "Duration");
-            ui.end_row();
+            grid_section(ui, "Duration");
             row_label_tip(ui, "Mode", "How long the slideshow lasts. Per image (default): each image is shown un-faded for a set time. Fixed total: you set the whole length, including transitions. Match audio: the length follows the audio file.");
             ui.vertical(|ui| {
                 for m in DurationMode::ALL {
@@ -709,8 +709,7 @@ impl Mode for SlideshowMode {
                 }
             }
 
-            section(ui, "Transition");
-            ui.end_row();
+            grid_section(ui, "Transition");
             let xfade_ok = cx.has_xfade.unwrap_or(false);
             if cx.has_xfade == Some(false) {
                 warn(ui, "This FFmpeg build has no xfade filter, so only hard cuts are available (each image keeps its display time; transition time is not added). Help › Check for FFmpeg updates… can download a full GPL build that includes crossfades.");
@@ -736,8 +735,7 @@ impl Mode for SlideshowMode {
             });
             ui.end_row();
 
-            section(ui, "Size & encode");
-            ui.end_row();
+            grid_section(ui, "Size & encode");
             row_label_tip(ui, "Output size", "Canvas size. Images keep their aspect ratio (letterbox/pillarbox with black bars). Auto uses the largest image, rounded to even dimensions.");
             egui::ComboBox::from_id_salt("ss_size").width(260.0).selected_text(self.st.size.label()).show_ui(ui, |ui| {
                 for sz in OutputSize::ALL {
@@ -758,20 +756,8 @@ impl Mode for SlideshowMode {
                 hint(ui, "Slideshow default is 30 (stills).");
             });
             ui.end_row();
-            row_label_tip(ui, "CRF", option_tips::CRF);
-            ui.horizontal(|ui| {
-                num_u32(ui, &mut self.st.video.crf, 0..=51, "");
-                hint(ui, "18 is the slideshow default (visually lossless for stills).");
-            });
-            ui.end_row();
-            row_label(ui, "Preset");
-            egui::ComboBox::from_id_salt("ss_preset").selected_text(self.st.video.preset.clone()).show_ui(ui, |ui| {
-                for p in PRESETS {
-                    ui.selectable_value(&mut self.st.video.preset, (*p).to_string(), (*p).to_string());
-                }
-            });
-            ui.end_row();
-            bitrate_ui(ui, "AAC bitrate", &mut self.st.audio_bitrate_k);
+            crate::ui::codecs_ui::video_codec_ui_ex(ui, "ss", &mut self.st.video, cx.encoders.as_ref(), None, None, false);
+            crate::ui::codecs_ui::audio_codec_ui(ui, "ss", &mut self.st.audio_encode, cx.encoders.as_ref(), false);
             faststart_ui(ui, &mut self.st.faststart, true);
         });
     }
@@ -782,6 +768,7 @@ impl Mode for SlideshowMode {
         }
         let images = self.image_inputs()?;
         let output = check_output(&self.st.out_dir, &self.st.out_name)?;
+        crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&self.st.video), Some(&self.st.audio_encode))?;
         let (audio, audio_duration_s) = if self.st.audio.trim().is_empty() {
             (None, None)
         } else {
@@ -809,7 +796,7 @@ impl Mode for SlideshowMode {
             small: self.st.small,
             fps: self.st.fps,
             video: self.st.video.clone(),
-            audio_bitrate_k: self.st.audio_bitrate_k,
+            audio_encode: self.st.audio_encode.clone(),
             faststart: self.st.faststart,
         };
         let t = slideshow::timing(&pr)?;
@@ -830,8 +817,41 @@ impl Mode for SlideshowMode {
     fn save(&self) -> serde_json::Value {
         serde_json::to_value(&self.st).unwrap_or_default()
     }
+    fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {
+        let out = std::path::Path::new(&self.st.out_dir).join(&self.st.out_name);
+        ffenc::cmd::conflicts::detect(&super::media_choices(
+            &self.st.video,
+            &self.st.audio_encode,
+            "mp4",
+            &self.st.out_name,
+            &self.st.last_auto,
+            out,
+            false,
+            None,
+        ))
+    }
+
+    fn apply_conflict_fix(&mut self, kind: ffenc::cmd::conflicts::ConflictKind) {
+        let out = std::path::Path::new(&self.st.out_dir).join(&self.st.out_name);
+        super::apply_media_fix(
+            kind,
+            &mut self.st.video,
+            &mut self.st.audio_encode,
+            &mut String::from("mp4"),
+            &mut self.st.out_name,
+            &mut self.st.last_auto,
+            out,
+            None,
+        );
+    }
+
     fn load(&mut self, v: &serde_json::Value, s: &Settings) {
         self.st = restore(v, State::from_settings(s));
+        if v.get("audio_encode").is_none() {
+            if let Some(k) = v.get("audio_bitrate_k").and_then(|x| x.as_u64()) {
+                self.st.audio_encode.bitrate_k = k as u32;
+            }
+        }
         self.dims.clear();
         self.thumbs.clear();
         self.audio_probe = ProbeSlot::default();
@@ -858,7 +878,7 @@ impl SlideshowMode {
             small: self.st.small,
             fps: self.st.fps,
             video: self.st.video.clone(),
-            audio_bitrate_k: self.st.audio_bitrate_k,
+            audio_encode: self.st.audio_encode.clone(),
             faststart: self.st.faststart,
         }
     }

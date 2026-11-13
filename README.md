@@ -1,14 +1,14 @@
 # Encode FFS
 
-**Encode FFS** is a Windows desktop front end for FFmpeg, from **PrimeCrew Software**. Use it for everyday FFmpeg jobs: re-encode or batch-re-encode video, join/stitch clips, remux MKV to MP4, work with audio and subtitles, add chapters, make a video from a still image, run a custom pipeline, feed an AviSynth frameserver script, or **create a slideshow** from still images (H.264/AAC MP4 with optional audio and crossfades). Optional **HEVC / AV1** video and **AC3** audio sit on top of the usual H.264/AAC defaults. Pick a preset, choose files, preview the exact ffmpeg command, and run the job in a queue.
+**Encode FFS** is a Windows desktop front end for FFmpeg, from **PrimeCrew Software**. Use it for everyday FFmpeg jobs: re-encode or batch-re-encode video, join/stitch clips, remux MKV to MP4, work with audio and subtitles, add chapters, make a video from a still image, run a custom pipeline, feed an AviSynth frameserver script, or **create a slideshow** from still images (H.264/AAC MP4 by default, with optional audio and crossfades). Optional **HEVC / AV1** video and **AC3** audio sit on top of the usual H.264/AAC defaults. Pick a preset, choose files, preview the exact ffmpeg command, and run the job in a queue.
 
 This is the **stable** edition (`FFmpegEncoder.exe`). Create Slideshow is included as a built-in preset. Optional HEVC, AV1 and AC3 from the former Codecs edition are included too; H.264 + AAC remains the default. The old standalone Slideshow and Codecs editions are not separate apps any more.
 
 **Requirements:** Windows 10 or 11 (64-bit). You need `ffmpeg.exe` and `ffprobe.exe` — use a copy you already have (for example `C:\ffmpeg\bin`), or let the app download a build for you. No extra runtime.
 
-**Install:** run the installer (`FFmpegEncoder-<version>-setup.exe`) or unzip the portable package and run `FFmpegEncoder.exe` from any folder (for example `C:\Apps\FFmpegEncoder\`). Portable settings are stored next to the exe when that folder is writable; otherwise they go in `%APPDATA%\FFmpegEncoder`.
+**Install:** run the installer (`FFmpegEncoder-<version>-setup.exe`) or unzip the portable package and run `FFmpegEncoder.exe` from any folder (for example `C:\Apps\FFmpegEncoder\`). Portable settings are stored next to the exe when that folder is writable; otherwise they go in `%APPDATA%\PrimeCrew Software\Encode FFS`.
 
-**Other branches:** the old standalone **Slideshow** and **Codecs** editions are archived (`archive/slideshow`, and `archive/codecs` once tagged). Use this stable build instead. The retired **Experimental UI** branch (`ui-experimental`) is not developed further.
+**Other branches:** the old standalone **Slideshow** and **Codecs** editions are archived (`archive/slideshow`, and `archive/codecs`). Use this stable build instead. The retired **Experimental UI** branch (`ui-experimental`) is not developed further.
 
 **Accessibility:** System, Dark, Light, and High contrast themes; text size 75–300%; a visible keyboard focus ring; and screen-reader names through UI Automation (AccessKit). High contrast uses a black background, white text, and a yellow accent.
 
@@ -30,7 +30,7 @@ Version history is in [CHANGELOG.md](CHANGELOG.md). Developer-facing notes are i
    and deletes the partial output.
 
 FFmpeg lookup order: Settings folder (empty on first run, then whatever you picked) → `ffmpeg\` or `ffmpeg\bin\` next to
-the exe → app-managed copy (`%LOCALAPPDATA%\FFmpegEncoder\ffmpeg\bin` by default, or this edition's folder; see *App-managed FFmpeg location*) → `PATH`.
+the exe → app-managed copy (`%LOCALAPPDATA%\PrimeCrew Software\Encode FFS\ffmpeg\bin` by default, or this edition's folder; see *App-managed FFmpeg location*) → `PATH`.
 On start the app checks the build has `libx264` and `aac`.
 
 ## Appearance, text size & keyboard
@@ -209,7 +209,7 @@ Re-encode.
   full command; the copied PowerShell command writes the script first.
 
 ## Main window (HandBrake-style)
-- **Left – presets:** **Default Presets** (the built-ins, including the **Experimental codecs** folder) and **User Presets**
+- **Left – presets:** **Default Presets** (the built-ins, including the **Archive codecs** folder) and **User Presets**
   (your saved, duplicated and imported presets; empty until you add one). One click selects; **double-click** (or **▶ Run**,
   F5) loads the current input into that preset and opens the command preview, from where it goes to the queue.
   `*` = unsaved changes. Quick buttons **New… / Duplicate / Import… / Export**, a **search** box (name, type, folder,
@@ -228,7 +228,7 @@ Everything in the preset panel is a **preset**: a named, saved set of options fo
 
 - Ships with 19 **built-in** presets: the 9 script modes, **Create Slideshow**, **Audio & subtitles**,
   **Join / stitch files**, **Frameserver (AviSynth script)**, **Custom pipeline**, **Add chapters (no re-encode)**,
-  and four **Archive** HEVC/AV1 presets in the **Experimental codecs** folder.
+  and four **Archive** HEVC/AV1 presets in the **Archive codecs** folder.
 - **Built-in presets are read-only.** They show a padlock and “Built-in, read-only” (screen readers hear
   “built-in, read-only” in the preset list), and they always have the values that ship with the app, so an update
   refreshes them. You can still change the form to try something:
@@ -251,7 +251,7 @@ Everything in the preset panel is a **preset**: a named, saved set of options fo
 - **Favorites** (`"pinned": true`) and **folders** (`"category"`) are stored with the preset and survive export/import.
 - **Import / export** (panel buttons or Presets menu): JSON files with one or many presets. Imports get new ids and unique names;
   unknown types are skipped. Imported copies of built-ins become your own presets.
-- Stored in `FFmpegEncoder.presets.json` next to the settings file (or `%APPDATA%\FFmpegEncoder\presets.json`).
+- Stored in `FFmpegEncoder.presets.json` next to the settings file (or `%APPDATA%\PrimeCrew Software\Encode FFS\presets.json`).
   For built-ins only the order, pin, folder and hidden flag are stored (`"values": null`); their values come from the app.
 - Every run shows the exact ffmpeg command(s) first.
 
@@ -259,7 +259,7 @@ Everything in the preset panel is a **preset**: a named, saved set of options fo
 | Type | What it does |
 |------|--------------|
 | Re-encode video | H.264 + AAC by default; optional HEVC / AV1 and AC3 or stream-copy audio. Trim start/end, duration override, resize (keeps aspect, even dims), full→limited range + BT.709 tags (warns if the source is already tagged TV range), bwdif deinterlace (auto when interlaced), gain + compressor (light/medium/strong/advanced…), chapters (off / every N min / manual list / both), passthrough video or audio, container (auto/mp4/mkv/mov), name suffix, Faststart (off for new jobs). Keeps all audio tracks with titles/languages, subtitles, attachments where the container allows. |
-| MP4 from still image | Image + audio → H.264 MP4 (tune stillimage, RGB→BT.709 limited). Length = audio (`-shortest`) or fixed seconds. |
+| MP4 from still image | Image + audio → H.264 MP4 by default (tune stillimage, RGB→BT.709 limited); optional HEVC / AV1 / AC3. Length = audio (`-shortest`) or fixed seconds. |
 | Add commentary track | Copies video + all original audio, adds an audio file as a new AAC track named “Commentary Track” (configurable). |
 | Extract audio to WAV | Picks a track; PCM s16le, original sample rate (fallback 48000), stereo. |
 | Replace primary audio | Video copied, audio replaced by a WAV encoded to AAC, optional gain/compressor. |
@@ -269,7 +269,7 @@ Everything in the preset panel is a **preset**: a named, saved set of options fo
 | Remux MKV → MP4 | Stream copy, never overwrites, optional delete of source only after the MP4 verifies; summary in the script's wording. |
 | **Join / stitch files** | Concatenate several videos: lossless concat demuxer or re-encode with the concat filter, chapter per file (see above). |
 | **Audio & subtitles** | Keep/remove/rename/reorder tracks, add commentary or second-language audio, replace audio, add/remove subtitles, extract audio or subtitles (see above). |
-| **Create Slideshow** | Still images → H.264/AAC MP4 with optional audio and crossfades (see above). |
+| **Create Slideshow** | Still images → H.264/AAC MP4 by default, with optional HEVC / AV1 / AC3, audio and crossfades (see above). |
 | **Frameserver (AviSynth script)** | DebugMode FrameServer signpost .avi → generated AviSynth script → H.264/AAC (default) or HEVC / AV1, MP4/MKV (see above). |
 | **Custom pipeline** | Build your own from independent choices (below). |
 | **Add chapters (no re-encode)** | Custom pipeline preset: copies every stream, adds chapters every 5 min (or your list), same container as the input, suffix `_chapters`. |
@@ -316,7 +316,7 @@ Re-encode, Custom pipeline (single file and folder batch) and Batch re-encode ca
   (before the output file; quotes group values with spaces).
 
 ## Create Slideshow
-**Create Slideshow** turns a set of still images into an H.264/AAC MP4.
+**Create Slideshow** turns a set of still images into an MP4 (H.264/AAC by default; the same codec pickers as Re-encode are available).
 - **Image list:** a vertical list of every image (index, optional thumbnail and filename, size and duration).
   Drag the grip or a row to reorder, or use ⬆⬇; Sort by name / modified date / Reverse. Add files, a folder,
   or drop them on the window (jpg/png/bmp/webp/tif; gif is skipped). **Pop out** opens the list in a
@@ -351,7 +351,7 @@ commands as 0.5.3 (`tests/h264_unchanged.rs`).
   - Warnings: HEVC/AV1 don't play in every browser; an 8-bit source with 10-bit on (fine, explains why).
 - **Audio**: AAC (default), AC3 (up to 5.1; more channels are downmixed to 5.1),
   or Keep original (stream copy; not for Join). Bitrate is a drop-down of typical rates plus Custom….
-- **Presets**: four read-only built-ins in the **Experimental codecs** folder at the bottom of **Default Presets**:
+- **Presets**: four read-only built-ins in the **Archive codecs** folder at the bottom of **Default Presets**:
   Archive – HEVC 10-bit (game / camera footage) CRF 20 / 18 slow, Archive – AV1 10-bit (game / camera
   footage) CRF 28 / 26 speed 5 (grain off); audio AAC. Existing presets files get them on first load;
   your own presets are untouched (19 built-ins in total, including Create Slideshow).
@@ -439,7 +439,7 @@ the exact FFmpeg command. It is kept across restarts in `logs\job-history.log` n
 
 ## Portable or installed (0.5.3)
 - **Portable zip** (`FFmpegEncoder-<version>-win64.zip`): unzip anywhere and run; settings are stored next to the exe
-  (or in `%APPDATA%\FFmpegEncoder` if that folder isn't writable).
+  (or in `%APPDATA%\PrimeCrew Software\Encode FFS` if that folder isn't writable).
 - **Installer** (`FFmpegEncoder-<version>-setup.exe`, NSIS, 64-bit):
   - **Just for me** by default (no administrator rights, `%LOCALAPPDATA%\Programs\FFmpeg Encoder`), or
     **For everyone** (Program Files; asks for permission).
@@ -451,10 +451,15 @@ the exact FFmpeg command. It is kept across restarts in `logs\job-history.log` n
     an existing install upgrades in place (same folder). It installs side by side with the experimental edition
     (different id, folder and data folders). The install folder stays `%LOCALAPPDATA%\Programs\FFmpeg Encoder`.
     Uninstall removes the Start Menu shortcut and the **PrimeCrew Software** folder if it is then empty.
-  - An installed copy keeps its settings in `%APPDATA%\FFmpegEncoder`. A marker file `FFmpegEncoder.installed`
-    next to the exe tells the app it was installed.
+  - An installed copy keeps its settings in `%APPDATA%\PrimeCrew Software\Encode FFS`. A marker file `FFmpegEncoder.installed`
+    next to the exe tells the app it was installed. On first run, if that new folder has no settings and a previous
+    `%APPDATA%\FFmpegEncoder` folder does, the app copies settings, presets, layout, history and (when it still lives
+    in the old default folder) the app-managed FFmpeg into the new location, then leaves the old folder as a backup.
+    If you installed over a portable copy and have no installed settings yet, the app offers to import
+    `FFmpegEncoder.settings.json` and related files from next to the exe or from a folder you choose (the portable
+    files are never deleted).
   - Uninstalling keeps your settings unless you tick **Remove my settings and presets** (that also deletes the
-    downloaded FFmpeg in `%LOCALAPPDATA%\FFmpegEncoder`, never a folder you chose as App-managed FFmpeg location).
+    downloaded FFmpeg in `%LOCALAPPDATA%\PrimeCrew Software\Encode FFS` (and, if still present, the previous `%LOCALAPPDATA%\FFmpegEncoder` folder), never a folder you chose as App-managed FFmpeg location).
   - Encode FFS can use your existing FFmpeg, or download a copy in the app (Help › Check for FFmpeg updates…).
   - **Silent install:** `setup.exe /S [/ALLUSERS] [/DESKTOP] [/D=C:\path]`; **silent uninstall:**
     `uninstall.exe /CURRENTUSER|/ALLUSERS /S [/REMOVESETTINGS]`.
@@ -463,7 +468,7 @@ the exact FFmpeg command. It is kept across restarts in `logs\job-history.log` n
 
 ## Settings
 Stored as JSON. Portable first: `FFmpegEncoder.settings.json` next to the exe if that folder is writable,
-otherwise `%APPDATA%\FFmpegEncoder\settings.json`. Logs go to `logs\` next to the settings file
+otherwise `%APPDATA%\PrimeCrew Software\Encode FFS\settings.json`. Logs go to `logs\` next to the settings file
 (app log rotates at 5 MB). **Help › Open settings file / Open logs folder** jump there.
 File › Settings… edits the defaults (script values: CRF 22, preset slow, AAC 192k, chapters 5 min, compressor
 -18 dB / 2:1 / knee 4 / +2 dB / 20 ms / 250 ms, commentary name, fallback 48000 Hz). Input and output folders are
@@ -493,12 +498,12 @@ File › Settings › Window layout › **Remember window layout** (on by defaul
 - **Reset window layout** puts the window back to the default size centered on its screen and the panels, dialogs
   and sections back to their defaults, immediately. Turning the option off stops saving and deletes the saved layout.
 - Stored in its own file next to the settings: `FFmpegEncoder.layout.json` (portable) or
-  `%APPDATA%\FFmpegEncoder\layout.json`. If it is missing, old or damaged, the defaults are used; settings are not affected.
+  `%APPDATA%\PrimeCrew Software\Encode FFS\layout.json`. If it is missing, old or damaged, the defaults are used; settings are not affected.
 
 ## App-managed FFmpeg location (0.5.2)
 File › Settings › **App-managed FFmpeg location**: where the FFmpeg the app downloads and updates lives (with its
 `bin.previous` backup for Roll back). Your own FFmpeg folder (Settings › Folders) is a separate thing.
-- Default `%LOCALAPPDATA%\FFmpegEncoder\ffmpeg`; existing installs keep it.
+- Default `%LOCALAPPDATA%\PrimeCrew Software\Encode FFS\ffmpeg`. If you already had a copy in the previous `%LOCALAPPDATA%\FFmpegEncoder\ffmpeg` folder, it is copied there on first run (the old folder is left as a backup). A custom location you chose is left where it is.
 - Shows the current folder. Type or **Browse…** for a folder, then **Change…**; **Reset to default** goes back.
   Applies immediately (not with Save) and is stored as `managed_ffmpeg_dir` in the settings file.
 - If there is a downloaded copy, it asks: **Move it there** (copy, start the copied ffmpeg once to check it, then

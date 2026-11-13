@@ -237,6 +237,14 @@ struct LocateDlg {
     first_run: bool,
 }
 
+/// Offer to import leftover portable settings into an installed copy (never deletes the source).
+struct ImportDlg {
+    source: PathBuf,
+    bundle: settings::PortableBundle,
+    note: Option<String>,
+    first_run: bool,
+}
+
 pub struct App {
     settings: Settings,
     /// "Encoding Finished" popup.
@@ -286,6 +294,8 @@ pub struct App {
     pending_run: Option<std::time::Instant>,
     /// Window layout persistence (0.5.2).
     layout: layout::LayoutRt,
+    /// One-time offer to copy leftover portable settings into an installed copy.
+    import_dlg: Option<ImportDlg>,
 }
 
 /// Open a file or folder with the OS (Explorer on Windows).
@@ -351,6 +361,7 @@ const NEVER_CHECK_HELP: &str = "Unchecked (the default): when the app starts it 
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, startup: Option<layout::Startup>) -> Self {
+        let data_migration = ffenc::data_migrate::migrate_if_needed();
         let first_run = !settings::settings_path().exists();
         let mut settings = Settings::load();
         // where the app-managed FFmpeg lives (before anything looks for FFmpeg)
@@ -362,6 +373,11 @@ impl App {
         let ctx = cc.egui_ctx.clone();
         let queue = Queue::new(Some(settings::logs_dir().join(format!("{}.log", ffenc::FILE_STEM))), move || ctx.request_repaint());
         queue.log(format!("{} {} started. Settings: {}", ffenc::APP_NAME, ffenc::APP_VERSION, settings::settings_path().display()));
+        match &data_migration {
+            Ok(Some(r)) => queue.log(&r.line),
+            Ok(None) => {}
+            Err(e) => queue.log(format!("Could not copy settings from the previous data folder: {e}")),
+        }
         queue.set_keep_temp(settings.keep_temp_files);
         let registry = settings::logs_dir().join("partial-outputs.txt");
         queue.set_partials_registry(Some(registry.clone()));
@@ -432,7 +448,6 @@ impl App {
         let layout = layout::LayoutRt::new(startup, settings.remember_layout);
         if settings.remember_layout {
             queue.log(format!("Window layout: {}", layout.path.display()));
-            queue.log(layout.describe());
         }
         let mut app = App {
             settings,
@@ -471,12 +486,23 @@ impl App {
             source: Default::default(),
             pending_run: None,
             layout,
+            import_dlg: None,
         };
         app.refresh_ffmpeg(&cc.egui_ctx);
-        if !had_file || migrated {
+        let offer_portable = settings::installed_settings_missing(&locate::exe_dir(), &settings::roaming_dir())
+            && data_migration.as_ref().ok().and_then(|r| r.as_ref()).is_none();
+        if (!had_file || migrated) && !offer_portable {
             app.save_presets();
         }
-        if first_run || app.ff.is_none() {
+        if offer_portable {
+            let src = locate::exe_dir();
+            app.import_dlg = Some(ImportDlg {
+                source: src.clone(),
+                bundle: settings::scan_portable_dir(&src),
+                note: None,
+                first_run,
+            });
+        } else if first_run || app.ff.is_none() {
             app.open_locate(first_run);
         }
         // Non-intrusive daily update check (never when "Turn off Update Check for FFMPEG" is checked).
@@ -527,6 +553,114 @@ impl App {
         if let Err(e) = pstore::save_to(&self.presets_path, &self.pre.list) {
             self.error = Some(e);
         }
+    }
+
+
+    fn show_import_dlg(&mut self, ctx: &egui::Context) {
+        let Some(mut dlg) = self.import_dlg.take() else { return };
+        let mut keep = true;
+        let mut do_import = false;
+        let mut skip = false;
+        common::fit(
+            egui::Window::new("Import portable settings?")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]),
+            ctx,
+            true,
+        )
+        .show(ctx, |ui| {
+            ui.set_max_width(620.0);
+            ui.label("This installed copy has no settings of its own yet. If you previously used the portable zip, you can copy its settings, presets, window layout and job history here. The portable files are left as they are.");
+            ui.add_space(8.0);
+            if dlg.bundle.any() {
+                hint(ui, format!("Found in {}: {}.", dlg.source.display(), dlg.bundle.summary()));
+            } else if dlg.source.as_os_str().is_empty() {
+                hint(ui, "Choose the folder that contains the portable program (or FFmpegEncoder.settings.json).");
+            } else {
+                hint(ui, format!("No portable settings were found in {}.", dlg.source.display()));
+            }
+            if let Some(n) = &dlg.note {
+                ui.colored_label(crate::ui::theme::c().err, n);
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let can = dlg.bundle.any();
+                if ui.add_enabled(can, egui::Button::new(RichText::new("Import").strong())).on_hover_text("Copy the portable files into this installed copy. The originals are not deleted.").clicked() {
+                    do_import = true;
+                }
+                if ui.button("Choose folder…").on_hover_text("Look for FFmpegEncoder.settings.json and related files in another folder.").clicked() {
+                    let mut d = rfd::FileDialog::new();
+                    if dlg.source.is_dir() {
+                        d = d.set_directory(&dlg.source);
+                    }
+                    if let Some(p) = d.pick_folder() {
+                        dlg.source = p;
+                        dlg.bundle = settings::scan_portable_dir(&dlg.source);
+                        dlg.note = None;
+                    }
+                }
+                if ui.button("Don't import").clicked() {
+                    skip = true;
+                }
+            });
+        });
+        if do_import {
+            match settings::import_portable(&dlg.source, &settings::roaming_dir()) {
+                Ok(notes) => {
+                    for n in &notes {
+                        self.queue.log(n);
+                    }
+                    self.apply_imported_settings(ctx);
+                    keep = false;
+                    if self.ff.is_none() {
+                        self.open_locate(false);
+                    }
+                }
+                Err(e) => {
+                    dlg.note = Some(e);
+                    keep = true;
+                }
+            }
+        }
+        if skip {
+            keep = false;
+            if dlg.first_run || self.ff.is_none() {
+                self.open_locate(dlg.first_run);
+            }
+        }
+        if keep {
+            self.import_dlg = Some(dlg);
+        }
+    }
+
+    fn apply_imported_settings(&mut self, ctx: &egui::Context) {
+        self.settings = Settings::load();
+        ffenc::ffmpeg::managed::set_location(&self.settings.managed_ffmpeg_dir);
+        theme::apply(ctx, &self.settings.appearance);
+        self.applied = Some(self.settings.appearance.clone());
+        self.presets_path = pstore::presets_path();
+        let differs = |p: &Preset| -> bool { presets::builtin_differs(p, &self.settings) };
+        let (mut list, notes) = pstore::load_from_with(&self.presets_path, &differs);
+        for n in notes {
+            self.queue.log(n);
+        }
+        let known: Vec<&str> = kinds().into_iter().map(|k| k.0).collect();
+        list.retain(|p| {
+            let ok = known.contains(&p.kind.as_str());
+            if !ok {
+                self.queue.log(format!("Preset “{}” has an unknown type “{}” and was ignored.", p.name, p.kind));
+            }
+            ok
+        });
+        if list.is_empty() {
+            list = pstore::factory_all();
+        }
+        self.settings.migrate_app_folders(&list);
+        let current = list.iter().position(|p| p.id == self.settings.last_preset && !p.hidden).unwrap_or(0);
+        self.pre = PresetUi::new(list, current);
+        self.refresh_ffmpeg(ctx);
+        self.queue.log("Imported window layout will apply the next time you start the app.");
     }
 
     fn open_locate(&mut self, first_run: bool) {
@@ -695,10 +829,15 @@ impl App {
         let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
         match self.pre.editor(idx, &self.settings).mode.build(&cx) {
             Ok(plan) => {
-                self.preview = Some(Preview::new(plan, ff.ffmpeg.clone(), self.settings.when_exists));
                 let preset_name = self.pre.list[idx].name.clone();
                 let values = self.pre.editor(idx, &self.settings).mode.save();
                 self.preview_origin = Some(ffenc::job_history::Origin { preset_name, values });
+                let items = self.pre.editor(idx, &self.settings).mode.conflict_warnings();
+                if ffenc::cmd::conflicts::any_fixable(&items) {
+                    self.conflict_dlg = Some(ConflictDlg { items, plan, program: ff.ffmpeg.clone(), focus_run_as_set: true });
+                } else {
+                    self.preview = Some(Preview::new(plan, ff.ffmpeg.clone(), self.settings.when_exists));
+                }
             }
             Err(e) => {
                 // double-click / Run right after switching presets: the form probes its input first
@@ -889,12 +1028,7 @@ impl App {
                     open_path(&settings::settings_path());
                     ui.close_menu();
                 }
-                if ui.button("Check for app updates…").clicked() {
-                    self.info = Some(("App updates".into(), format!("Automatic app updates are not implemented yet.\nYou are running {} {}.", ffenc::APP_NAME, ffenc::APP_VERSION)));
-                    ui.close_menu();
-                }
-                ui.separator();
-                if ui.button("About").clicked() {
+if ui.button("About").clicked() {
                     self.show_about = true;
                     ui.close_menu();
                 }
@@ -1277,9 +1411,14 @@ impl App {
             self.preview_origin = None;
         }
 
+        // leftover portable settings in an installed copy
+        if self.import_dlg.is_some() {
+            self.show_import_dlg(ctx);
+        }
+
         // first run / FFmpeg not found
         let invalid = self.ff.is_none() || matches!(self.ff_check, Some(Err(_)));
-        if self.locate.is_none() && invalid && !self.first_run_dismissed && !self.updater.open {
+        if self.import_dlg.is_none() && self.locate.is_none() && invalid && !self.first_run_dismissed && !self.updater.open {
             self.open_locate(false);
         }
         if self.updater.open {
@@ -1653,13 +1792,14 @@ impl App {
         let in_use = self.ffmpeg_in_use();
         let mut keep = true;
         let mut save = false;
+        let mut apply = false;
         let mut err = None;
         let mut reset_layout = false;
         let mut mloc_out = None;
         common::fit(egui::Window::new("Settings").collapsible(false).resizable(true).default_width(640.0), ctx, false).remember("settings", true).show(ctx, |ui| {
-            egui::ScrollArea::vertical().max_height((ctx.screen_rect().height() - 150.0).max(120.0)).show(ui, |ui| {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible).max_height((ctx.screen_rect().height() - 150.0).max(120.0)).show(ui, |ui| {
                 common::section(ui, "Appearance");
-                hint(ui, "Applied and saved immediately (Save/Cancel below don't affect it).");
+                hint(ui, "Applied and saved immediately (Save, Apply and Cancel below don't affect it).");
                 self.appearance_ui(ui);
                 common::section(ui, "Window layout");
                 ui.checkbox(&mut ed.remember_layout, "Remember window layout").on_hover_text(REMEMBER_LAYOUT_HELP);
@@ -1691,11 +1831,38 @@ impl App {
                 mloc_out = self.mloc.settings_ui(ui, blocked);
                 common::section(ui, "Encoding defaults (used by built-in presets that are not customised, and by new blank presets)");
                 egui::Grid::new("set_e").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                    let mut v = ffenc::cmd::common::VideoEncode { crf: ed.crf, preset: ed.preset.clone(), tune: None, ..Default::default() };
-                    common::video_encode_ui(ui, "set", &mut v, false);
+                    let mut v = ffenc::cmd::common::VideoEncode {
+                        crf: ed.crf,
+                        preset: ed.preset.clone(),
+                        tune: None,
+                        codec: ed.video_codec,
+                        ten_bit: ed.ten_bit,
+                        svt_preset: ed.svt_preset,
+                        film_grain: ed.film_grain,
+                        film_grain_denoise: ed.film_grain_denoise,
+                        output_fps: String::new(),
+                    };
+                    crate::ui::codecs_ui::video_codec_ui_ex(ui, "set", &mut v, self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders).as_ref(), None, None, false);
                     ed.crf = v.crf;
                     ed.preset = v.preset;
-                    common::bitrate_ui(ui, "Audio bitrate", &mut ed.audio_bitrate_k);
+                    ed.video_codec = v.codec;
+                    ed.ten_bit = v.ten_bit;
+                    ed.svt_preset = v.svt_preset;
+                    ed.film_grain = v.film_grain;
+                    ed.film_grain_denoise = v.film_grain_denoise;
+                    let mut a = ffenc::cmd::common::AudioEncode {
+                        bitrate_k: ed.audio_bitrate_k,
+                        codec: ed.audio_codec,
+                        ac3_bitrate_k: ed.ac3_bitrate_k,
+                        gain_db: ed.gain_db,
+                        compressor: ffenc::cmd::common::CompressorPreset::None,
+                        advanced: ed.compressor,
+                        source_channels: None,
+                    };
+                    crate::ui::codecs_ui::audio_codec_ui_ex(ui, "set", &mut a, self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders).as_ref(), false, false);
+                    ed.audio_bitrate_k = a.bitrate_k;
+                    ed.audio_codec = a.codec;
+                    ed.ac3_bitrate_k = a.ac3_bitrate_k;
                     crate::ui::common::row_label_tip(ui, "Gain", "Pre-gain in decibels, applied before the compressor (+6 dB is roughly twice as loud). 0 = unchanged.");
                     common::num_f64(ui, &mut ed.gain_db, -30.0..=30.0, 0.1, " dB");
                     ui.end_row();
@@ -1746,12 +1913,12 @@ impl App {
                     ui.label("");
                     ui.vertical(|ui| {
                         if Settings::update_check_option_applies(in_use) {
-                            ui.checkbox(&mut ed.never_check_updates, "Turn off Update Check for FFMPEG").on_hover_text(NEVER_CHECK_HELP);
+                            ui.checkbox(&mut ed.never_check_updates, "Don't automatically check for FFmpeg updates").on_hover_text(NEVER_CHECK_HELP);
                             hint(ui, NEVER_CHECK_HELP);
                         } else {
                             // greyed out but still focusable/readable; the note says why
                             let mut v = ed.never_check_updates;
-                            ui.add_enabled(false, egui::Checkbox::new(&mut v, "Turn off Update Check for FFMPEG"))
+                            ui.add_enabled(false, egui::Checkbox::new(&mut v, "Don't automatically check for FFmpeg updates"))
                                 .on_disabled_hover_text(OWN_FOLDER_NOTE);
                             hint(ui, OWN_FOLDER_NOTE);
                         }
@@ -1778,13 +1945,19 @@ impl App {
             });
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("Save").strong()).clicked() {
+                if ui.button(RichText::new("Save").strong()).on_hover_text("Apply these settings and close the window.").clicked() {
                     match ed.validate() {
                         Ok(()) => save = true,
                         Err(e) => err = Some(e),
                     }
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button("Apply").on_hover_text("Apply these settings and keep this window open.").clicked() {
+                    match ed.validate() {
+                        Ok(()) => apply = true,
+                        Err(e) => err = Some(e),
+                    }
+                }
+                if ui.button("Cancel").on_hover_text("Close without applying unapplied changes.").clicked() {
                     keep = false;
                 }
                 if ui.button("Reset to script defaults").clicked() {
@@ -1803,7 +1976,7 @@ impl App {
                 Err(e) => self.queue.log(e),
             }
         }
-        if save {
+        if save || apply {
             if self.settings.remember_layout && !ed.remember_layout {
                 match self.layout.forget_saved() {
                     Ok(()) => self.queue.log("Remember window layout is off: the saved layout was removed."),
@@ -1821,6 +1994,10 @@ impl App {
             self.save_settings();
             if ff_changed || self.ff.is_none() {
                 self.refresh_ffmpeg(ctx);
+            }
+            if apply && !save {
+                // stay open; Cancel after this only discards later unapplied edits
+                self.settings_edit = Some(self.settings.clone());
             }
         } else if keep {
             self.settings_edit = Some(ed);

@@ -519,20 +519,17 @@ impl PresetUi {
                     for &i in idxs {
                         let p = &self.list[i];
                         let modified = self.modified(&p.id);
-                        let mut label = String::new();
-                        if p.pinned && show_star {
-                            label.push_str("★ ");
-                        }
-                        label.push_str(&p.name);
                         let builtin = p.is_builtin();
-                        if builtin {
-                            label.push_str("  🔒");
+                        let mut name = String::new();
+                        if p.pinned && show_star {
+                            name.push_str("★ ");
                         }
+                        name.push_str(&p.name);
                         if modified {
-                            label.push_str("  *");
+                            name.push_str("  *");
                         }
                         let a11y = format!("{}{}{}", p.name, if builtin { ", built-in, read-only" } else { "" }, if modified { ", unsaved changes" } else { "" });
-                        let mut text = RichText::new(label);
+                        let mut text = RichText::new(name);
                         if modified && i != self.current {
                             text = text.color(crate::ui::theme::c().unsaved);
                         }
@@ -545,7 +542,20 @@ impl PresetUi {
                             if modified { "\n* unsaved changes" } else { "" }
                         );
                         let sel = i == self.current;
-                        let r = ui.add(egui::SelectableLabel::new(sel, text)).on_hover_text(tip);
+                        let row_h = ui.spacing().interact_size.y.max(ui.text_style_height(&egui::TextStyle::Body) + 6.0);
+                        let lock_w = ui.spacing().interact_size.y * 0.85;
+                        let inner = ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), row_h), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if builtin {
+                                ui.add_sized([lock_w, row_h], egui::Label::new("🔒")).on_hover_text("Built-in, read-only: save changes as a new preset");
+                            } else {
+                                ui.allocate_exact_size(egui::vec2(0.0, row_h), egui::Sense::hover());
+                            }
+                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                                ui.add_sized([ui.available_width(), row_h], egui::SelectableLabel::new(sel, text));
+                            });
+                        });
+                        let r = crate::ui::common::hover_tip(inner.response.interact(egui::Sense::click()), tip);
                         r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, sel, &a11y));
                         if r.double_clicked() {
                             run = Some(i);
@@ -1378,8 +1388,6 @@ mod tests {
         assert!(pu.editor(add, &s).mode.save()["out_name"].as_str().unwrap().ends_with("_chapters.mkv"));
         std::fs::remove_file(&f).unwrap();
     }
-
-    #[test]
 
     #[test]
     fn folders_are_app_level_ignored_on_presets_and_kept_across_new_and_switch() {

@@ -1,10 +1,11 @@
 //! Persisted settings (JSON next to the exe for portability, falling back to
-//! %APPDATA%\FFmpegEncoder when the exe folder is not writable).
+//! %APPDATA%\PrimeCrew Software\Encode FFS when the exe folder is not writable).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use crate::cmd::codecs::{AudioCodec, VideoCodec};
 
 use crate::cmd::common::CompressorParams;
 use crate::ffmpeg::locate::exe_dir;
@@ -354,8 +355,21 @@ pub struct Settings {
     /// open sections are saved in their own file next to this one and restored at the next start.
     pub remember_layout: bool,
     /// App-managed FFmpeg location (0.5.2): the folder for the copy the app downloads/updates
-    /// (`<folder>\bin`). Empty = the default `%LOCALAPPDATA%\FFmpegEncoder\ffmpeg`.
+    /// (`<folder>\bin`). Empty = the default `%LOCALAPPDATA%\PrimeCrew Software\Encode FFS\ffmpeg`.
     pub managed_ffmpeg_dir: String,
+    /// Default video codec for new / uncustomised built-in presets (H.264 unless the user changes it).
+    pub video_codec: VideoCodec,
+    /// HEVC/AV1 default: write 10-bit. Ignored for H.264.
+    pub ten_bit: bool,
+    /// AV1 (SVT-AV1) default speed 0–13.
+    pub svt_preset: u32,
+    /// AV1 film grain synthesis 0 (off) – 50.
+    pub film_grain: u32,
+    pub film_grain_denoise: bool,
+    /// Default audio codec (AAC unless the user changes it).
+    pub audio_codec: AudioCodec,
+    /// AC3 default bitrate (kbps).
+    pub ac3_bitrate_k: u32,
     /// Legacy (0.1.x): last-used values per mode; migrated into presets on first start of 0.2.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, serde_json::Value>,
@@ -396,6 +410,13 @@ impl Default for Settings {
             show_finished_popup: true,
             remember_layout: true,
             managed_ffmpeg_dir: String::new(),
+            video_codec: VideoCodec::H264,
+            ten_bit: true,
+            svt_preset: 5,
+            film_grain: 0,
+            film_grain_denoise: false,
+            audio_codec: AudioCodec::Aac,
+            ac3_bitrate_k: 448,
             modes: BTreeMap::new(),
             last_mode: String::new(),
         }
@@ -413,26 +434,39 @@ fn dir_writable(dir: &Path) -> bool {
     }
 }
 
-/// `%APPDATA%\<name>` (Linux: ~/.config/<name>).
-pub fn roaming_dir_named(name: &str) -> PathBuf {
+/// %APPDATA% (Linux: $XDG_CONFIG_HOME or ~/.config). No app folder appended.
+pub fn roaming_base() -> PathBuf {
     if let Some(d) = std::env::var_os("FFENC_ROAMING_BASE") {
-        return PathBuf::from(d).join(name); // override for tests
+        return PathBuf::from(d); // override for tests
     }
     if let Some(d) = std::env::var_os("APPDATA") {
-        return PathBuf::from(d).join(name);
+        return PathBuf::from(d);
     }
     if let Some(d) = std::env::var_os("XDG_CONFIG_HOME") {
-        return PathBuf::from(d).join(name);
+        return PathBuf::from(d);
     }
     if let Some(h) = std::env::var_os("HOME") {
-        return PathBuf::from(h).join(".config").join(name);
+        return PathBuf::from(h).join(".config");
     }
-    std::env::temp_dir().join(name)
+    std::env::temp_dir()
 }
 
-/// This edition's %APPDATA% folder (`FFmpegEncoder`).
+/// `%APPDATA%\<name>` (Linux: ~/.config/<name>). `name` may be a relative path.
+pub fn roaming_dir_named(name: &str) -> PathBuf {
+    roaming_base().join(name)
+}
+
+/// This edition's %APPDATA% folder (`PrimeCrew Software\Encode FFS`).
 pub fn roaming_dir() -> PathBuf {
-    roaming_dir_named(crate::DATA_DIR_NAME)
+    roaming_base().join(crate::data_dir_rel())
+}
+
+/// Pre-0.6.0-rc.3 location: %APPDATA%\FFmpegEncoder.
+pub fn legacy_roaming_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("FFENC_LEGACY_ROAMING_DIR") {
+        return PathBuf::from(d);
+    }
+    roaming_base().join(crate::legacy_data_dir_rel())
 }
 
 /// Marker file the installer puts next to the exe (0.5.3): an installed copy keeps its settings in
@@ -440,7 +474,7 @@ pub fn roaming_dir() -> PathBuf {
 pub const INSTALLED_MARKER: &str = "FFmpegEncoder.installed";
 
 /// Where settings live: next to the exe if that folder is writable (portable),
-/// otherwise %APPDATA%\FFmpegEncoder\settings.json. Installed copies (marker file next to the
+/// otherwise %APPDATA%\PrimeCrew Software\Encode FFS\settings.json. Installed copies (marker file next to the
 /// exe) always use %APPDATA%.
 pub fn settings_path() -> PathBuf {
     settings_path_in(&exe_dir(), &roaming_dir())
@@ -455,6 +489,101 @@ pub fn settings_path_in(exe_dir: &Path, roaming: &Path) -> PathBuf {
         return portable;
     }
     roaming.join("settings.json")
+}
+
+/// An installed copy (marker next to the exe) that has no settings in %APPDATA% yet.
+pub fn installed_settings_missing(exe_dir: &Path, roaming: &Path) -> bool {
+    exe_dir.join(INSTALLED_MARKER).exists() && !roaming.join("settings.json").exists()
+}
+
+/// Portable files that can be copied into an installed %APPDATA% folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortableBundle {
+    pub dir: PathBuf,
+    pub has_settings: bool,
+    pub has_presets: bool,
+    pub has_layout: bool,
+    pub has_slideshow_ui: bool,
+    pub has_history: bool,
+}
+
+impl PortableBundle {
+    pub fn any(&self) -> bool {
+        self.has_settings || self.has_presets || self.has_layout || self.has_slideshow_ui || self.has_history
+    }
+
+    pub fn summary(&self) -> String {
+        let mut items = Vec::new();
+        if self.has_settings {
+            items.push("settings");
+        }
+        if self.has_presets {
+            items.push("presets");
+        }
+        if self.has_layout {
+            items.push("window layout");
+        }
+        if self.has_slideshow_ui {
+            items.push("slideshow list options");
+        }
+        if self.has_history {
+            items.push("job history");
+        }
+        if items.is_empty() {
+            "no portable settings found".into()
+        } else {
+            items.join(", ")
+        }
+    }
+}
+
+fn portable_history_src(dir: &Path) -> PathBuf {
+    dir.join("logs").join(crate::job_history::FILE_NAME)
+}
+
+/// Look in `dir` (typically the folder of a portable exe) for portable data files.
+pub fn scan_portable_dir(dir: &Path) -> PortableBundle {
+    PortableBundle {
+        dir: dir.to_path_buf(),
+        has_settings: dir.join(PORTABLE_FILE).is_file(),
+        has_presets: dir.join(crate::presets::PORTABLE_PRESETS_FILE).is_file(),
+        has_layout: dir.join(crate::layout::PORTABLE_FILE).is_file(),
+        has_slideshow_ui: dir.join("slideshow-ui.json").is_file(),
+        has_history: portable_history_src(dir).is_file(),
+    }
+}
+
+/// Copy portable files from `from` into an installed `roaming` folder.
+/// Existing destination files are left alone. The source is never deleted or changed.
+pub fn import_portable(from: &Path, roaming: &Path) -> Result<Vec<String>, String> {
+    let b = scan_portable_dir(from);
+    if !b.any() {
+        return Err(format!("No portable settings were found in {}.", from.display()));
+    }
+    std::fs::create_dir_all(roaming).map_err(|e| format!("Cannot create {}: {e}", roaming.display()))?;
+    let logs = roaming.join("logs");
+    let mut notes = Vec::new();
+    let mut copy = |src: PathBuf, dst: PathBuf, label: &str| -> Result<(), String> {
+        if !src.is_file() {
+            return Ok(());
+        }
+        if dst.exists() {
+            notes.push(format!("Kept existing {label} ({}); left the portable copy alone.", dst.display()));
+            return Ok(());
+        }
+        if let Some(d) = dst.parent() {
+            std::fs::create_dir_all(d).map_err(|e| format!("Cannot create {}: {e}", d.display()))?;
+        }
+        std::fs::copy(&src, &dst).map_err(|e| format!("Cannot copy {} to {}: {e}", src.display(), dst.display()))?;
+        notes.push(format!("Imported {label} from {}.", src.display()));
+        Ok(())
+    };
+    copy(from.join(PORTABLE_FILE), roaming.join("settings.json"), "settings")?;
+    copy(from.join(crate::presets::PORTABLE_PRESETS_FILE), roaming.join("presets.json"), "presets")?;
+    copy(from.join(crate::layout::PORTABLE_FILE), roaming.join("layout.json"), "window layout")?;
+    copy(from.join("slideshow-ui.json"), roaming.join("slideshow-ui.json"), "slideshow list options")?;
+    copy(portable_history_src(from), logs.join(crate::job_history::FILE_NAME), "job history")?;
+    Ok(notes)
 }
 
 /// Folder for the app log (next to the settings file).
@@ -913,5 +1042,72 @@ mod tests {
             None => std::env::remove_var(VIDEOS_DIR_ENV),
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn installed_marker_sends_settings_to_roaming_and_leaves_portable_file_in_place() {
+        let root = std::env::temp_dir().join(format!("ffenc_import_{}", crate::util::unique_id()));
+        let exe = root.join("app");
+        let roam = root.join("roam");
+        std::fs::create_dir_all(&exe).unwrap();
+        let portable = exe.join(PORTABLE_FILE);
+        std::fs::write(&portable, r#"{"crf": 18}"#).unwrap();
+        // without the marker, a writable folder with a portable file is portable
+        assert_eq!(settings_path_in(&exe, &roam), portable);
+        std::fs::write(exe.join(INSTALLED_MARKER), b"").unwrap();
+        assert_eq!(settings_path_in(&exe, &roam), roam.join("settings.json"));
+        assert!(portable.exists(), "installing over a portable copy must not delete its settings");
+        assert!(installed_settings_missing(&exe, &roam));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn import_copies_portable_files_and_never_deletes_or_overwrites() {
+        let root = std::env::temp_dir().join(format!("ffenc_import_{}", crate::util::unique_id()));
+        let src = root.join("portable");
+        let roam = root.join("roam");
+        std::fs::create_dir_all(src.join("logs")).unwrap();
+        std::fs::write(src.join(PORTABLE_FILE), r#"{"crf": 18}"#).unwrap();
+        std::fs::write(src.join(crate::presets::PORTABLE_PRESETS_FILE), r#"{"presets":[]}"#).unwrap();
+        std::fs::write(src.join(crate::layout::PORTABLE_FILE), r#"{"version":1}"#).unwrap();
+        std::fs::write(src.join("slideshow-ui.json"), r#"{}"#).unwrap();
+        std::fs::write(src.join("logs").join(crate::job_history::FILE_NAME), "h").unwrap();
+        let b = scan_portable_dir(&src);
+        assert!(b.any() && b.has_settings && b.has_presets && b.has_layout && b.has_slideshow_ui && b.has_history);
+
+        let notes = import_portable(&src, &roam).unwrap();
+        assert!(notes.iter().any(|n| n.contains("settings")));
+        assert_eq!(std::fs::read_to_string(roam.join("settings.json")).unwrap(), r#"{"crf": 18}"#);
+        assert!(roam.join("presets.json").is_file());
+        assert!(roam.join("layout.json").is_file());
+        assert!(roam.join("slideshow-ui.json").is_file());
+        assert!(roam.join("logs").join(crate::job_history::FILE_NAME).is_file());
+        // source is untouched
+        assert_eq!(std::fs::read_to_string(src.join(PORTABLE_FILE)).unwrap(), r#"{"crf": 18}"#);
+        assert!(src.join(crate::presets::PORTABLE_PRESETS_FILE).is_file());
+
+        // second import must not overwrite a dest that now exists
+        std::fs::write(src.join(PORTABLE_FILE), r#"{"crf": 99}"#).unwrap();
+        let notes = import_portable(&src, &roam).unwrap();
+        assert!(notes.iter().any(|n| n.contains("Kept existing settings")));
+        assert_eq!(std::fs::read_to_string(roam.join("settings.json")).unwrap(), r#"{"crf": 18}"#);
+        assert_eq!(std::fs::read_to_string(src.join(PORTABLE_FILE)).unwrap(), r#"{"crf": 99}"#);
+        assert!(!installed_settings_missing(&src, &roam)); // no marker in src
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn default_encoding_is_still_h264_aac() {
+        let s = Settings::default();
+        assert_eq!(s.crf, 22);
+        assert_eq!(s.preset, "slow");
+        assert_eq!(s.audio_bitrate_k, 192);
+        assert_eq!(s.video_codec, VideoCodec::H264);
+        assert_eq!(s.audio_codec, AudioCodec::Aac);
+        // older files without the new keys keep those defaults
+        let old = Settings::from_json(r#"{"crf": 22, "preset": "slow", "audio_bitrate_k": 192}"#).unwrap();
+        assert_eq!(old.video_codec, VideoCodec::H264);
+        assert_eq!(old.audio_codec, AudioCodec::Aac);
+        assert!(old.ten_bit && old.svt_preset == 5 && old.ac3_bitrate_k == 448);
     }
 }
