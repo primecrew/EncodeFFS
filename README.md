@@ -1,6 +1,6 @@
-# FFmpeg Encoder (Codecs)
+# FFS Just Encode (Codecs)
 
-Windows desktop app for everyday FFmpeg jobs, with optional **HEVC / AV1** video and **AC3** audio on top of the usual H.264/AAC defaults. The rest of the stable toolset is here too (re-encode, batch, join, remux, audio and subtitles, chapters, custom pipeline, frameserver). Pick a preset, choose files, preview the exact ffmpeg command, and run the job in a queue.
+**FFS Just Encode (Codecs)** is a Windows desktop front end for FFmpeg, from **PrimeCrew Software**, with optional **HEVC / AV1** video and **AC3** audio on top of the usual H.264/AAC defaults. The rest of the stable toolset is here too (re-encode, batch, join, remux, audio and subtitles, chapters, custom pipeline, frameserver). Pick a preset, choose files, preview the exact ffmpeg command, and run the job in a queue.
 
 This is the **Codecs** edition (`FFmpegEncoder-Codecs.exe`, version 0.5.5-codecs.1) on branch `codecs`. It keeps its own settings, presets and data folder (`FFmpegEncoder-Codecs`) so it can sit next to the stable build. On first start it can copy stable settings in (read only). It is not merged into the stable edition.
 
@@ -421,13 +421,18 @@ the exact FFmpeg command. It is kept across restarts in `logs\job-history.log` n
 - Turn it off in File › Settings › When encoding finishes › **Show Encoding Finished popup** (on by default).
 
 ## Portable or installed (0.5.3)
-- **Portable zip** (`FFmpegEncoder-<version>-win64.zip`): unzip anywhere and run; settings are stored next to the exe
-  (or in `%APPDATA%\FFmpegEncoder` if that folder isn't writable).
-- **Installer** (`FFmpegEncoder-<version>-setup.exe`, NSIS, 64-bit):
-  - **Just for me** by default (no administrator rights, `%LOCALAPPDATA%\Programs\FFmpeg Encoder`), or
+- **Portable zip** (`FFmpegEncoder-Codecs-<version>-win64.zip`): unzip anywhere and run; settings are stored next to the exe
+  (or in `%APPDATA%\FFmpegEncoder-Codecs` if that folder isn't writable).
+- **Installer** (`FFmpegEncoder-Codecs-<version>-setup.exe`, NSIS, 64-bit):
+  - **Just for me** by default (no administrator rights, `%LOCALAPPDATA%\Programs\FFmpeg Encoder (Codecs)`), or
     **For everyone** (Program Files; asks for permission).
-  - A Start Menu shortcut, with a desktop shortcut optional; an Add/Remove Programs entry (`FFmpegEncoder`) and an
-    uninstaller. It installs side by side with the experimental edition (different id, folder and data folders).
+  - A Start Menu shortcut at **PrimeCrew Software\FFS Just Encode (Codecs)** (the stable app shares that brand folder),
+    with a desktop shortcut optional. An upgrade from an older install removes the previous Start Menu shortcut
+    (`FFmpeg Encoder (Codecs)`) from the root so it is not left next to the new one. An Add/Remove Programs entry uses
+    display name **FFS Just Encode (Codecs)** and publisher **PrimeCrew Software**; the install key stays `FFmpegEncoderCodecs` so
+    an existing install upgrades in place (same folder). It installs side by side with the stable edition
+    (different id, folder and data folders). The install folder stays `%LOCALAPPDATA%\Programs\FFmpeg Encoder (Codecs)`.
+    Uninstall removes the Start Menu shortcut and the **PrimeCrew Software** folder if it is then empty.
   - An installed copy keeps its settings in `%APPDATA%\FFmpegEncoder`. A marker file `FFmpegEncoder.installed`
     next to the exe tells the app it was installed.
   - Uninstalling keeps your settings unless you tick **Remove my settings and presets** (that also deletes the
@@ -439,8 +444,8 @@ the exact FFmpeg command. It is kept across restarts in `logs\job-history.log` n
   SHA256SUMS).
 
 ## Settings
-Stored as JSON. Portable first: `FFmpegEncoder.settings.json` next to the exe if that folder is writable,
-otherwise `%APPDATA%\FFmpegEncoder\settings.json`. Logs go to `logs\` next to the settings file
+Stored as JSON. Portable first: `FFmpegEncoder-Codecs.settings.json` next to the exe if that folder is writable,
+otherwise `%APPDATA%\FFmpegEncoder-Codecs\settings.json`. Logs go to `logs\` next to the settings file
 (app log rotates at 5 MB). **Help › Open settings file / Open logs folder** jump there.
 File › Settings… edits the defaults (script values: CRF 22, preset slow, AAC 192k, chapters 5 min, compressor
 -18 dB / 2:1 / knee 4 / +2 dB / 20 ms / 250 ms, commentary name, fallback 48000 Hz). Input and output folders are
