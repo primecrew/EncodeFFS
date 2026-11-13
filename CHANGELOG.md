@@ -16,6 +16,11 @@ Create Slideshow is part of this stable build (the old **Slideshow** branch is a
 
 - Create Slideshow and MP4 from still image have the same video and audio codec pickers as Re-encode (H.264 + AAC remain the default, so existing default commands are unchanged). File › Settings › Encoding defaults is codec-aware as well. The sidebar folder for the HEVC / AV1 starting points is now **Archive codecs** (the old “Experimental codecs” name is renamed on load). Built-in padlocks stay in a fixed slot on the right of the name. Settings has a visible scrollbar, an **Apply** button (save and keep the window open; **Save** applies and closes; **Cancel** discards unapplied changes), and the automatic FFmpeg-update checkbox is labelled **Don't automatically check for FFmpeg updates**. Hover help is capped so large text does not bury the panel. The unused Help › Check for app updates stub is gone. The exe’s File Version / Product Version now follow the crate version (0.6.0-rc.3 → 0.6.0.3), and release builds remap compiler paths so panic messages do not include the build machine.
 
+- A newer installer finds an existing Add/Remove Programs entry (current-user first, then all-users), upgrades in that same folder and install mode, and says so on the welcome page (for example “Encode FFS 0.6.0-rc.2 is installed. This will upgrade it in place to 0.6.0-rc.3. Your settings and presets are kept.”). The who/where pages are skipped. Installing the same version again, or an older one, is allowed, with a plain reinstall or older-version note. If the app is running, setup asks you to close it (Retry / Cancel) before replacing the exe. Settings, presets and leftover portable files are not removed. A fresh install is unchanged. Passing `/D=` still uses that folder.
+
+- Preset names in the sidebar are left-aligned again (the padlock stays in a fixed slot on the right, and the selection highlight still spans the row).
+
+
 ## 0.6.0-rc.2
 
 - The Codecs edition is merged into the stable app: optional HEVC / AV1 video and AC3 or stream-copy audio (H.264 + AAC remains the default), hover help, one-click conflict fixes, colour-range warnings, and the Frameserver default colour matrix of PC.709. Create Slideshow from rc.1 is kept. The app identity stays FFmpegEncoder / %LOCALAPPDATA%\FFmpegEncoder; the standalone Codecs first-run import is not carried over.

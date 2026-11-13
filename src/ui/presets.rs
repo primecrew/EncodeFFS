@@ -543,19 +543,55 @@ impl PresetUi {
                         );
                         let sel = i == self.current;
                         let row_h = ui.spacing().interact_size.y.max(ui.text_style_height(&egui::TextStyle::Body) + 6.0);
+                        // Fixed-width padlock column on the right (reserved for every row so names line up).
+                        // Don't use add_sized + SelectableLabel: add_sized centers its widget, which
+                        // centered the preset names after the padlock-slot change.
                         let lock_w = ui.spacing().interact_size.y * 0.85;
-                        let inner = ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), row_h), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if builtin {
-                                ui.add_sized([lock_w, row_h], egui::Label::new("🔒")).on_hover_text("Built-in, read-only: save changes as a new preset");
-                            } else {
-                                ui.allocate_exact_size(egui::vec2(0.0, row_h), egui::Sense::hover());
+                        let r = ui.allocate_response(egui::vec2(ui.available_width(), row_h), egui::Sense::click());
+                        let row_rect = r.rect;
+                        let r = crate::ui::common::hover_tip(r, tip);
+                        let visuals = ui.style().interact_selectable(&r, sel);
+                        if ui.is_rect_visible(row_rect) {
+                            if sel || r.hovered() || r.highlighted() || r.has_focus() {
+                                ui.painter().rect(
+                                    row_rect.expand(visuals.expansion),
+                                    visuals.corner_radius,
+                                    visuals.weak_bg_fill,
+                                    visuals.bg_stroke,
+                                    egui::StrokeKind::Inside,
+                                );
                             }
-                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                                ui.add_sized([ui.available_width(), row_h], egui::SelectableLabel::new(sel, text));
-                            });
-                        });
-                        let r = crate::ui::common::hover_tip(inner.response.interact(egui::Sense::click()), tip);
+                            let lock_rect = egui::Rect::from_min_size(
+                                egui::pos2(row_rect.max.x - lock_w, row_rect.min.y),
+                                egui::vec2(lock_w, row_h),
+                            );
+                            let pad = ui.spacing().button_padding;
+                            let text_rect = egui::Rect::from_min_max(
+                                row_rect.min,
+                                egui::pos2(lock_rect.min.x, row_rect.max.y),
+                            ).shrink2(pad);
+                            let galley = egui::WidgetText::from(text).into_galley(
+                                ui,
+                                Some(egui::TextWrapMode::Truncate),
+                                text_rect.width().max(1.0),
+                                egui::TextStyle::Button,
+                            );
+                            let text_pos = egui::pos2(
+                                text_rect.left(),
+                                text_rect.center().y - galley.size().y / 2.0,
+                            );
+                            ui.painter().galley(text_pos, galley, visuals.text_color());
+                            if builtin {
+                                let lock = ui.allocate_new_ui(
+                                    egui::UiBuilder::new()
+                                        .id_salt(("preset_lock", i))
+                                        .max_rect(lock_rect)
+                                        .layout(egui::Layout::centered_and_justified(egui::Direction::TopDown)),
+                                    |ui| ui.add(egui::Label::new("🔒").selectable(false)),
+                                ).inner;
+                                let _ = lock.on_hover_text("Built-in, read-only: save changes as a new preset");
+                            }
+                        }
                         r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, sel, &a11y));
                         if r.double_clicked() {
                             run = Some(i);

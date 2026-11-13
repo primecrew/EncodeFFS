@@ -448,7 +448,7 @@ the exact FFmpeg command. It is kept across restarts in `logs\job-history.log` n
     from earlier names (the previous shortcut in the PrimeCrew Software folder, and old names at the Start Menu
     root and on the desktop) so they are not left next to the new one. An Add/Remove Programs entry uses
     display name **Encode FFS** and publisher **PrimeCrew Software**; the install key stays `FFmpegEncoder` so
-    an existing install upgrades in place (same folder). It installs side by side with the experimental edition
+    an existing install upgrades in place (same folder). A newer setup looks up that key (current-user first, then all-users), uses the recorded folder if the program file is still there, keeps the same just-for-me or for-everyone mode, skips the who/where pages, and tells you on the welcome page (for example “Encode FFS 0.6.0-rc.2 is installed. This will upgrade it in place to 0.6.0-rc.3. Your settings and presets are kept.”). The same version or an older setup can reinstall with a plain note. If the app is running, setup asks you to close it before replacing the file. Settings, presets and leftover portable files are not removed. It installs side by side with the experimental edition
     (different id, folder and data folders). The install folder stays `%LOCALAPPDATA%\Programs\FFmpeg Encoder`.
     Uninstall removes the Start Menu shortcut and the **PrimeCrew Software** folder if it is then empty.
   - An installed copy keeps its settings in `%APPDATA%\PrimeCrew Software\Encode FFS`. A marker file `FFmpegEncoder.installed`
