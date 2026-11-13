@@ -1,6 +1,6 @@
-# FFmpeg Encoder
+# FFS Just Encode
 
-Windows desktop app for everyday FFmpeg jobs: re-encode or batch-re-encode video, join/stitch clips, remux MKV to MP4, work with audio and subtitles, add chapters, make a video from a still image, run a custom pipeline, feed an AviSynth frameserver script, or **create a slideshow** from still images (H.264/AAC MP4 with optional audio and crossfades). Optional **HEVC / AV1** video and **AC3** audio sit on top of the usual H.264/AAC defaults. Pick a preset, choose files, preview the exact ffmpeg command, and run the job in a queue.
+**FFS Just Encode** is a Windows desktop front end for FFmpeg, from **PrimeCrew Software**. Use it for everyday FFmpeg jobs: re-encode or batch-re-encode video, join/stitch clips, remux MKV to MP4, work with audio and subtitles, add chapters, make a video from a still image, run a custom pipeline, feed an AviSynth frameserver script, or **create a slideshow** from still images (H.264/AAC MP4 with optional audio and crossfades). Optional **HEVC / AV1** video and **AC3** audio sit on top of the usual H.264/AAC defaults. Pick a preset, choose files, preview the exact ffmpeg command, and run the job in a queue.
 
 This is the **stable** edition (`FFmpegEncoder.exe`). Create Slideshow is included as a built-in preset. Optional HEVC, AV1 and AC3 from the former Codecs edition are included too; H.264 + AAC remains the default. The old standalone Slideshow and Codecs editions are not separate apps any more.
 
@@ -443,8 +443,13 @@ the exact FFmpeg command. It is kept across restarts in `logs\job-history.log` n
 - **Installer** (`FFmpegEncoder-<version>-setup.exe`, NSIS, 64-bit):
   - **Just for me** by default (no administrator rights, `%LOCALAPPDATA%\Programs\FFmpeg Encoder`), or
     **For everyone** (Program Files; asks for permission).
-  - A Start Menu shortcut, with a desktop shortcut optional; an Add/Remove Programs entry (`FFmpegEncoder`) and an
-    uninstaller. It installs side by side with the experimental edition (different id, folder and data folders).
+  - A Start Menu shortcut at **PrimeCrew Software\FFS Just Encode** (other PrimeCrew apps will share that folder),
+    with a desktop shortcut optional. An upgrade from an older install removes the previous Start Menu shortcut
+    (`FFmpeg Encoder`) from the root so it is not left next to the new one. An Add/Remove Programs entry uses
+    display name **FFS Just Encode** and publisher **PrimeCrew Software**; the install key stays `FFmpegEncoder` so
+    an existing install upgrades in place (same folder). It installs side by side with the experimental edition
+    (different id, folder and data folders). The install folder stays `%LOCALAPPDATA%\Programs\FFmpeg Encoder`.
+    Uninstall removes the Start Menu shortcut and the **PrimeCrew Software** folder if it is then empty.
   - An installed copy keeps its settings in `%APPDATA%\FFmpegEncoder`. A marker file `FFmpegEncoder.installed`
     next to the exe tells the app it was installed.
   - Uninstalling keeps your settings unless you tick **Remove my settings and presets** (that also deletes the

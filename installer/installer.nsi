@@ -4,7 +4,8 @@
 ;
 ; - Per-user install by default (no administrator rights): %LOCALAPPDATA%\Programs\<APP_DIRNAME>
 ; - Optional "for everyone" (Program Files; asks for administrator rights)
-; - Start Menu shortcut (default on), desktop shortcut (optional)
+; - Start Menu shortcut under <PUBLISHER>\<APP_NAME> (default on), desktop shortcut (optional)
+; - On upgrade, old Start Menu / desktop shortcuts at the root (previous app name) are removed
 ; - Listed in Add/Remove Programs (HKCU or HKLM ...\Uninstall\<APP_ID>)
 ; - Uninstall keeps settings/presets unless "Remove my settings and presets" is ticked
 ; - FFmpeg is not bundled (the app downloads it on request)
@@ -15,6 +16,12 @@ Unicode true
 Target amd64-unicode
 !ifndef APP_NAME
   !error "Build with scripts/build-release.sh"
+!endif
+!ifndef PREV_APP_NAME
+  !define PREV_APP_NAME "FFmpeg Encoder"
+!endif
+!ifndef PUBLISHER
+  !error "Build with scripts/build-release.sh (PUBLISHER is required)"
 !endif
 
 !include "MUI2.nsh"
@@ -33,10 +40,11 @@ ShowUninstDetails show
 
 VIProductVersion "${VERSION4}"
 VIAddVersionKey "ProductName" "${APP_NAME}"
+VIAddVersionKey "CompanyName" "${PUBLISHER}"
 VIAddVersionKey "FileDescription" "${APP_NAME} setup"
 VIAddVersionKey "FileVersion" "${APP_VERSION}"
 VIAddVersionKey "ProductVersion" "${APP_VERSION}"
-VIAddVersionKey "LegalCopyright" " "
+VIAddVersionKey "LegalCopyright" "${PUBLISHER}"
 
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_ID}"
 
@@ -49,7 +57,7 @@ Var WantDesktop     ; 1 = desktop shortcut (silent /DESKTOP)
 !define MUI_UNICON "${ICON}"
 !define MUI_ABORTWARNING
 !define MUI_COMPONENTSPAGE_SMALLDESC
-!define MUI_WELCOMEPAGE_TEXT "This installs ${APP_NAME} ${APP_VERSION}.$\r$\n$\r$\nIt keeps its own settings and presets and does not change any other version of FFmpeg Encoder.$\r$\n$\r$\nFFmpeg itself is not included: the app can download it for you (Help › Check for FFmpeg updates), or use a folder you already have."
+!define MUI_WELCOMEPAGE_TEXT "This installs ${APP_NAME} ${APP_VERSION}.$\r$\n$\r$\nIt keeps its own settings and presets and does not change any other edition of the app.$\r$\n$\r$\nFFmpeg itself is not included: the app can download it for you (Help › Check for FFmpeg updates), or use a folder you already have."
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${APP_EXE}"
 !define MUI_FINISHPAGE_RUN_TEXT "Start ${APP_NAME} now"
 
@@ -184,12 +192,21 @@ SectionEnd
 
 Section "Start Menu shortcut" SecStart
   !insertmacro SetMode
-  CreateShortcut "$SMPROGRAMS\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}" "" "$INSTDIR\${APP_EXE}" 0
+  ; Group this app with other PrimeCrew Software titles (Adobe-style brand folder)
+  CreateDirectory "$SMPROGRAMS\${PUBLISHER}"
+  CreateShortcut "$SMPROGRAMS\${PUBLISHER}\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}" "" "$INSTDIR\${APP_EXE}" 0
+  ; In-place upgrade: drop leftover shortcuts at the Start Menu root (old name, and
+  ; the current name if an earlier build placed it there) so they are not duplicated.
+  Delete "$SMPROGRAMS\${PREV_APP_NAME}.lnk"
+  Delete "$SMPROGRAMS\${APP_NAME}.lnk"
 SectionEnd
 
 Section /o "Desktop shortcut" SecDesktop
   !insertmacro SetMode
   CreateShortcut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}" "" "$INSTDIR\${APP_EXE}" 0
+  ${If} "${PREV_APP_NAME}" != "${APP_NAME}"
+    Delete "$DESKTOP\${PREV_APP_NAME}.lnk"
+  ${EndIf}
 SectionEnd
 
 Function .onInit
@@ -231,7 +248,7 @@ FunctionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecApp} "The program (FFmpeg is not included)."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecStart} "A shortcut in the Start Menu."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecStart} "A shortcut in the Start Menu, under ${PUBLISHER}."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} "A shortcut on the desktop."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
@@ -249,8 +266,12 @@ FunctionEnd
 Section "un.${APP_NAME}" UnSecApp
   SectionIn RO
   !insertmacro SetMode
+  Delete "$SMPROGRAMS\${PUBLISHER}\${APP_NAME}.lnk"
+  RMDir "$SMPROGRAMS\${PUBLISHER}" ; only if empty: other PrimeCrew apps keep the folder
   Delete "$SMPROGRAMS\${APP_NAME}.lnk"
+  Delete "$SMPROGRAMS\${PREV_APP_NAME}.lnk"
   Delete "$DESKTOP\${APP_NAME}.lnk"
+  Delete "$DESKTOP\${PREV_APP_NAME}.lnk"
   Delete "$INSTDIR\${APP_EXE}"
   Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\NOTES.md"

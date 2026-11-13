@@ -20,7 +20,9 @@ pub mod util;
 
 /// Application version (from Cargo.toml).
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const APP_NAME: &str = "FFmpeg Encoder";
+pub const APP_NAME: &str = "FFS Just Encode";
+/// Visible publisher / developer name (About box, installer, version info).
+pub const PUBLISHER: &str = "PrimeCrew Software";
 
 /// Folder name under %APPDATA% / %LOCALAPPDATA%.
 pub const DATA_DIR_NAME: &str = "FFmpegEncoder";
@@ -33,7 +35,7 @@ pub const OTHER_EDITION_DATA_DIR_NAMES: &[&str] = &[
     "FFmpegEncoder-Slideshow", // archived standalone edition
 ];
 
-/// Window title, e.g. "FFmpeg Encoder 0.6.0-rc.2".
+/// Window title, e.g. "FFS Just Encode 0.6.0-rc.2".
 pub fn full_title() -> String {
     format!("{APP_NAME} {APP_VERSION}")
 }

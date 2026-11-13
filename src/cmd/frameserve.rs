@@ -287,7 +287,7 @@ pub fn script(o: &ScriptOptions) -> Result<String, String> {
         args.push("utf8=true".into());
     }
     let mut lines = vec![
-        format!("# AviSynth script made by FFmpeg Encoder {} for frameserving.", crate::APP_VERSION),
+        format!("# AviSynth script made by {} {} for frameserving.", crate::APP_NAME, crate::APP_VERSION),
         "# The signpost file only works while your editor is serving frames (DebugMode FrameServer running).".to_string(),
         format!("AviSource({})", args.join(", ")),
     ];
