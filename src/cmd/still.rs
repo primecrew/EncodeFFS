@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use super::common::*;
+use super::codecs::{self, VideoCodec};
 use super::{p, ArgVec, BuiltCommand};
 use crate::util::fmt_num;
 
@@ -14,11 +15,57 @@ pub struct StillParams {
     pub image: PathBuf,
     pub audio: PathBuf,
     pub output: PathBuf,
-    pub bitrate_k: u32,
+    pub video: VideoEncode,
+    pub audio_encode: AudioEncode,
     /// None = `-shortest` (use the audio length), Some(s) = `-t s`.
     pub duration_s: Option<f64>,
     pub faststart: bool,
     pub range_convert: bool,
+}
+
+/// Factory H.264 values for this mode: CRF 23 / preset medium / `-tune stillimage`.
+/// `-crf` and `-preset` are omitted when those values are left at libx264's own defaults
+/// so the default command stays `-c:v libx264 -tune stillimage -pix_fmt yuv420p`.
+pub fn still_default_video() -> VideoEncode {
+    VideoEncode { crf: 23, preset: "medium".into(), tune: Some("stillimage".into()), ..Default::default() }
+}
+
+/// H.264 still args: same as [`x264_args`] except `-crf 23` and `-preset medium` are omitted
+/// (those are libx264's implicit defaults). Other codecs use [`codecs::video_args`].
+pub fn still_video_args(v: &VideoEncode, filter: Option<&str>, range_tags: bool, output: &std::path::Path) -> Vec<String> {
+    if v.codec != VideoCodec::H264 {
+        return codecs::video_args(v, filter, range_tags, output);
+    }
+    let mut a: Vec<String> = Vec::new();
+    a.push_all(["-c:v", "libx264"]);
+    if v.crf != 23 {
+        a.push("-crf".into());
+        a.push(v.crf.to_string());
+    }
+    if v.preset != "medium" {
+        a.push("-preset".into());
+        a.push(v.preset.clone());
+    }
+    if let Some(t) = v.tune.as_ref().filter(|t| !t.is_empty()) {
+        a.push_all(["-tune", t.as_str()]);
+    }
+    a.push_all(["-pix_fmt", "yuv420p"]);
+    if let Some(f) = with_output_fps(filter, v) {
+        a.push("-vf".into());
+        a.push(f);
+    }
+    if range_tags {
+        a.extend(color_tag_args());
+    }
+    a
+}
+
+fn still_range_filter(v: &VideoEncode) -> String {
+    if v.codec == VideoCodec::H264 || !v.ten_bit {
+        STILL_RANGE_FILTER.to_string()
+    } else {
+        "scale=out_range=tv:out_color_matrix=bt709,format=yuv420p10le".into()
+    }
 }
 
 pub fn build(pr: &StillParams) -> Result<BuiltCommand, String> {
@@ -27,17 +74,19 @@ pub fn build(pr: &StillParams) -> Result<BuiltCommand, String> {
             return Err(format!("Invalid duration: {d}"));
         }
     }
+    let mut warnings = codecs::check_video(&pr.video, &pr.output)?;
+    warnings.extend(codecs::check_audio(&pr.audio_encode, &pr.output)?);
     let mut a: Vec<String> = Vec::new();
     a.push_all(["-y", "-loop", "1", "-i"]);
     a.push(p(&pr.image));
     a.push("-i".into());
     a.push(p(&pr.audio));
-    a.push_all(["-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p"]);
-    if pr.range_convert {
-        a.push_all(["-vf", STILL_RANGE_FILTER]);
-        a.extend(color_tag_args());
+    let filter = pr.range_convert.then(|| still_range_filter(&pr.video));
+    a.extend(still_video_args(&pr.video, filter.as_deref(), pr.range_convert, &pr.output));
+    a.extend(codecs::audio_args(&pr.audio_encode));
+    if let Some(f) = pr.audio_encode.filter_chain() {
+        a.push_all(["-af", &f]);
     }
-    a.push_all(["-c:a".to_string(), "aac".into(), "-b:a".into(), format!("{}k", pr.bitrate_k)]);
     match pr.duration_s {
         None => a.push("-shortest".into()),
         Some(d) => a.push_all(["-t".to_string(), fmt_num(d)]),
@@ -46,7 +95,7 @@ pub fn build(pr: &StillParams) -> Result<BuiltCommand, String> {
         a.extend(faststart_args());
     }
     a.push(p(&pr.output));
-    Ok(BuiltCommand { args: a, ..Default::default() })
+    Ok(BuiltCommand { args: a, warnings, ..Default::default() })
 }
 
 #[cfg(test)]
@@ -57,7 +106,8 @@ mod tests {
             image: "/in/cover art.png".into(),
             audio: "/in/song.flac".into(),
             output: "/out/cover art_still.mp4".into(),
-            bitrate_k: 192,
+            video: still_default_video(),
+            audio_encode: AudioEncode { bitrate_k: 192, ..Default::default() },
             duration_s: None,
             faststart: false,
             range_convert: false,
@@ -84,5 +134,26 @@ mod tests {
         assert!(s.contains("-color_range tv -colorspace bt709"));
         pr.duration_s = Some(0.0);
         assert!(build(&pr).is_err());
+    }
+
+    #[test]
+    fn default_command_omits_implicit_crf_and_preset() {
+        let s = build(&base()).unwrap().args.join(" ");
+        assert!(!s.contains("-crf"), "{s}");
+        assert!(!s.contains("-preset"), "{s}");
+        assert!(s.contains("-c:v libx264 -tune stillimage -pix_fmt yuv420p"), "{s}");
+        assert!(s.contains("-c:a aac -b:a 192k"), "{s}");
+    }
+
+    #[test]
+    fn custom_crf_is_emitted_and_hevc_uses_video_args() {
+        let mut pr = base();
+        pr.video.crf = 20;
+        let s = build(&pr).unwrap().args.join(" ");
+        assert!(s.contains("-c:v libx264 -crf 20 -tune stillimage") || s.contains("-crf 20"), "{s}");
+        pr.video = VideoEncode { codec: VideoCodec::Hevc, crf: 18, preset: "slow".into(), ten_bit: true, tune: None, ..Default::default() };
+        let s = build(&pr).unwrap().args.join(" ");
+        assert!(s.contains("-c:v libx265"), "{s}");
+        assert!(s.contains("-crf 18"), "{s}");
     }
 }

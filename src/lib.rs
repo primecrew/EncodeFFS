@@ -15,8 +15,10 @@ pub mod finished;
 pub mod output_guard;
 pub mod presets;
 pub mod settings;
+pub mod data_migrate;
 pub mod updater;
 pub mod util;
+pub mod winver;
 
 /// Application version (from Cargo.toml).
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -29,15 +31,45 @@ pub const PUBLISHER: &str = "PrimeCrew Software";
 // presets or downloaded FFmpeg ("Import settings from stable" only reads/copies them).
 /// Shown after the version in the window title.
 pub const EDITION: &str = "Codecs";
-/// Folder name under %APPDATA% / %LOCALAPPDATA% (stable: "FFmpegEncoder").
-pub const DATA_DIR_NAME: &str = "FFmpegEncoder-Codecs";
-/// Stable version's folder name (read only, for importing).
-pub const STABLE_DATA_DIR_NAME: &str = "FFmpegEncoder";
+/// Leaf folder under `%APPDATA%\<publisher>` / `%LOCALAPPDATA%\<publisher>`.
+pub const DATA_DIR_NAME: &str = "Encode FFS (Codecs)";
+/// Pre-rebrand data folder name, directly under %APPDATA% / %LOCALAPPDATA%.
+pub const LEGACY_DATA_DIR_NAME: &str = "FFmpegEncoder-Codecs";
+/// Stable edition's leaf folder (under the publisher folder).
+pub const STABLE_DATA_DIR_NAME: &str = "Encode FFS";
+/// Stable edition's pre-rebrand folder, directly under %APPDATA% / %LOCALAPPDATA%.
+pub const LEGACY_STABLE_DATA_DIR_NAME: &str = "FFmpegEncoder";
 /// Prefix of the portable files next to the exe (stable: "FFmpegEncoder").
 pub const FILE_STEM: &str = "FFmpegEncoder-Codecs";
 pub const STABLE_FILE_STEM: &str = "FFmpegEncoder";
-/// Other editions' folders (their downloaded FFmpeg is never used or moved by this app).
-pub const OTHER_EDITION_DATA_DIR_NAMES: &[&str] = &["FFmpegEncoder", "FFmpegEncoder-Experimental"];
+/// Other editions' data folders, relative to %APPDATA% / %LOCALAPPDATA%
+/// (their downloaded FFmpeg is never used or moved by this app).
+pub const OTHER_EDITION_DATA_DIR_NAMES: &[&str] = &[
+    "FFmpegEncoder",
+    "FFmpegEncoder-Experimental",
+    "FFmpegEncoder-Slideshow",
+    "PrimeCrew Software/Encode FFS",
+];
+
+/// Relative path of this edition's data folder (`PrimeCrew Software\Encode FFS (Codecs)`).
+pub fn data_dir_rel() -> std::path::PathBuf {
+    std::path::PathBuf::from(PUBLISHER).join(DATA_DIR_NAME)
+}
+
+/// Relative path of this edition's pre-rebrand data folder (`FFmpegEncoder-Codecs`).
+pub fn legacy_data_dir_rel() -> std::path::PathBuf {
+    std::path::PathBuf::from(LEGACY_DATA_DIR_NAME)
+}
+
+/// Relative path of the current stable edition data folder.
+pub fn stable_data_dir_rel() -> std::path::PathBuf {
+    std::path::PathBuf::from(PUBLISHER).join(STABLE_DATA_DIR_NAME)
+}
+
+/// Relative path of the pre-rebrand stable data folder.
+pub fn legacy_stable_data_dir_rel() -> std::path::PathBuf {
+    std::path::PathBuf::from(LEGACY_STABLE_DATA_DIR_NAME)
+}
 
 pub mod import_stable;
 

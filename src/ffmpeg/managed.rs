@@ -1,5 +1,5 @@
 //! Where the app-managed FFmpeg lives (the copy the app downloads, updates and rolls back; not
-//! the user's own FFmpeg folder). Default: `%LOCALAPPDATA%\<data dir>\ffmpeg`. The user can choose
+//! the user's own FFmpeg folder). Default: `%LOCALAPPDATA%\PrimeCrew Software\Encode FFS\ffmpeg`. The user can choose
 //! another folder in Settings (0.6.0-dev.3 / 0.5.2); the managed copy is then `<folder>\bin`, with
 //! the rollback backup in `<folder>\bin.previous` and update staging next to them.
 //!
@@ -25,7 +25,7 @@ thread_local! {
     static OVERRIDE: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 
-/// The default location (`%LOCALAPPDATA%\<data dir>\ffmpeg`).
+/// The default location (`%LOCALAPPDATA%\PrimeCrew Software\Encode FFS\ffmpeg`).
 pub fn default_root() -> PathBuf {
     super::locate::local_app_dir().join("ffmpeg")
 }

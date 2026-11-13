@@ -171,6 +171,7 @@ impl LayoutRt {
     }
 
     /// Short description of what was restored (for the log).
+    #[allow(dead_code)]
     pub fn describe(&self) -> String {
         let p = &self.initial;
         let f = |v: Option<f32>| v.map_or("default".to_string(), |v| format!("{v:.0}"));

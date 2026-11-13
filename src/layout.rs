@@ -16,6 +16,12 @@ use serde::{Deserialize, Serialize};
 pub const PORTABLE_FILE: &str = "FFmpegEncoder-Codecs.layout.json";
 /// Layout file in the %APPDATA% folder (installed copies).
 pub const ROAMING_FILE: &str = "layout.json";
+
+/// Rewrite sidebar keys that still use the old “Experimental codecs” folder name.
+fn migrate_section_key(k: &str) -> String {
+    k.replace(crate::presets::EXPERIMENTAL_GROUP_OLD, crate::presets::EXPERIMENTAL_GROUP)
+}
+
 pub const FORMAT_VERSION: u32 = 1;
 
 /// Window size on first start / after "Reset window layout" (logical pixels).
@@ -177,7 +183,7 @@ impl Layout {
         if let Some(obj) = v.get("sections").and_then(|s| s.as_object()) {
             for (k, val) in obj {
                 if let Some(b) = val.as_bool() {
-                    sections.insert(k.clone(), b);
+                    sections.insert(migrate_section_key(k), b);
                 }
             }
         }
@@ -414,6 +420,17 @@ mod tests {
         // settings files from before this feature have no layout file at all -> defaults
         let s = crate::settings::Settings::from_json(r#"{"crf": 20}"#).unwrap();
         assert!(s.remember_layout, "on by default for older settings files");
+    }
+
+    #[test]
+    fn migrates_experimental_codecs_section_keys() {
+        let l = Layout::from_json(r#"{"sections": {"presets.group:Default Presets:Experimental codecs": false, "presets.group:Video": true}}"#);
+        assert_eq!(
+            l.sections.get("presets.group:Default Presets:Archive codecs").copied(),
+            Some(false)
+        );
+        assert!(l.sections.get("presets.group:Default Presets:Experimental codecs").is_none());
+        assert_eq!(l.sections.get("presets.group:Video").copied(), Some(true));
     }
 
     #[test]

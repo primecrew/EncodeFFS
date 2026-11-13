@@ -42,7 +42,7 @@ fn rules() -> managed::Rules {
     managed::Rules {
         current: managed::current_root().to_string_lossy().into_owned(),
         // the experimental edition's own data folder
-        protected: locate::local_app_dir().parent().map(|p| ffenc::OTHER_EDITION_DATA_DIR_NAMES.iter().map(|n| p.join(n).to_string_lossy().into_owned()).collect()).unwrap_or_default(),
+        protected: ffenc::OTHER_EDITION_DATA_DIR_NAMES.iter().map(|n| locate::local_data_base().join(n).to_string_lossy().into_owned()).collect(),
         system: managed::system_dirs(),
     }
 }
@@ -121,7 +121,7 @@ impl ManagedLocUi {
             let c = if *ok { ui.visuals().text_color() } else { ui.visuals().error_fg_color };
             ui.label(RichText::new(m).color(c));
         }
-        hint(ui, "Applies immediately (not with Save below). Default: %LOCALAPPDATA%\\FFmpegEncoder-Codecs\\ffmpeg.");
+        hint(ui, "Applies immediately (not with Save or Apply below). Default: %LOCALAPPDATA%\\PrimeCrew Software\\Encode FFS (Codecs)\\ffmpeg.");
         out
     }
 

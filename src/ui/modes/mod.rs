@@ -166,7 +166,17 @@ pub fn kinds() -> Vec<(&'static str, &'static str)> {
 
 /// Defaults derived from settings, shared by several modes.
 pub fn default_video(s: &Settings) -> ffenc::cmd::common::VideoEncode {
-    ffenc::cmd::common::VideoEncode { crf: s.crf, preset: s.preset.clone(), tune: None, ..Default::default() }
+    ffenc::cmd::common::VideoEncode {
+        crf: s.crf,
+        preset: s.preset.clone(),
+        tune: None,
+        codec: s.video_codec,
+        ten_bit: s.ten_bit,
+        svt_preset: s.svt_preset,
+        film_grain: s.film_grain,
+        film_grain_denoise: s.film_grain_denoise,
+        output_fps: String::new(),
+    }
 }
 
 pub fn default_audio(s: &Settings) -> ffenc::cmd::common::AudioEncode {
@@ -175,6 +185,8 @@ pub fn default_audio(s: &Settings) -> ffenc::cmd::common::AudioEncode {
         gain_db: s.gain_db,
         compressor: ffenc::cmd::common::CompressorPreset::None,
         advanced: s.compressor,
-        ..Default::default()
+        codec: s.audio_codec,
+        ac3_bitrate_k: s.ac3_bitrate_k,
+        source_channels: None,
     }
 }

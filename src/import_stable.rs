@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn codecs_data_is_separate_from_stable() {
-        use crate::ffmpeg::locate::{local_app_dir_named, managed_bin, stable_managed_bin};
+        use crate::ffmpeg::locate::{managed_bin, stable_managed_bin};
         use crate::settings::*;
         assert_ne!(crate::DATA_DIR_NAME, crate::STABLE_DATA_DIR_NAME);
         assert_eq!(PORTABLE_FILE, format!("{}.settings.json", crate::FILE_STEM));
@@ -164,14 +164,14 @@ mod tests {
         assert_ne!(crate::presets::presets_path_for(Path::new(PORTABLE_FILE)), crate::presets::presets_path_for(Path::new(STABLE_PORTABLE_FILE)));
         // folders
         assert!(roaming_dir().ends_with(crate::DATA_DIR_NAME));
-        assert_ne!(roaming_dir(), roaming_dir_named(crate::STABLE_DATA_DIR_NAME));
-        assert!(!settings_path().starts_with(roaming_dir_named(crate::STABLE_DATA_DIR_NAME)));
+        assert_ne!(roaming_dir(), roaming_base().join(crate::stable_data_dir_rel()));
+        assert!(!settings_path().starts_with(roaming_base().join(crate::stable_data_dir_rel())));
         for c in stable_settings_candidates() {
             assert_ne!(settings_path(), c, "never the stable settings file");
             assert_ne!(crate::presets::presets_path(), presets_path_for(&c), "never the stable presets file");
         }
         if std::env::var_os("FFENC_LOCAL_DIR").is_none() {
-            assert!(!managed_bin().starts_with(local_app_dir_named(crate::STABLE_DATA_DIR_NAME)), "own downloaded FFmpeg");
+            assert!(!managed_bin().starts_with(crate::ffmpeg::locate::local_data_base().join(crate::stable_data_dir_rel())), "own downloaded FFmpeg");
         }
         assert_ne!(managed_bin(), stable_managed_bin());
         assert!(logs_dir().starts_with(settings_path().parent().unwrap()));

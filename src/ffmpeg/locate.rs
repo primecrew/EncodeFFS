@@ -1,7 +1,7 @@
 //! Find ffmpeg/ffprobe. Resolution order:
 //! 1. the configured bin folder (settings)
 //! 2. an `ffmpeg` folder next to the app exe (`ffmpeg\` or `ffmpeg\bin\`)
-//! 3. the app-managed copy (default %LOCALAPPDATA%\FFmpegEncoder\ffmpeg\bin, or the folder
+//! 3. the app-managed copy (default %LOCALAPPDATA%\PrimeCrew Software\Encode FFS\ffmpeg\bin, or the folder
 //!    chosen in Settings › App-managed FFmpeg location)
 //! 4. PATH
 
@@ -75,40 +75,60 @@ pub fn exe_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// %LOCALAPPDATA%\FFmpegEncoder-Codecs (Linux: $XDG_DATA_HOME or ~/.local/share/FFmpegEncoder-Codecs).
+/// %LOCALAPPDATA% base (Linux: $XDG_DATA_HOME or ~/.local/share). No app folder appended.
+pub fn local_data_base() -> PathBuf {
+    if let Some(d) = std::env::var_os("LOCALAPPDATA") {
+        return PathBuf::from(d);
+    }
+    if let Some(d) = std::env::var_os("XDG_DATA_HOME") {
+        return PathBuf::from(d);
+    }
+    if let Some(h) = std::env::var_os("HOME") {
+        return PathBuf::from(h).join(".local/share");
+    }
+    std::env::temp_dir()
+}
+
+/// %LOCALAPPDATA%\PrimeCrew Software\Encode FFS (Codecs).
 pub fn local_app_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("FFENC_LOCAL_DIR") {
         return PathBuf::from(d); // override for tests
     }
-    local_app_dir_named(crate::DATA_DIR_NAME)
+    local_data_base().join(crate::data_dir_rel())
+}
+
+/// Pre-rebrand location: %LOCALAPPDATA%\FFmpegEncoder-Codecs.
+pub fn legacy_local_app_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("FFENC_LEGACY_LOCAL_DIR") {
+        return PathBuf::from(d);
+    }
+    local_data_base().join(crate::legacy_data_dir_rel())
 }
 
 /// `%LOCALAPPDATA%\<name>` (Linux: $XDG_DATA_HOME/<name> or ~/.local/share/<name>).
+/// `name` may be a relative path (`PrimeCrew Software/Encode FFS (Codecs)`).
 pub fn local_app_dir_named(name: &str) -> PathBuf {
-    if let Some(d) = std::env::var_os("LOCALAPPDATA") {
-        return PathBuf::from(d).join(name);
-    }
-    if let Some(d) = std::env::var_os("XDG_DATA_HOME") {
-        return PathBuf::from(d).join(name);
-    }
-    if let Some(h) = std::env::var_os("HOME") {
-        return PathBuf::from(h).join(".local/share").join(name);
-    }
-    std::env::temp_dir().join(name)
+    local_data_base().join(name)
 }
 
 /// The stable version's app-managed FFmpeg folder (never written by this edition).
+/// Prefers the current PrimeCrew path, then the pre-rebrand `%LOCALAPPDATA%\FFmpegEncoder` folder.
 pub fn stable_managed_bin() -> PathBuf {
-    local_app_dir_named(crate::STABLE_DATA_DIR_NAME).join("ffmpeg").join("bin")
+    let neu = local_data_base().join(crate::stable_data_dir_rel()).join("ffmpeg").join("bin");
+    if bin_dir_ok(&neu) {
+        neu
+    } else {
+        local_data_base().join(crate::legacy_stable_data_dir_rel()).join("ffmpeg").join("bin")
+    }
 }
 
 /// Root of the app-managed FFmpeg: the folder chosen in Settings, or by default
-/// `...\FFmpegEncoder\ffmpeg` (see [`super::managed`]).
+/// `...\PrimeCrew Software\Encode FFS (Codecs)\ffmpeg` (see [`super::managed`]).
 pub fn managed_root() -> PathBuf {
     super::managed::current_root()
 }
 
-/// `...\FFmpegEncoder\ffmpeg\bin`
+/// `...\<data dir>\ffmpeg\bin`
 pub fn managed_bin() -> PathBuf {
     managed_root().join("bin")
 }

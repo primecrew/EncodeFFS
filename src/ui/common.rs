@@ -300,6 +300,25 @@ pub fn section(ui: &mut Ui, title: &str) {
     ui.separator();
 }
 
+/// Heading that is safe to use as the first cell of a 2-column Grid row (no `add_space` / separator).
+/// Used by Create Slideshow on the stable edition.
+#[allow(dead_code)]
+pub fn grid_section(ui: &mut Ui, title: &str) {
+    ui.label(RichText::new(title).strong());
+    ui.label("");
+    ui.end_row();
+}
+
+/// Hover text wrapped to a modest width so large text size doesn't bury the panel.
+pub fn hover_tip(r: egui::Response, tip: impl Into<String>) -> egui::Response {
+    let tip = tip.into();
+    r.on_hover_ui(|ui| {
+        let w = (ui.text_style_height(&egui::TextStyle::Body) * 22.0).clamp(280.0, 480.0);
+        ui.set_max_width(w);
+        ui.label(tip);
+    })
+}
+
 pub fn num_f64(ui: &mut Ui, v: &mut f64, range: std::ops::RangeInclusive<f64>, speed: f64, suffix: &str) -> egui::Response {
     ui.add(egui::DragValue::new(v).range(range).speed(speed).suffix(suffix.to_string()).max_decimals(3))
 }
@@ -319,7 +338,7 @@ pub fn passthrough_ui(ui: &mut Ui, id: &str, p: &mut Passthrough) {
 }
 
 /// CRF / preset / tune rows (inside a Grid).
-pub fn video_encode_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, show_tune: bool) {
+pub fn video_encode_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, show_tune: bool, show_output_fps: bool) {
     row_label_tip(ui, "CRF", option_tips::CRF);
     ui.horizontal(|ui| {
         num_u32(ui, &mut v.crf, 0..=51, "");
@@ -338,11 +357,15 @@ pub fn video_encode_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, show_tune: bo
         let txt = v.tune.clone().unwrap_or_else(|| "none".into());
         egui::ComboBox::from_id_salt(format!("{id}_tune")).selected_text(txt).show_ui(ui, |ui| {
             ui.selectable_value(&mut v.tune, None, "none");
-            for (i, t) in TUNES.iter().enumerate() {
-                ui.selectable_value(&mut v.tune, Some(t.to_string()), format!("{}: {}", i + 1, t));
+            let extra = v.tune.as_ref().filter(|t| !TUNES.contains(&t.as_str()) && !t.is_empty()).cloned();
+            let tuns: Vec<String> = extra.into_iter().chain(TUNES.iter().map(|s| s.to_string())).collect();
+            for (i, tn) in tuns.iter().enumerate() {
+                ui.selectable_value(&mut v.tune, Some(tn.clone()), format!("{}: {}", i + 1, tn));
             }
         });
         ui.end_row();
+    }
+    if show_output_fps {
         output_fps_ui(ui, &mut v.output_fps);
     }
 }
@@ -636,7 +659,7 @@ pub fn row_label(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> egui::Respon
 
 /// [`row_label`] with a hover explanation (shown on the label) for options without their own help text.
 pub fn row_label_tip(ui: &mut Ui, text: &str, tip: &str) -> egui::Response {
-    row_label(ui, text).on_hover_text(tip)
+    hover_tip(row_label(ui, text), tip)
 }
 
 
@@ -717,9 +740,9 @@ pub fn conflict_warning_ui(ui: &mut Ui, c: &ffenc::cmd::conflicts::Conflict, sho
     let used_h = child.min_rect().height();
     let pad = ui.spacing().item_spacing.x.max(4.0);
     let cell_w = (ui.clip_rect().right() - pad - cell_left).max(ui.spacing().interact_size.x);
-    // Reserve only this grid cell's width so the form does not grow, but keep the child's height
-    // so the next row is not drawn under the wrapped text or the fix button.
-    ui.advance_cursor_after_rect(egui::Rect::from_min_size(egui::pos2(cell_left, top), egui::vec2(cell_w, used_h)));
+    // Reserve this cell's height so the next Grid row is not drawn under the wrapped text.
+    // allocate_exact_size is legal inside a Grid; advance_cursor_after_rect is not and panics.
+    ui.allocate_exact_size(egui::vec2(cell_w, used_h), egui::Sense::hover());
     action
 }
 
@@ -821,6 +844,39 @@ mod conflict_warning_layout_tests {
             });
         }
         (panel, block)
+    }
+
+    #[test]
+    fn conflict_warning_inside_a_real_grid_does_not_panic() {
+        // Production forms (range_ui, Frameserver) call this as a Grid cell, not inside ui.scope.
+        // advance_cursor_after_rect used to panic: "You cannot advance the cursor when in a grid layout".
+        let ctx = egui::Context::default();
+        ctx.set_pixels_per_point(1.0);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 800.0));
+        let mut next_top = 0.0;
+        let warn_bottom = 0.0;
+        for _ in 0..3 {
+            let _ = ctx.run(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    egui::Grid::new("form").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                        ui.label("Colour range");
+                        let mut on = true;
+                        ui.checkbox(&mut on, "Convert full-range to limited-range");
+                        ui.end_row();
+                        ui.label("");
+                        let _ = conflict_warning_ui(ui, &sample(), true);
+                        ui.end_row();
+                        next_top = ui.cursor().top();
+                        ui.label("Deinterlace");
+                        ui.checkbox(&mut on, "Deinterlace");
+                        ui.end_row();
+                    });
+                });
+            });
+        }
+        let _ = (next_top, warn_bottom);
+        // If we got here the Grid did not panic. The following row must sit below the warning.
+        assert!(next_top > 40.0, "grid reserved height for the warning, next row at {next_top}");
     }
 
     #[test]
