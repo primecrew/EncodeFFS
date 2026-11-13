@@ -16,6 +16,9 @@ fn main() {
     let pkg = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".into());
     let commas = file_version_commas(&pkg);
     let dotted = file_version_string(&pkg);
+    let assets = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("assets");
+    let ico = assets.join("app.ico").display().to_string().replace('\\', "/");
+    let manifest = assets.join("app.manifest").display().to_string().replace('\\', "/");
     let src = std::fs::read_to_string("assets/app.rc").expect("assets/app.rc");
     let mut out = String::new();
     for line in src.lines() {
@@ -28,6 +31,11 @@ fn main() {
             format!("      VALUE \"FileVersion\", \"{dotted}\"")
         } else if t.contains("\"ProductVersion\"") {
             format!("      VALUE \"ProductVersion\", \"{dotted}\"")
+        } else if t.starts_with("1 ICON") {
+            // Generated rc lives in OUT_DIR; point at the real asset files.
+            format!("1 ICON \"{ico}\"")
+        } else if t.starts_with("1 RT_MANIFEST") {
+            format!("1 RT_MANIFEST \"{manifest}\"")
         } else {
             line.to_string()
         };
@@ -36,5 +44,7 @@ fn main() {
     }
     let dest = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("app.rc");
     std::fs::write(&dest, out).expect("write generated app.rc");
-    let _ = embed_resource::compile(&dest, embed_resource::NONE).manifest_optional();
+    if let Err(err) = embed_resource::compile(&dest, embed_resource::NONE).manifest_optional() {
+        println!("cargo:warning=Windows resource compile failed: {err}");
+    }
 }
