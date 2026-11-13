@@ -5,7 +5,7 @@
 ; - Per-user install by default (no administrator rights): %LOCALAPPDATA%\Programs\<APP_DIRNAME>
 ; - Optional "for everyone" (Program Files; asks for administrator rights)
 ; - Start Menu shortcut under <PUBLISHER>\<APP_NAME> (default on), desktop shortcut (optional)
-; - On upgrade, old Start Menu / desktop shortcuts at the root (previous app name) are removed
+; - On upgrade, leftover Start Menu / desktop shortcuts from earlier names are removed
 ; - Listed in Add/Remove Programs (HKCU or HKLM ...\Uninstall\<APP_ID>)
 ; - Uninstall keeps settings/presets unless "Remove my settings and presets" is ticked
 ; - FFmpeg is not bundled (the app downloads it on request)
@@ -19,6 +19,9 @@ Target amd64-unicode
 !endif
 !ifndef PREV_APP_NAME
   !define PREV_APP_NAME "FFmpeg Encoder"
+!endif
+!ifndef PREV_BRAND_APP_NAME
+  !define PREV_BRAND_APP_NAME "FFS Just Encode"
 !endif
 !ifndef PUBLISHER
   !error "Build with scripts/build-release.sh (PUBLISHER is required)"
@@ -195,8 +198,9 @@ Section "Start Menu shortcut" SecStart
   ; Group this app with other PrimeCrew Software titles (Adobe-style brand folder)
   CreateDirectory "$SMPROGRAMS\${PUBLISHER}"
   CreateShortcut "$SMPROGRAMS\${PUBLISHER}\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}" "" "$INSTDIR\${APP_EXE}" 0
-  ; In-place upgrade: drop leftover shortcuts at the Start Menu root (old name, and
-  ; the current name if an earlier build placed it there) so they are not duplicated.
+  ; In-place upgrade: drop leftover shortcuts from earlier names so they are not duplicated.
+  Delete "$SMPROGRAMS\${PUBLISHER}\${PREV_BRAND_APP_NAME}.lnk"
+  Delete "$SMPROGRAMS\${PREV_BRAND_APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${PREV_APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${APP_NAME}.lnk"
 SectionEnd
@@ -204,9 +208,8 @@ SectionEnd
 Section /o "Desktop shortcut" SecDesktop
   !insertmacro SetMode
   CreateShortcut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}" "" "$INSTDIR\${APP_EXE}" 0
-  ${If} "${PREV_APP_NAME}" != "${APP_NAME}"
-    Delete "$DESKTOP\${PREV_APP_NAME}.lnk"
-  ${EndIf}
+  Delete "$DESKTOP\${PREV_BRAND_APP_NAME}.lnk"
+  Delete "$DESKTOP\${PREV_APP_NAME}.lnk"
 SectionEnd
 
 Function .onInit
@@ -267,10 +270,13 @@ Section "un.${APP_NAME}" UnSecApp
   SectionIn RO
   !insertmacro SetMode
   Delete "$SMPROGRAMS\${PUBLISHER}\${APP_NAME}.lnk"
+  Delete "$SMPROGRAMS\${PUBLISHER}\${PREV_BRAND_APP_NAME}.lnk"
   RMDir "$SMPROGRAMS\${PUBLISHER}" ; only if empty: other PrimeCrew apps keep the folder
   Delete "$SMPROGRAMS\${APP_NAME}.lnk"
+  Delete "$SMPROGRAMS\${PREV_BRAND_APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${PREV_APP_NAME}.lnk"
   Delete "$DESKTOP\${APP_NAME}.lnk"
+  Delete "$DESKTOP\${PREV_BRAND_APP_NAME}.lnk"
   Delete "$DESKTOP\${PREV_APP_NAME}.lnk"
   Delete "$INSTDIR\${APP_EXE}"
   Delete "$INSTDIR\README.md"

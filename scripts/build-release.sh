@@ -6,13 +6,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # ---- edition identity (stable edition, master)
-APP_NAME="FFS Just Encode"
+APP_NAME="Encode FFS"
 APP_ID="FFmpegEncoder"                        # Add/Remove Programs key; the experimental edition uses FFmpegEncoderExperimental
 APP_DIRNAME="FFmpeg Encoder"                 # install folder name
 FILE_STEM="FFmpegEncoder"                     # exe / zip / setup names
 DATA_DIR="FFmpegEncoder"                      # %APPDATA% / %LOCALAPPDATA% folder (src/lib.rs DATA_DIR_NAME)
 PUBLISHER="PrimeCrew Software"
-PREV_APP_NAME="FFmpeg Encoder"          # old Start Menu / desktop shortcut; removed on upgrade
+PREV_APP_NAME="FFmpeg Encoder"          # original Start Menu / desktop shortcut; removed on upgrade
+PREV_BRAND_APP_NAME="FFS Just Encode"   # 0.6.0-rc.3 visible name; brand-folder and root shortcuts removed on upgrade
 OUT_DIR="${OUT_DIR:-dist}"
 TARGET=x86_64-pc-windows-gnu
 
@@ -47,7 +48,7 @@ command -v makensis >/dev/null || { echo "makensis not found (apt install nsis)"
 SETUP="$OUT_DIR/$FILE_STEM-$VERSION-setup.exe"
 makensis -V2 -INPUTCHARSET UTF8 \
   -DAPP_NAME="$APP_NAME" -DAPP_ID="$APP_ID" -DAPP_DIRNAME="$APP_DIRNAME" -DAPP_EXE="$EXE" \
-  -DAPP_VERSION="$VERSION" -DVERSION4="$VERSION4" -DPUBLISHER="$PUBLISHER" -DPREV_APP_NAME="$PREV_APP_NAME" -DDATA_DIR="$DATA_DIR" \
+  -DAPP_VERSION="$VERSION" -DVERSION4="$VERSION4" -DPUBLISHER="$PUBLISHER" -DPREV_APP_NAME="$PREV_APP_NAME" -DPREV_BRAND_APP_NAME="$PREV_BRAND_APP_NAME" -DDATA_DIR="$DATA_DIR" \
   -DMARKER="$FILE_STEM.installed" -DICON="$PWD/assets/app.ico" -DEXE_PATH="$PWD/$BIN" -DSRC_DIR="$PWD" \
   -DOUTFILE="$PWD/$SETUP" installer/installer.nsi
 

@@ -10,8 +10,8 @@ BEGIN
   BEGIN
     BLOCK "040904B0"
     BEGIN
-      VALUE "FileDescription", "FFS Just Encode"
-      VALUE "ProductName", "FFS Just Encode"
+      VALUE "FileDescription", "Encode FFS"
+      VALUE "ProductName", "Encode FFS"
       VALUE "CompanyName", "PrimeCrew Software"
       VALUE "FileVersion", "0.5.1"
       VALUE "ProductVersion", "0.5.1"
