@@ -7,6 +7,10 @@
 ; - Start Menu shortcut under <PUBLISHER>\<APP_NAME> (default on), desktop shortcut (optional)
 ; - On upgrade, leftover Start Menu / desktop shortcuts from earlier names are removed
 ; - Listed in Add/Remove Programs (HKCU or HKLM ...\Uninstall\<APP_ID>)
+; - A newer setup detects that entry and upgrades in place (same folder and install mode);
+;   the welcome page says so, and the who/where pages are skipped. Same version or an older
+;   setup can reinstall with a note. If the app is running, setup asks you to close it first.
+;   Settings, presets and leftover portable files are not removed.
 ; - Uninstall keeps settings/presets unless "Remove my settings and presets" is ticked
 ; - FFmpeg is not in the installer (the app can use an existing install or download a copy)
 ; Silent: setup.exe /S [/ALLUSERS] [/DESKTOP] [/D=path]   uninstall.exe /S [/REMOVESETTINGS]
@@ -30,6 +34,7 @@ Target amd64-unicode
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
+!include "WordFunc.nsh"
 !include "nsDialogs.nsh"
 !include "x64.nsh"
 
@@ -55,6 +60,9 @@ Var AllUsers        ; 1 = for everyone (HKLM, Program Files)
 Var RadioMe
 Var RadioAll
 Var WantDesktop     ; 1 = desktop shortcut (silent /DESKTOP)
+Var Upgrade         ; 1 = existing install found (upgrade / reinstall / downgrade)
+Var InstalledVersion
+Var WelcomeMsg
 
 !define MUI_ICON "${ICON}"
 !define MUI_UNICON "${ICON}"
@@ -64,8 +72,10 @@ Var WantDesktop     ; 1 = desktop shortcut (silent /DESKTOP)
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${APP_EXE}"
 !define MUI_FINISHPAGE_RUN_TEXT "Start ${APP_NAME} now"
 
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW WelcomeShow
 !insertmacro MUI_PAGE_WELCOME
 Page custom InstallModePage InstallModeLeave
+!define MUI_PAGE_CUSTOMFUNCTION_PRE DirectoryPagePre
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
@@ -78,6 +88,203 @@ Page custom InstallModePage InstallModeLeave
 !insertmacro MUI_LANGUAGE "English"
 
 ; ------------------------------------------------------------------ helpers
+
+Function TrimDir
+  ; In/out: $0 — drop a trailing backslash (so $0\${APP_EXE} is a valid path)
+  Push $1
+  Push $2
+  StrLen $1 $0
+  ${If} $1 > 0
+    IntOp $1 $1 - 1
+    StrCpy $2 $0 1 $1
+    ${If} $2 == "\"
+      StrCpy $0 $0 $1
+    ${EndIf}
+  ${EndIf}
+  Pop $2
+  Pop $1
+FunctionEnd
+
+Function DetectExistingInstall
+  ; When no /D= was given: HKCU first (unless /ALLUSERS was already requested), then HKLM.
+  ; The folder must still contain ${APP_EXE}. Sets $INSTDIR, $AllUsers, $InstalledVersion, $Upgrade.
+  ${If} $AllUsers != 1
+    ClearErrors
+    ReadRegStr $0 HKCU "${UNINST_KEY}" "InstallLocation"
+    ${If} $0 != ""
+      Call TrimDir
+      ${If} ${FileExists} "$0\${APP_EXE}"
+        ClearErrors
+        ReadRegStr $1 HKCU "${UNINST_KEY}" "DisplayVersion"
+        StrCpy $INSTDIR $0
+        StrCpy $InstalledVersion $1
+        StrCpy $AllUsers 0
+        StrCpy $Upgrade 1
+        Return
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+  ClearErrors
+  ReadRegStr $0 HKLM "${UNINST_KEY}" "InstallLocation"
+  ${If} $0 != ""
+    Call TrimDir
+    ${If} ${FileExists} "$0\${APP_EXE}"
+      ClearErrors
+      ReadRegStr $1 HKLM "${UNINST_KEY}" "DisplayVersion"
+      StrCpy $INSTDIR $0
+      StrCpy $InstalledVersion $1
+      StrCpy $AllUsers 1
+      StrCpy $Upgrade 1
+      Return
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+
+Function SplitVer
+  ; In: $R0 = version; Out: $R1 = numeric prefix, $R2 = suffix after the first '-' (or empty)
+  Push $R3
+  Push $R4
+  StrCpy $R1 ""
+  StrCpy $R2 ""
+  StrCpy $R3 0
+  SplitVer_Loop:
+    StrCpy $R4 $R0 1 $R3
+    ${If} $R4 == ""
+      StrCpy $R1 $R0
+      Goto SplitVer_Done
+    ${EndIf}
+    ${If} $R4 == "-"
+      StrCpy $R1 $R0 $R3
+      IntOp $R3 $R3 + 1
+      StrCpy $R2 $R0 "" $R3
+      Goto SplitVer_Done
+    ${EndIf}
+    IntOp $R3 $R3 + 1
+    Goto SplitVer_Loop
+  SplitVer_Done:
+  Pop $R4
+  Pop $R3
+FunctionEnd
+
+Function CompareAppVersions
+  ; In: $R5 = installed version, $R6 = this setup's version
+  ; Out: $R7 = 0 same, 1 this setup is newer (upgrade), 2 this setup is older (downgrade)
+  ${If} $R5 == $R6
+    StrCpy $R7 0
+    Return
+  ${EndIf}
+  Push $R0
+  Push $R1
+  Push $R2
+  Push $R3
+  Push $R4
+  StrCpy $R0 $R5
+  Call SplitVer
+  StrCpy $R3 $R1
+  StrCpy $R4 $R2
+  StrCpy $R0 $R6
+  Call SplitVer
+  ${VersionCompare} "$R3" "$R1" $R7
+  ${If} $R7 == 0
+    ${If} $R4 == $R2
+      StrCpy $R7 0
+    ${ElseIf} $R4 == ""
+      ; installed is a release of the same numbers; this setup is a prerelease
+      StrCpy $R7 2
+    ${ElseIf} $R2 == ""
+      StrCpy $R7 1
+    ${Else}
+      ${VersionCompare} "$R4" "$R2" $R7
+      ${If} $R7 == 1
+        StrCpy $R7 2
+      ${ElseIf} $R7 == 2
+        StrCpy $R7 1
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+  Pop $R4
+  Pop $R3
+  Pop $R2
+  Pop $R1
+  Pop $R0
+FunctionEnd
+
+Function SetUpgradeWelcome
+  ${If} $InstalledVersion == ""
+    StrCpy $WelcomeMsg "${APP_NAME} is already installed. This will replace it in place with ${APP_VERSION}. Your settings and presets are kept.$\r$\n$\r$\n${APP_NAME} can use your existing FFmpeg install, or download a copy for you (Help › Check for FFmpeg updates…)."
+    Return
+  ${EndIf}
+  ${If} $InstalledVersion == "${APP_VERSION}"
+    StrCpy $WelcomeMsg "${APP_NAME} ${APP_VERSION} is already installed. This will reinstall it in place. Your settings and presets are kept.$\r$\n$\r$\n${APP_NAME} can use your existing FFmpeg install, or download a copy for you (Help › Check for FFmpeg updates…)."
+    Return
+  ${EndIf}
+  StrCpy $R5 $InstalledVersion
+  StrCpy $R6 "${APP_VERSION}"
+  Call CompareAppVersions
+  ${If} $R7 == 2
+    StrCpy $WelcomeMsg "${APP_NAME} $InstalledVersion is installed. This will replace it with ${APP_VERSION}, which is an older version. Your settings and presets are kept.$\r$\n$\r$\n${APP_NAME} can use your existing FFmpeg install, or download a copy for you (Help › Check for FFmpeg updates…)."
+  ${Else}
+    StrCpy $WelcomeMsg "${APP_NAME} $InstalledVersion is installed. This will upgrade it in place to ${APP_VERSION}. Your settings and presets are kept.$\r$\n$\r$\n${APP_NAME} can use your existing FFmpeg install, or download a copy for you (Help › Check for FFmpeg updates…)."
+  ${EndIf}
+FunctionEnd
+
+Function WelcomeShow
+  ${If} $Upgrade == 1
+  ${AndIf} $WelcomeMsg != ""
+    ${NSD_SetText} $mui.WelcomePage.Text "$WelcomeMsg"
+  ${EndIf}
+FunctionEnd
+
+Function DirectoryPagePre
+  ${If} $Upgrade == 1
+    Abort
+  ${EndIf}
+FunctionEnd
+
+Function ExeIsInUse
+  ; 1 if the installed exe is locked or a window with this app's title is open.
+  ${IfNot} ${FileExists} "$INSTDIR\${APP_EXE}"
+    Push 0
+    Return
+  ${EndIf}
+  ${If} $InstalledVersion != ""
+    FindWindow $0 "" "${APP_NAME} $InstalledVersion"
+    ${If} $0 != 0
+      Push 1
+      Return
+    ${EndIf}
+  ${EndIf}
+  FindWindow $0 "" "${APP_NAME} ${APP_VERSION}"
+  ${If} $0 != 0
+    Push 1
+    Return
+  ${EndIf}
+  System::Call 'kernel32::CreateFileW(w "$INSTDIR\${APP_EXE}", i 0x80000000, i 0, p 0, i 3, i 0, p 0) p .r0'
+  StrCmp $0 "-1" ExeIsInUse_Yes
+  StrCmp $0 "0xFFFFFFFF" ExeIsInUse_Yes
+  StrCmp $0 "0xFFFFFFFFFFFFFFFF" ExeIsInUse_Yes
+  System::Call 'kernel32::CloseHandle(p r0)'
+  Push 0
+  Return
+  ExeIsInUse_Yes:
+  Push 1
+FunctionEnd
+
+Function CheckAppNotRunning
+  CheckAppNotRunning_Retry:
+  Call ExeIsInUse
+  Pop $0
+  ${If} $0 == 0
+    Return
+  ${EndIf}
+  ${If} ${Silent}
+    SetErrorLevel 1618
+    Abort "${APP_NAME} is running. Close it and run setup again."
+  ${EndIf}
+  MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${APP_NAME} is running.$\r$\n$\r$\nPlease close it and click Retry to continue, or Cancel to stop setup." IDRETRY CheckAppNotRunning_Retry
+  Abort
+FunctionEnd
+
 !macro SetMode
   ${If} $AllUsers == 1
     SetShellVarContext all
@@ -110,8 +317,9 @@ Function DefaultDir
 FunctionEnd
 
 Function InstallModePage
-  ${If} $AllUsers == 1
-    Abort ; already elevated for everyone
+  ${If} $Upgrade == 1
+  ${OrIf} $AllUsers == 1
+    Abort ; upgrade in place, or already elevated for everyone
   ${EndIf}
   !insertmacro MUI_HEADER_TEXT "Who should get ${APP_NAME}?" "Choose whether to install it just for you or for everyone on this PC."
   nsDialogs::Create 1018
@@ -149,6 +357,7 @@ FunctionEnd
 Section "${APP_NAME} (required)" SecApp
   SectionIn RO
   !insertmacro SetMode
+  Call CheckAppNotRunning
   SetOutPath "$INSTDIR"
   File "/oname=${APP_EXE}" "${EXE_PATH}"
   File "/oname=README.md" "${SRC_DIR}\README.md"
@@ -215,6 +424,9 @@ SectionEnd
 Function .onInit
   StrCpy $AllUsers 0
   StrCpy $WantDesktop 0
+  StrCpy $Upgrade 0
+  StrCpy $InstalledVersion ""
+  StrCpy $WelcomeMsg ""
   ${GetParameters} $R0
   ClearErrors
   ${GetOptions} $R0 "/ALLUSERS" $R1
@@ -225,6 +437,11 @@ Function .onInit
   ${GetOptions} $R0 "/DESKTOP" $R1
   ${IfNot} ${Errors}
     StrCpy $WantDesktop 1
+  ${EndIf}
+  ; Elevate after DetectExistingInstall so an all-users upgrade can request rights.
+  ; /D=... on the command line sets $INSTDIR before .onInit; do not override it.
+  ${If} $INSTDIR == ""
+    Call DetectExistingInstall
   ${EndIf}
   ${If} $AllUsers == 1
     Call IsAdmin
@@ -238,9 +455,11 @@ Function .onInit
       Quit
     ${EndIf}
   ${EndIf}
-  ; /D=... on the command line sets $INSTDIR before .onInit
   ${If} $INSTDIR == ""
     Call DefaultDir
+  ${EndIf}
+  ${If} $Upgrade == 1
+    Call SetUpgradeWelcome
   ${EndIf}
   ${If} $WantDesktop == 1
     SectionGetFlags ${SecDesktop} $0
