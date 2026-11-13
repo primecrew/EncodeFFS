@@ -455,7 +455,7 @@ the exact FFmpeg command. It is kept across restarts in `logs\job-history.log` n
     next to the exe tells the app it was installed.
   - Uninstalling keeps your settings unless you tick **Remove my settings and presets** (that also deletes the
     downloaded FFmpeg in `%LOCALAPPDATA%\FFmpegEncoder`, never a folder you chose as App-managed FFmpeg location).
-  - FFmpeg is not bundled.
+  - Encode FFS can use your existing FFmpeg, or download a copy in the app (Help › Check for FFmpeg updates…).
   - **Silent install:** `setup.exe /S [/ALLUSERS] [/DESKTOP] [/D=C:\path]`; **silent uninstall:**
     `uninstall.exe /CURRENTUSER|/ALLUSERS /S [/REMOVESETTINGS]`.
 - **Building both:** `scripts/build-release.sh` (needs mingw-w64, `nsis`, python3) → `dist/` (exe, zip, setup.exe,

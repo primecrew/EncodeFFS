@@ -8,6 +8,8 @@ Create Slideshow is part of this stable build (the old **Slideshow** branch is a
 
 ## 0.6.0-rc.3
 
+- Installer and first-run wording offers to use your existing FFmpeg or download a copy in the app (Help › Check for FFmpeg updates…), instead of leading with “FFmpeg is not included”. Behaviour is unchanged: the installer does not download FFmpeg, and a download never overwrites your own FFmpeg folder.
+
 - The visible app name is now **Encode FFS**, and the publisher is **PrimeCrew Software** (window title, About box, installer display name, Add/Remove Programs, and the exe version-info resource). The Start Menu shortcut is **PrimeCrew Software\Encode FFS**; an upgrade removes leftover Start Menu shortcuts from earlier names (the previous shortcut in the PrimeCrew Software folder, and old names at the Start Menu root and on the desktop) so they are not duplicated, and uninstall removes the shortcut and the PrimeCrew Software folder if it is empty. The program file is still `FFmpegEncoder.exe`, settings and FFmpeg still live under `%LOCALAPPDATA%\FFmpegEncoder`, and an existing install upgrades in place (same install folder and Add/Remove Programs key).
 
 - Conflict warning text wraps to the window width, and the fix button (plus “Keep my setting” or the pre-run “Run as set” footer) sits on the next line at a natural width, so the button is not squeezed into a narrow column at small windows or large text.
