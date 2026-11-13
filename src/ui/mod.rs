@@ -1308,7 +1308,8 @@ impl App {
             let mut download = false;
             common::fit(egui::Window::new(if dl.first_run { "Welcome – where is FFmpeg?" } else { "Locate FFmpeg" }).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
                 ui.set_max_width(620.0);
-                ui.label("Select the folder that contains ffmpeg.exe and ffprobe.exe.");
+                ui.label(format!("{} can use your existing FFmpeg, or download a copy for you.", ffenc::APP_NAME));
+                ui.label("Select the folder that contains ffmpeg.exe and ffprobe.exe, or choose Download below.");
                 hint(ui, "ffmpeg does the encoding; ffprobe (from the same folder) reads each input's duration, streams, interlacing and chapters.");
                 if let (Some(f), true) = (&self.ff, !invalid) {
                     hint(ui, format!("Currently using {} ({}).", f.bin_dir.display(), f.source.label()));

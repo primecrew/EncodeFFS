@@ -8,7 +8,7 @@
 ; - On upgrade, leftover Start Menu / desktop shortcuts from earlier names are removed
 ; - Listed in Add/Remove Programs (HKCU or HKLM ...\Uninstall\<APP_ID>)
 ; - Uninstall keeps settings/presets unless "Remove my settings and presets" is ticked
-; - FFmpeg is not bundled (the app downloads it on request)
+; - FFmpeg is not in the installer (the app can use an existing install or download a copy)
 ; Silent: setup.exe /S [/ALLUSERS] [/DESKTOP] [/D=path]   uninstall.exe /S [/REMOVESETTINGS]
 
 Unicode true
@@ -60,7 +60,7 @@ Var WantDesktop     ; 1 = desktop shortcut (silent /DESKTOP)
 !define MUI_UNICON "${ICON}"
 !define MUI_ABORTWARNING
 !define MUI_COMPONENTSPAGE_SMALLDESC
-!define MUI_WELCOMEPAGE_TEXT "This installs ${APP_NAME} ${APP_VERSION}.$\r$\n$\r$\nIt keeps its own settings and presets and does not change any other edition of the app.$\r$\n$\r$\nFFmpeg itself is not included: the app can download it for you (Help › Check for FFmpeg updates), or use a folder you already have."
+!define MUI_WELCOMEPAGE_TEXT "This installs ${APP_NAME} ${APP_VERSION}.$\r$\n$\r$\nIt keeps its own settings and presets and does not change any other edition of the app.$\r$\n$\r$\n${APP_NAME} can use your existing FFmpeg install, or download a copy for you (Help › Check for FFmpeg updates…)."
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${APP_EXE}"
 !define MUI_FINISHPAGE_RUN_TEXT "Start ${APP_NAME} now"
 
@@ -250,7 +250,7 @@ Function .onInit
 FunctionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecApp} "The program (FFmpeg is not included)."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecApp} "The program. You can use your existing FFmpeg, or download a copy in the app."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecStart} "A shortcut in the Start Menu, under ${PUBLISHER}."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} "A shortcut on the desktop."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
