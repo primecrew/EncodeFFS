@@ -1,12 +1,12 @@
 # Changelog
 
-User-facing history for **FFS Just Encode (Codecs)** (`codecs`, `FFmpegEncoder-Codecs.exe`). Developer notes are in [NOTES.md](NOTES.md).
+User-facing history for **Encode FFS (Codecs)** (`codecs`, `FFmpegEncoder-Codecs.exe`). Developer notes are in [NOTES.md](NOTES.md).
 
 This edition is experimental and is not merged into the stable build. It includes the stable toolset plus optional HEVC/AV1 video and AC3 audio.
 
 ## Unreleased
 
-- The visible app name is now **FFS Just Encode (Codecs)**, and the publisher is **PrimeCrew Software** (window title, About box, installer display name, Add/Remove Programs, and the exe version-info resource). The Start Menu shortcut is **PrimeCrew Software\FFS Just Encode (Codecs)**, in the same brand folder as the stable app; an upgrade removes the old root shortcut named FFmpeg Encoder (Codecs) so it is not duplicated, and uninstall removes the shortcut and the PrimeCrew Software folder if it is empty. The program file is still `FFmpegEncoder-Codecs.exe`, settings and FFmpeg still live under `%LOCALAPPDATA%\FFmpegEncoder-Codecs`, and an existing install upgrades in place (same install folder and Add/Remove Programs key).
+- The visible app name is now **Encode FFS (Codecs)**, and the publisher is **PrimeCrew Software** (window title, About box, installer display name, Add/Remove Programs, and the exe version-info resource). The Start Menu shortcut is **PrimeCrew Software\Encode FFS (Codecs)**, in the same brand folder as the stable app; an upgrade removes leftover Start Menu shortcuts from earlier names (the previous shortcut in the PrimeCrew Software folder, and old names at the Start Menu root and on the desktop) so they are not duplicated, and uninstall removes the shortcut and the PrimeCrew Software folder if it is empty. The program file is still `FFmpegEncoder-Codecs.exe`, settings and FFmpeg still live under `%LOCALAPPDATA%\FFmpegEncoder-Codecs`, and an existing install upgrades in place (same install folder and Add/Remove Programs key).
 
 - Conflict warning text wraps to the window width, and the fix button (plus “Keep my setting” or the pre-run “Run as set” footer) sits on the next line at a natural width, so the button is not squeezed into a narrow column at small windows or large text.
 - Advanced compressor controls are easier to find: the Compressor drop-down uses **advanced…**, and the ratio, threshold, knee, attack, release and make-up gain fields appear in that order (after the Gain / pre-gain row) when Advanced is selected. Audio & subtitles now shows those controls under the track list. File › Settings lists them as **Advanced compressor defaults**.
