@@ -369,7 +369,26 @@ pub fn can_switch_to_managed_for_any(
     current_enc: Option<&Encoders>,
     managed_enc: Option<&Encoders>,
 ) -> bool {
-    ["libx265", "libsvtav1", "ac3"].iter().any(|e| can_switch_to_managed(current, current_enc, managed_enc, e))
+    switch_under_video(current, current_enc, managed_enc) || switch_under_audio(current, current_enc, managed_enc)
+}
+
+/// Show the switch button under the video picker when a missing video encoder is in the managed copy.
+pub fn switch_under_video(
+    current: Option<&crate::ffmpeg::locate::FfPaths>,
+    current_enc: Option<&Encoders>,
+    managed_enc: Option<&Encoders>,
+) -> bool {
+    ["libx265", "libsvtav1"].iter().any(|e| can_switch_to_managed(current, current_enc, managed_enc, e))
+}
+
+/// Show the switch button under the audio picker only when AC3 is the reason (not also a video encoder).
+pub fn switch_under_audio(
+    current: Option<&crate::ffmpeg::locate::FfPaths>,
+    current_enc: Option<&Encoders>,
+    managed_enc: Option<&Encoders>,
+) -> bool {
+    !switch_under_video(current, current_enc, managed_enc)
+        && can_switch_to_managed(current, current_enc, managed_enc, "ac3")
 }
 
 /// Probe-based note: 10-bit output from an 8-bit source.
@@ -545,6 +564,16 @@ mod tests {
         assert!(!can_switch_to_managed(Some(&mg), Some(&thin), Some(&full), "libx265"), "already on managed");
         assert!(!can_switch_to_managed(Some(&own), None, Some(&full), "libx265"), "current encoders unknown");
         assert!(!can_switch_to_managed(Some(&own), Some(&thin), None, "libx265"), "managed not probed");
+
+        // One button per form: prefer the video picker; only AC3 missing → audio picker.
+        assert!(switch_under_video(Some(&own), Some(&thin), Some(&full)));
+        assert!(!switch_under_audio(Some(&own), Some(&thin), Some(&full)), "video takes priority when both are missing");
+        let no_video = Encoders { libx265: true, libsvtav1: true, ac3: false };
+        assert!(!switch_under_video(Some(&own), Some(&no_video), Some(&full)));
+        assert!(switch_under_audio(Some(&own), Some(&no_video), Some(&full)));
+        let hevc_only = Encoders { libx265: false, libsvtav1: true, ac3: true };
+        assert!(switch_under_video(Some(&own), Some(&hevc_only), Some(&full)));
+        assert!(!switch_under_audio(Some(&own), Some(&hevc_only), Some(&full)));
     }
 
     #[test]

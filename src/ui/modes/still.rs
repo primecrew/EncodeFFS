@@ -79,7 +79,7 @@ impl Mode for StillMode {
         "MP4 from still image"
     }
     fn description(&self) -> &'static str {
-        "Loop a PNG/JPG over an audio file (H.264 stillimage + AAC by default)."
+        "One image + one audio file -> MP4 video."
     }
     fn run_fields(&self) -> &'static [&'static str] {
         &["image", "audio", "out_name", "last_auto"]

@@ -620,7 +620,7 @@ impl Mode for SlideshowMode {
         "Create Slideshow"
     }
     fn description(&self) -> &'static str {
-        "Images → H.264/AAC MP4 slideshow. Per-image length (default 5 s), fixed total, or match audio. Crossfades when FFmpeg has xfade; otherwise hard cuts."
+        "Images → MP4 slideshow. Per-image length (default 5 s), fixed total, or match audio. Crossfades when FFmpeg has xfade; otherwise hard cuts."
     }
     fn run_fields(&self) -> &'static [&'static str] {
         &["images", "audio", "out_name", "last_auto"]

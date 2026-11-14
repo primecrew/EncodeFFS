@@ -24,6 +24,10 @@ Create Slideshow is part of this stable build (the old **Slideshow** branch is a
 
 - The program file is now `Encode FFS.exe` (the crate, repo, zip and setup names stay `FFmpegEncoder`). An installer upgrade deletes a leftover `FFmpegEncoder.exe` from the install folder and repoints shortcuts. A portable copy still reads `FFmpegEncoder.settings.json` next to the exe.
 
+- The **Using:** line under the codec picker is normal body text (full-strength colour, not small or grey). The **Switch to the app-managed FFmpeg** button is shown once per form: under the video picker when a missing video encoder is in the managed copy, or under the audio picker if only AC3 is the reason.
+
+- The MP4 from still image subtitle is now “One image + one audio file -> MP4 video.” Create Slideshow’s subtitle no longer hard-codes H.264/AAC either (the defaults are unchanged).
+
 
 ## 0.6.0-rc.2
 
