@@ -275,7 +275,7 @@ impl Default for Settings {
             trim_end: 0.0,
             gain_db: 0.0,
             compressor: CompressorParams::default(),
-            commentary_name: "Commentary Track".into(),
+            commentary_name: "Additional audio".into(),
             fallback_sample_rate: 48000,
             update_source: UpdateSource::BtbN,
             update_channel: UpdateChannel::Stable,
@@ -657,7 +657,7 @@ mod tests {
         assert_eq!((s.crf, s.audio_bitrate_k, s.preset.as_str()), (22, 192, "slow"));
         assert_eq!(s.chapter_interval_min, 5.0);
         assert_eq!(s.compressor, CompressorParams::default());
-        assert_eq!(s.commentary_name, "Commentary Track");
+        assert_eq!(s.commentary_name, "Additional audio");
         assert_eq!(s.fallback_sample_rate, 48000);
         assert!(s.validate().is_ok());
     }

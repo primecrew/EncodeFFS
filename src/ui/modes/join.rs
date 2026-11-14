@@ -326,6 +326,9 @@ impl Mode for JoinMode {
         }
         if self.st.method == JoinMethod::Reencode {
             hint(ui, "Every file is scaled/padded to the first file's size and frame rate; audio is resampled to its rate (mono or stereo).");
+            if ready.iter().any(|f| f.audio_tracks > 1) {
+                warn(ui, "Some files have more than one audio track. Only the first track of each file will be in the joined file.");
+            }
             section(ui, &format!("Video ({})", self.st.video.codec.encoder()));
             egui::Grid::new("joinv").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| crate::ui::codecs_ui::video_codec_ui(ui, "join", &mut self.st.video, None, &cx.ff_status()));
             section(ui, "Audio");

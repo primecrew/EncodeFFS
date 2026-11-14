@@ -274,7 +274,7 @@ fn all_modes_end_to_end() {
 
     // ---- Mode 4 extract WAV
     let sr = two.first_audio_sample_rate().unwrap_or(48000);
-    let pr = extract::ExtractParams { input: d.join("two_audio.mkv"), output: out.join("two_audio_audio.wav"), sample_rate: sr };
+    let pr = extract::ExtractParams { input: d.join("two_audio.mkv"), output: out.join("two_audio_audio.wav"), sample_rate: sr, map_audio: None };
     assert_ok(&run(&env, vec![spec("extract", extract::build(&pr).unwrap(), &pr.output, None)], None), "extract");
     let j = probe_json(&env, &pr.output);
     let a = streams(&j, "audio")[0];

@@ -315,6 +315,9 @@ pub fn build(pr: &CustomParams) -> Result<BuiltCommand, String> {
             }
         }
         AudioAction::Replace => {
+            if pr.audio_count > 1 {
+                warnings.push(format!("The video has {} audio tracks; all of them are replaced by the WAV.", pr.audio_count));
+            }
             a.push_all(["-map".to_string(), format!("{}:a:0", audio_idx.unwrap())]);
             a.extend(pr.audio_encode.aac_args());
             if let Some(c) = &chain {
@@ -633,8 +636,10 @@ mod tests {
         pr.audio_file = Some("/a/voice.wav".into());
         pr.audio_encode.gain_db = 3.0;
         pr.trim_start = 2.0;
-        let j = build(&pr).unwrap().args.join(" ");
+        let c = build(&pr).unwrap();
+        let j = c.args.join(" ");
         assert!(j.starts_with("-y -ss 2 -i /in/a b.mkv -ss 2 -i /a/voice.wav -t 98 -map 0:V? -c:v copy -map 1:a:0 -c:a aac -b:a 192k -filter:a volume=3dB"), "{j}");
+        assert!(c.warnings.iter().any(|w| w == "The video has 2 audio tracks; all of them are replaced by the WAV."), "{:?}", c.warnings);
 
         pr.audio = AudioAction::AddTrack;
         pr.track_title = "Commentary".into();

@@ -85,7 +85,7 @@ frame, a banner names the preset, and every field that accepts a drop (input fil
 highlighted. Empty input fields read "Drop a file here, or Browse…"; Browse… always works too. After the drop a short
 note says "Added to …" or that nothing in the drop fits that preset.
 - **Single-file presets** take the first matching file: a dropped folder is expanded to the files inside it (natural
-  name order), so dropping a folder on Re-encode picks its first video. Presets with a second input (commentary audio,
+  name order), so dropping a folder on Re-encode picks its first video. Presets with a second input (additional audio,
   replacement WAV, subtitle file, still image + audio) fill those from the same drop.
 - **Folder presets** (Batch re-encode, Remux, Custom pipeline in batch mode) use the dropped folder (or the folder of a
   dropped file).
@@ -263,8 +263,8 @@ Everything in the preset panel is a **preset**: a named, saved set of options fo
 |------|--------------|
 | Re-encode video | libx264 + AAC. Trim start/end, duration override, resize (keeps aspect, even dims), full→limited range + BT.709 tags, bwdif deinterlace (auto when interlaced), gain + compressor (light/medium/strong/custom), chapters (off / every N min / manual list / both), passthrough video or audio, container (auto/mp4/mkv/mov), name suffix, faststart. Keeps all audio tracks with titles/languages, subtitles, attachments where the container allows. |
 | MP4 from still image | Image + audio → H.264 MP4 by default (tune stillimage, RGB→BT.709 limited); optional HEVC / AV1 / AC3. Length = audio (`-shortest`) or fixed seconds. |
-| Add commentary track | Copies video + all original audio, adds an audio file as a new AAC track named “Commentary Track” (configurable). |
-| Extract audio to WAV | Picks a track; PCM s16le, original sample rate (fallback 48000), stereo. |
+| Add Additional Audio Track | Copies video + all original audio, adds an audio file as a new AAC track named “Additional audio” (configurable). |
+| Extract audio to WAV | PCM s16le, stereo, at the chosen track’s sample rate (fallback 48000). Files with several audio tracks warn and let you extract the default track, a specific track, or each track to its own WAV (`<name> - Track 2 - Mic.wav`). |
 | Replace primary audio | Video copied, audio replaced by a WAV encoded to AAC, optional gain/compressor. |
 | Mix audio tracks (MKV) | amix of ≥2 tracks into one AAC track; video copied; chapters kept. |
 | Batch re-encode folder | Scans a folder, probes every file, include/exclude per file, same options as re-encode, per-file progress + summary. |
@@ -455,7 +455,7 @@ Stored as JSON. Portable first: `FFmpegEncoder-Codecs.settings.json` next to the
 otherwise `%APPDATA%\PrimeCrew Software\Encode FFS (Codecs)\settings.json`. Logs go to `logs\` next to the settings file
 (app log rotates at 5 MB). **Help › Open settings file / Open logs folder** jump there.
 File › Settings… edits the defaults (script values: CRF 22, preset slow, AAC 192k, chapters 5 min, compressor
--18 dB / 2:1 / knee 4 / +2 dB / 20 ms / 250 ms, commentary name, fallback 48000 Hz). Input and output folders are
+-18 dB / 2:1 / knee 4 / +2 dB / 20 ms / 250 ms, added audio track name, fallback 48000 Hz). Input and output folders are
 app-level (not stored in presets): on first run they are the Windows Videos folder; whatever you pick is remembered
 across restarts, preset switches and File › New. Built-in presets you haven't customised follow the encode defaults.
 
