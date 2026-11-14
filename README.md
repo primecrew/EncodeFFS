@@ -269,7 +269,7 @@ Everything in the preset panel is a **preset**: a named, saved set of options fo
 | Mix audio tracks (MKV) | amix of ≥2 tracks into one AAC track; video copied; chapters kept. |
 | Batch re-encode folder | Scans a folder, probes every file, include/exclude per file, same options as re-encode, per-file progress + summary. |
 | Copy subtitle tracks | Re-mux or re-encode with chosen subtitle tracks from a second file; MP4 converts text subs to mov_text (or try copy). |
-| Remux MKV → MP4 | Stream copy, never overwrites, optional delete of source only after the MP4 verifies; summary in the script's wording. |
+| Remux MKV → MP4 | Stream copy, never overwrites, optional delete of source only after the MP4 verifies; warns when an audio or subtitle track (or attachments) cannot be copied into MP4, or when FLAC/Opus/Vorbis/PCM may not play in many players; summary in the script's wording. |
 | **Join / stitch files** | Concatenate several videos: lossless concat demuxer or re-encode with the concat filter, chapter per file (see above). |
 | **Audio & subtitles** | Keep/remove/rename/reorder tracks, add commentary or second-language audio, replace audio, add/remove subtitles, extract audio or subtitles (see above). |
 | **Frameserver (AviSynth script)** | DebugMode FrameServer signpost .avi -> generated AviSynth script -> H.264/AAC by default (or HEVC / AV1 and AC3 / copy) in MP4/MKV (see above). |

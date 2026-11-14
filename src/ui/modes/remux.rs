@@ -1,5 +1,6 @@
 //! Mode 9 – remux MKV -> MP4 (container copy, never overwrite).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::{restore, Ctx, Mode, Plan};
 use crate::ui::common::*;
 use ffenc::cmd::remux;
+use ffenc::ffmpeg::probe::{self, MediaInfo};
 use ffenc::ffmpeg::runner::{JobSpec, PostAction};
 use ffenc::settings::Settings;
 
@@ -28,6 +30,8 @@ pub struct RemuxMode {
     files: Vec<(PathBuf, bool)>,
     listed_dir: Option<String>,
     list_error: Option<String>,
+    probes: HashMap<PathBuf, Result<MediaInfo, String>>,
+    scan: Option<Bg<Vec<(PathBuf, Result<MediaInfo, String>)>>>,
 }
 
 fn list_mkv(dir: &Path) -> Result<Vec<PathBuf>, String> {
@@ -45,6 +49,8 @@ impl RemuxMode {
     fn refresh(&mut self) {
         self.listed_dir = Some(self.st.src_dir.clone());
         self.list_error = None;
+        self.probes.clear();
+        self.scan = None;
         match list_mkv(Path::new(self.st.src_dir.trim())) {
             Ok(v) => self.files = v.into_iter().map(|p| (p, true)).collect(),
             Err(e) => {
@@ -66,6 +72,47 @@ impl RemuxMode {
         } else {
             PathBuf::from(self.st.out_dir.trim())
         }
+    }
+
+    fn poll_probes(&mut self, cx: &Ctx) {
+        if let Some(t) = &self.scan {
+            if let Some(list) = t.poll() {
+                self.scan = None;
+                for (p, r) in list {
+                    self.probes.insert(p, r);
+                }
+            }
+        }
+        self.start_probes(cx);
+    }
+
+    fn start_probes(&mut self, cx: &Ctx) {
+        if self.scan.is_some() {
+            return;
+        }
+        let Some(fp) = cx.ffprobe.map(|p| p.to_path_buf()) else {
+            return;
+        };
+        let pending: Vec<PathBuf> = self.files.iter().map(|(p, _)| p.clone()).filter(|p| !self.probes.contains_key(p)).collect();
+        if pending.is_empty() {
+            return;
+        }
+        self.scan = Some(Bg::spawn(cx.egui, move || pending.into_iter().map(|p| {
+            let r = probe::probe(&fp, &p);
+            (p, r)
+        }).collect()));
+    }
+
+    fn warnings_for(&self, path: &Path) -> Vec<String> {
+        let Some(Ok(info)) = self.probes.get(path) else {
+            return vec![];
+        };
+        Self::warnings_for_info(path, info)
+    }
+
+    fn warnings_for_info(path: &Path, info: &MediaInfo) -> Vec<String> {
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string());
+        remux::copy_warnings(info).into_iter().map(|w| format!("{name}: {w}")).collect()
     }
 }
 
@@ -89,6 +136,7 @@ impl Mode for RemuxMode {
         if self.listed_dir.is_none() && PathBuf::from(self.st.src_dir.trim()).is_dir() {
             self.refresh();
         }
+        self.poll_probes(cx);
         let mut refresh = false;
         egui::Grid::new("m9").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             if path_row(ui, "Source folder", &mut self.st.src_dir, Pick::Folder, &cx.settings.input_folder) && PathBuf::from(self.st.src_dir.trim()).is_dir() {
@@ -147,9 +195,26 @@ impl Mode for RemuxMode {
         });
         ui.add_space(6.0);
         ui.checkbox(&mut self.st.delete_sources, egui::RichText::new("Delete successfully converted source MKVs").color(crate::ui::theme::c().err));
-        hint(ui, "All tracks are copied. If a track is incompatible with MP4 that job fails and its MKV is kept.");
+        for (p, on) in &self.files {
+            if !*on {
+                continue;
+            }
+            if dest_dir.join(format!("{}.mp4", ffenc::util::stem(p))).exists() {
+                continue;
+            }
+            for w in self.warnings_for(p) {
+                warn(ui, w);
+            }
+        }
+        if self.scan.is_some() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Checking tracks for MP4 compatibility…");
+            });
+        }
+        hint(ui, "All tracks are copied as they are. If a job fails, its MKV is kept.");
     }
-    fn build(&mut self, _cx: &Ctx) -> Result<Plan, String> {
+    fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
         let selected: Vec<PathBuf> = self.files.iter().filter(|f| f.1).map(|f| f.0.clone()).collect();
         if selected.is_empty() {
             return Err("Select at least one MKV file.".into());
@@ -170,16 +235,22 @@ impl Mode for RemuxMode {
         let jobs = plan
             .jobs
             .iter()
-            .map(|j| JobSpec {
-                label: format!("Remux {} -> {}", j.source.file_name().unwrap_or_default().to_string_lossy(), j.dest.file_name().unwrap_or_default().to_string_lossy()),
-                args: remux::args(j),
-                output: Some(j.temp.clone()),
-                log_file: Some(log_path_for(&j.dest)),
-                duration_s: None,
-                side_files: vec![],
-                keep_side_files: false,
-                post: PostAction::Remux { temp: j.temp.clone(), dest: j.dest.clone(), delete_source: self.st.delete_sources.then(|| j.source.clone()) },
-                warnings: vec![],
+            .map(|j| {
+                let info = self.probes.get(&j.source).and_then(|r| r.as_ref().ok()).cloned().or_else(|| {
+                    cx.ffprobe.and_then(|fp| probe::probe(fp, &j.source).ok())
+                });
+                let warnings = info.map(|i| Self::warnings_for_info(&j.source, &i)).unwrap_or_default();
+                JobSpec {
+                    label: format!("Remux {} -> {}", j.source.file_name().unwrap_or_default().to_string_lossy(), j.dest.file_name().unwrap_or_default().to_string_lossy()),
+                    args: remux::args(j),
+                    output: Some(j.temp.clone()),
+                    log_file: Some(log_path_for(&j.dest)),
+                    duration_s: None,
+                    side_files: vec![],
+                    keep_side_files: false,
+                    post: PostAction::Remux { temp: j.temp.clone(), dest: j.dest.clone(), delete_source: self.st.delete_sources.then(|| j.source.clone()) },
+                    warnings,
+                }
             })
             .collect();
         Ok(Plan { jobs, group: Some(("Remux".into(), true, plan.skipped.len())), notes })
@@ -204,5 +275,7 @@ impl Mode for RemuxMode {
         }
         self.files.clear();
         self.listed_dir = None;
+        self.probes.clear();
+        self.scan = None;
     }
 }

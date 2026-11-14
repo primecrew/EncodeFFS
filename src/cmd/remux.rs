@@ -4,6 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use super::p;
+use crate::ffmpeg::probe::MediaInfo;
 use crate::util::stem;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,6 +106,79 @@ impl RemuxSummary {
     }
 }
 
+/// Audio codecs the FFmpeg 7.1+ MP4 muxer can stream-copy (`codec_mp4_tags`
+/// in `libavformat/movenc.c`). `truehd` is listed there but needs
+/// `-strict experimental`, which this preset does not pass, so it is omitted.
+const MP4_COPY_AUDIO: &[&str] = &[
+    "aac", "alac", "mp4als", "mp3", "mp2", "ac3", "eac3", "dts", "dca", "flac", "opus", "vorbis", "qcelp",
+    "evrc", "mpegh_3d_audio", "pcm_s16be", "pcm_s16le", "pcm_s24be", "pcm_s24le", "pcm_s32be", "pcm_s32le",
+    "pcm_f32be", "pcm_f32le", "pcm_f64be", "pcm_f64le",
+];
+
+/// FFmpeg will store these in MP4, but everyday players often cannot play them
+/// (FLAC/Opus/Vorbis; PCM uses the little-used ISO/IEC 23003-5 `ipcm`/`fpcm` tags).
+const MP4_LIMITED_PLAYER_AUDIO: &[&str] = &[
+    "flac", "opus", "vorbis", "pcm_s16be", "pcm_s16le", "pcm_s24be", "pcm_s24le", "pcm_s32be", "pcm_s32le",
+    "pcm_f32be", "pcm_f32le", "pcm_f64be", "pcm_f64le",
+];
+
+/// Subtitle codecs the MP4 muxer can stream-copy (`codec_mp4_tags`). ASS, SRT,
+/// WebVTT and PGS are not on that list and fail with `-c copy`.
+const MP4_COPY_SUB: &[&str] = &["mov_text", "tx3g", "dvd_subtitle", "ttml"];
+
+pub fn codec_label(codec: &str) -> String {
+    match codec {
+        "truehd" => "TrueHD".into(),
+        "mlp" => "MLP".into(),
+        "flac" => "FLAC".into(),
+        "opus" => "Opus".into(),
+        "vorbis" => "Vorbis".into(),
+        "subrip" | "srt" => "SRT".into(),
+        "ass" | "ssa" => "ASS".into(),
+        "webvtt" => "WebVTT".into(),
+        "hdmv_pgs_subtitle" => "PGS".into(),
+        "dvd_subtitle" => "DVD".into(),
+        "dvb_subtitle" => "DVB".into(),
+        "eia_608" => "EIA-608".into(),
+        "mov_text" | "tx3g" => "mov_text".into(),
+        c if c.starts_with("pcm_") => format!("PCM {}", c.trim_start_matches("pcm_")),
+        c => c.to_string(),
+    }
+}
+
+fn norm(codec: &str) -> String {
+    codec.trim().to_ascii_lowercase()
+}
+
+/// Warnings for streams that `-map 0 -c copy` into MP4 will reject, or that
+/// many players will not play. Does not change the remux command (warn, don't block).
+pub fn copy_warnings(info: &MediaInfo) -> Vec<String> {
+    let mut out = Vec::new();
+    for (i, a) in info.of_type("audio").enumerate() {
+        let c = norm(&a.codec_name);
+        let label = format!("Track {} ({})", i + 1, codec_label(&c));
+        if !MP4_COPY_AUDIO.contains(&c.as_str()) {
+            out.push(format!("{label} can't be copied into an MP4. Remux to MKV, or re-encode that audio."));
+        } else if MP4_LIMITED_PLAYER_AUDIO.contains(&c.as_str()) {
+            out.push(format!("{label} can be stored in MP4, but many players will not play it. Remux to MKV for wider support."));
+        }
+    }
+    for (i, s) in info.of_type("subtitle").enumerate() {
+        let c = norm(&s.codec_name);
+        if !MP4_COPY_SUB.contains(&c.as_str()) {
+            out.push(format!(
+                "Subtitle track {} ({}) can't be copied into an MP4. Remux to MKV, or convert that subtitle.",
+                i + 1,
+                codec_label(&c)
+            ));
+        }
+    }
+    if info.has_attachments() {
+        out.push("Attachments (for example fonts) can't be copied into an MP4.".into());
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,5 +231,81 @@ mod tests {
     fn summary_text() {
         let s = RemuxSummary { converted: 2, failed: 1, skipped: 3, deleted: 2, delete_failures: 0 };
         assert_eq!(s.text(), "Queue finished: 2 converted, 1 failed, 3 skipped, 2 source MKV(s) deleted, 0 deletion failure(s).");
+    }
+
+    fn info(streams: &[(&str, &str)]) -> crate::ffmpeg::probe::MediaInfo {
+        use crate::ffmpeg::probe::StreamInfo;
+        crate::ffmpeg::probe::MediaInfo {
+            streams: streams
+                .iter()
+                .enumerate()
+                .map(|(i, (ty, codec))| StreamInfo {
+                    index: i as u32,
+                    codec_type: (*ty).into(),
+                    codec_name: (*codec).into(),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn compatible_aac_is_silent() {
+        let w = copy_warnings(&info(&[("video", "h264"), ("audio", "aac")]));
+        assert!(w.is_empty(), "{w:?}");
+    }
+
+    #[test]
+    fn rejected_audio_and_subs_are_named() {
+        let w = copy_warnings(&info(&[
+            ("video", "h264"),
+            ("audio", "aac"),
+            ("audio", "truehd"),
+            ("audio", "mlp"),
+            ("audio", "pcm_u8"),
+            ("subtitle", "subrip"),
+            ("subtitle", "ass"),
+            ("subtitle", "hdmv_pgs_subtitle"),
+            ("subtitle", "webvtt"),
+            ("attachment", "ttf"),
+        ]));
+        assert_eq!(
+            w,
+            [
+                "Track 2 (TrueHD) can't be copied into an MP4. Remux to MKV, or re-encode that audio.",
+                "Track 3 (MLP) can't be copied into an MP4. Remux to MKV, or re-encode that audio.",
+                "Track 4 (PCM u8) can't be copied into an MP4. Remux to MKV, or re-encode that audio.",
+                "Subtitle track 1 (SRT) can't be copied into an MP4. Remux to MKV, or convert that subtitle.",
+                "Subtitle track 2 (ASS) can't be copied into an MP4. Remux to MKV, or convert that subtitle.",
+                "Subtitle track 3 (PGS) can't be copied into an MP4. Remux to MKV, or convert that subtitle.",
+                "Subtitle track 4 (WebVTT) can't be copied into an MP4. Remux to MKV, or convert that subtitle.",
+                "Attachments (for example fonts) can't be copied into an MP4.",
+            ]
+        );
+    }
+
+    #[test]
+    fn flac_opus_vorbis_and_muxable_pcm_get_player_warning() {
+        for (codec, label) in [
+            ("flac", "FLAC"),
+            ("opus", "Opus"),
+            ("vorbis", "Vorbis"),
+            ("pcm_s24le", "PCM s24le"),
+        ] {
+            let w = copy_warnings(&info(&[("audio", codec)]));
+            assert_eq!(
+                w,
+                [format!("Track 1 ({label}) can be stored in MP4, but many players will not play it. Remux to MKV for wider support.")]
+            );
+        }
+        let w = copy_warnings(&info(&[("audio", "ac3"), ("audio", "dts"), ("subtitle", "mov_text")]));
+        assert!(w.is_empty(), "{w:?}");
+    }
+
+    #[test]
+    fn remux_args_stay_byte_identical() {
+        let j = RemuxJob { source: "/in/a.mkv".into(), dest: "/out/a.mp4".into(), temp: "/out/.remux_1.mp4".into() };
+        assert_eq!(args(&j).join(" "), "-nostdin -n -i /in/a.mkv -map 0 -c copy /out/.remux_1.mp4");
     }
 }
