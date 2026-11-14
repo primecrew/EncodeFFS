@@ -2,6 +2,7 @@
 //! To add a mode: write a pure builder in `ffenc::cmd`, add a module here
 //! implementing `Mode`, and register it in [`all_modes`].
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
@@ -32,6 +33,23 @@ pub struct Ctx<'a> {
     pub has_xfade: Option<bool>,
     /// Optional encoders of the current FFmpeg (None until it has been checked).
     pub encoders: Option<ffenc::cmd::codecs::Encoders>,
+    /// The FFmpeg actually in use (for the “Using:” line).
+    pub ff: Option<&'a ffenc::ffmpeg::locate::FfPaths>,
+    /// Encoders of the app-managed copy, when it exists and is not already in use.
+    pub managed_encoders: Option<ffenc::cmd::codecs::Encoders>,
+    /// Set when the user clicks “Switch to the app-managed FFmpeg”.
+    pub switch_to_managed: Option<&'a Cell<bool>>,
+}
+
+impl<'a> Ctx<'a> {
+    pub fn ff_status(&self) -> crate::ui::codecs_ui::FfCodecStatus<'_> {
+        crate::ui::codecs_ui::FfCodecStatus {
+            paths: self.ff,
+            encoders: self.encoders,
+            managed_encoders: self.managed_encoders,
+            switch_to_managed: self.switch_to_managed,
+        }
+    }
 }
 
 /// Jobs to preview and queue.

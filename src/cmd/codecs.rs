@@ -321,9 +321,55 @@ impl Encoders {
     }
 }
 
-/// Plain explanation for a missing encoder.
+/// Plain explanation for a missing encoder, naming which FFmpeg is in use when known.
+pub fn missing_note_for(encoder: &str, ff: Option<&crate::ffmpeg::locate::FfPaths>) -> String {
+    let which = match ff {
+        Some(p) if p.is_app_managed() => format!("The app-managed FFmpeg ({})", p.bin_dir.display()),
+        Some(p) => format!("Your FFmpeg ({})", p.bin_dir.display()),
+        None => "This FFmpeg".into(),
+    };
+    format!("{which} has no {encoder} encoder. Help › Check for FFmpeg updates… can download a full build (BtbN GPL builds include it).")
+}
+
+/// Plain explanation for a missing encoder when the in-use FFmpeg is not known.
 pub fn missing_note(encoder: &str) -> String {
-    format!("This FFmpeg has no {encoder} encoder. Help › Check for FFmpeg updates… can download a full build (BtbN GPL builds include it).")
+    missing_note_for(encoder, None)
+}
+
+/// True when the FFmpeg in use lacks `encoder` but the app-managed copy has it (and is not already in use).
+pub fn can_switch_to_managed(
+    current: Option<&crate::ffmpeg::locate::FfPaths>,
+    current_enc: Option<&Encoders>,
+    managed_enc: Option<&Encoders>,
+    encoder: &str,
+) -> bool {
+    let Some(enc) = current_enc else { return false };
+    let Some(managed) = managed_enc else { return false };
+    if current.is_some_and(|p| p.is_app_managed()) {
+        return false;
+    }
+    let missing_now = match encoder {
+        "libx265" => !enc.libx265,
+        "libsvtav1" => !enc.libsvtav1,
+        "ac3" => !enc.ac3,
+        _ => return false,
+    };
+    let has_managed = match encoder {
+        "libx265" => managed.libx265,
+        "libsvtav1" => managed.libsvtav1,
+        "ac3" => managed.ac3,
+        _ => false,
+    };
+    missing_now && has_managed
+}
+
+/// True when any of HEVC / AV1 / AC3 is missing from the in-use build but present in the app-managed copy.
+pub fn can_switch_to_managed_for_any(
+    current: Option<&crate::ffmpeg::locate::FfPaths>,
+    current_enc: Option<&Encoders>,
+    managed_enc: Option<&Encoders>,
+) -> bool {
+    ["libx265", "libsvtav1", "ac3"].iter().any(|e| can_switch_to_managed(current, current_enc, managed_enc, e))
 }
 
 /// Probe-based note: 10-bit output from an 8-bit source.
@@ -460,6 +506,45 @@ mod tests {
         assert!(e.video(VideoCodec::H264) && e.video(VideoCodec::Hevc) && !e.video(VideoCodec::Av1));
         let none = Encoders::from_list(" A....D ac3_fixed ATSC (codec ac3)\n");
         assert!(!none.ac3, "ac3_fixed is not ac3");
+    }
+
+    #[test]
+    fn missing_note_names_the_ffmpeg_in_use() {
+        assert!(missing_note("libx265").starts_with("This FFmpeg has no libx265 encoder."));
+        let own = crate::ffmpeg::locate::FfPaths {
+            ffmpeg: "x".into(),
+            ffprobe: "y".into(),
+            bin_dir: std::path::PathBuf::from(r"D:\Tools\FFmpeg\bin"),
+            source: crate::ffmpeg::locate::FfSource::Configured,
+        };
+        let n = missing_note_for("libx265", Some(&own));
+        assert!(n.starts_with(r"Your FFmpeg (D:\Tools\FFmpeg\bin) has no libx265 encoder."), "{n}");
+        assert!(n.contains("Help › Check for FFmpeg updates…"));
+        let mg = crate::ffmpeg::locate::FfPaths { source: crate::ffmpeg::locate::FfSource::Managed, ..own };
+        let n = missing_note_for("libsvtav1", Some(&mg));
+        assert!(n.starts_with("The app-managed FFmpeg ("), "{n}");
+        assert!(n.contains("has no libsvtav1 encoder"));
+    }
+
+    #[test]
+    fn switch_is_offered_only_when_managed_has_the_missing_encoder() {
+        let own = crate::ffmpeg::locate::FfPaths {
+            ffmpeg: "x".into(),
+            ffprobe: "y".into(),
+            bin_dir: std::path::PathBuf::from(r"D:\mine\bin"),
+            source: crate::ffmpeg::locate::FfSource::Configured,
+        };
+        let thin = Encoders { libx265: false, libsvtav1: false, ac3: false };
+        let full = Encoders { libx265: true, libsvtav1: true, ac3: true };
+        assert!(can_switch_to_managed(Some(&own), Some(&thin), Some(&full), "libx265"));
+        assert!(can_switch_to_managed_for_any(Some(&own), Some(&thin), Some(&full)));
+        assert!(!can_switch_to_managed(Some(&own), Some(&thin), Some(&thin), "libx265"), "managed also lacks it");
+        assert!(!can_switch_to_managed(Some(&own), Some(&full), Some(&full), "libx265"), "already has it");
+        assert!(!can_switch_to_managed(None, Some(&thin), Some(&full), "libx264"), "unknown encoder / H.264");
+        let mg = crate::ffmpeg::locate::FfPaths { source: crate::ffmpeg::locate::FfSource::Managed, ..own.clone() };
+        assert!(!can_switch_to_managed(Some(&mg), Some(&thin), Some(&full), "libx265"), "already on managed");
+        assert!(!can_switch_to_managed(Some(&own), None, Some(&full), "libx265"), "current encoders unknown");
+        assert!(!can_switch_to_managed(Some(&own), Some(&thin), None, "libx265"), "managed not probed");
     }
 
     #[test]

@@ -5,6 +5,14 @@ The Codecs edition (HEVC/AV1/AC3, hover help, one-click conflict fixes, PC.709 F
 
 Detailed implementation notes. The user-facing history is in [CHANGELOG.md](CHANGELOG.md).
 
+## 0.6.0-rc.3 — Visible exe name Encode FFS.exe
+- Official Windows artifacts rename the Cargo bin after the build: `FFmpegEncoder.exe` → `Encode FFS.exe`.
+  The crate, repo, zip and setup filenames, `FILE_STEM`, portable settings (`FFmpegEncoder.settings.json`)
+  and the `.installed` marker stay `FFmpegEncoder*`. The installer accepts either exe name when detecting
+  or locking a running install, then deletes leftover `FFmpegEncoder.exe` and rewrites shortcuts.
+- Codec pickers show a Using: line from the located FfPaths source, and can switch the configured
+  FFmpeg folder to the app-managed copy (settings only; the user's own FFmpeg is never overwritten).
+
 ## 0.6.0-rc.1 — Create Slideshow in the stable app (release candidate)
 - Create Slideshow is a built-in preset of the stable edition (`FFmpegEncoder.exe`, data folder
   `FFmpegEncoder`). There is no separate Slideshow exe, title suffix, or first-run import from

@@ -15,7 +15,7 @@ BEGIN
       VALUE "CompanyName", "PrimeCrew Software"
       VALUE "FileVersion", "0.5.1"
       VALUE "ProductVersion", "0.5.1"
-      VALUE "OriginalFilename", "FFmpegEncoder.exe"
+      VALUE "OriginalFilename", "Encode FFS.exe"
     END
   END
   BLOCK "VarFileInfo"

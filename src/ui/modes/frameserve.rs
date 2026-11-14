@@ -654,7 +654,7 @@ impl Mode for FrameserveMode {
 
         section(ui, &format!("Video ({})", st.video.codec.encoder()));
         egui::Grid::new("fs_v").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            crate::ui::codecs_ui::video_codec_ui_ex(ui, "fs", &mut st.video, cx.encoders.as_ref(), None, Some("Also sets the AviSynth script to 10-bit."), true);
+            crate::ui::codecs_ui::video_codec_ui_ex(ui, "fs", &mut st.video, None, Some("Also sets the AviSynth script to 10-bit."), true, &cx.ff_status());
             st.bits = conflicts::script_bit_depth(&st.video);
             ui.label("");
             show_conflicts(ui, st, &[
@@ -684,7 +684,7 @@ impl Mode for FrameserveMode {
         if st.audio_mode != AudioMode::None {
             section(ui, "Audio");
             egui::Grid::new("fs_a").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                crate::ui::codecs_ui::audio_codec_ui(ui, "fsa", &mut st.audio, cx.encoders.as_ref(), true);
+                crate::ui::codecs_ui::audio_codec_ui(ui, "fsa", &mut st.audio, true, &cx.ff_status());
                 ui.label("");
                 show_conflicts(ui, st, &[ConflictKind::CopyIgnoresFilters]);
                 ui.end_row();
@@ -733,6 +733,7 @@ impl Mode for FrameserveMode {
             cx.encoders.as_ref(),
             Some(&self.st.video),
             (self.st.audio_mode != AudioMode::None).then_some(&self.st.audio),
+            cx.ff,
         )?;
         if let Some(s) = &self.status {
             if s.demuxer == Some(false) {

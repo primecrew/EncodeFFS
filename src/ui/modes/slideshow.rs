@@ -756,8 +756,8 @@ impl Mode for SlideshowMode {
                 hint(ui, "Slideshow default is 30 (stills).");
             });
             ui.end_row();
-            crate::ui::codecs_ui::video_codec_ui_ex(ui, "ss", &mut self.st.video, cx.encoders.as_ref(), None, None, false);
-            crate::ui::codecs_ui::audio_codec_ui(ui, "ss", &mut self.st.audio_encode, cx.encoders.as_ref(), false);
+            crate::ui::codecs_ui::video_codec_ui_ex(ui, "ss", &mut self.st.video, None, None, false, &cx.ff_status());
+            crate::ui::codecs_ui::audio_codec_ui(ui, "ss", &mut self.st.audio_encode, false, &cx.ff_status());
             faststart_ui(ui, &mut self.st.faststart, true);
         });
     }
@@ -768,7 +768,7 @@ impl Mode for SlideshowMode {
         }
         let images = self.image_inputs()?;
         let output = check_output(&self.st.out_dir, &self.st.out_name)?;
-        crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&self.st.video), Some(&self.st.audio_encode))?;
+        crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&self.st.video), Some(&self.st.audio_encode), cx.ff)?;
         let (audio, audio_duration_s) = if self.st.audio.trim().is_empty() {
             (None, None)
         } else {

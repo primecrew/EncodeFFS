@@ -21,6 +21,9 @@ Target amd64-unicode
 !ifndef APP_NAME
   !error "Build with scripts/build-release.sh"
 !endif
+!ifndef OLD_APP_EXE
+  !error "Build with scripts/build-release.sh (OLD_APP_EXE is required)"
+!endif
 !ifndef PREV_APP_NAME
   !define PREV_APP_NAME "FFmpeg Encoder"
 !endif
@@ -107,13 +110,14 @@ FunctionEnd
 
 Function DetectExistingInstall
   ; When no /D= was given: HKCU first (unless /ALLUSERS was already requested), then HKLM.
-  ; The folder must still contain ${APP_EXE}. Sets $INSTDIR, $AllUsers, $InstalledVersion, $Upgrade.
+  ; The folder must still contain ${APP_EXE} or leftover ${OLD_APP_EXE}. Sets $INSTDIR, $AllUsers, $InstalledVersion, $Upgrade.
   ${If} $AllUsers != 1
     ClearErrors
     ReadRegStr $0 HKCU "${UNINST_KEY}" "InstallLocation"
     ${If} $0 != ""
       Call TrimDir
       ${If} ${FileExists} "$0\${APP_EXE}"
+      ${OrIf} ${FileExists} "$0\${OLD_APP_EXE}"
         ClearErrors
         ReadRegStr $1 HKCU "${UNINST_KEY}" "DisplayVersion"
         StrCpy $INSTDIR $0
@@ -129,6 +133,7 @@ Function DetectExistingInstall
   ${If} $0 != ""
     Call TrimDir
     ${If} ${FileExists} "$0\${APP_EXE}"
+    ${OrIf} ${FileExists} "$0\${OLD_APP_EXE}"
       ClearErrors
       ReadRegStr $1 HKLM "${UNINST_KEY}" "DisplayVersion"
       StrCpy $INSTDIR $0
@@ -241,12 +246,25 @@ Function DirectoryPagePre
   ${EndIf}
 FunctionEnd
 
-Function ExeIsInUse
-  ; 1 if the installed exe is locked or a window with this app's title is open.
-  ${IfNot} ${FileExists} "$INSTDIR\${APP_EXE}"
+Function PathIsLocked
+  ; In: $R8 = path. Pushes 1 if the file exists and is locked, else 0.
+  ${IfNot} ${FileExists} "$R8"
     Push 0
     Return
   ${EndIf}
+  System::Call 'kernel32::CreateFileW(w "$R8", i 0x80000000, i 0, p 0, i 3, i 0, p 0) p .r0'
+  StrCmp $0 "-1" PathIsLocked_Yes
+  StrCmp $0 "0xFFFFFFFF" PathIsLocked_Yes
+  StrCmp $0 "0xFFFFFFFFFFFFFFFF" PathIsLocked_Yes
+  System::Call 'kernel32::CloseHandle(p r0)'
+  Push 0
+  Return
+  PathIsLocked_Yes:
+  Push 1
+FunctionEnd
+
+Function ExeIsInUse
+  ; 1 if the installed exe (new or leftover old name) is locked or a window with this app's title is open.
   ${If} $InstalledVersion != ""
     FindWindow $0 "" "${APP_NAME} $InstalledVersion"
     ${If} $0 != 0
@@ -259,15 +277,23 @@ Function ExeIsInUse
     Push 1
     Return
   ${EndIf}
-  System::Call 'kernel32::CreateFileW(w "$INSTDIR\${APP_EXE}", i 0x80000000, i 0, p 0, i 3, i 0, p 0) p .r0'
-  StrCmp $0 "-1" ExeIsInUse_Yes
-  StrCmp $0 "0xFFFFFFFF" ExeIsInUse_Yes
-  StrCmp $0 "0xFFFFFFFFFFFFFFFF" ExeIsInUse_Yes
-  System::Call 'kernel32::CloseHandle(p r0)'
+  StrCpy $R8 "$INSTDIR\${APP_EXE}"
+  Call PathIsLocked
+  Pop $0
+  ${If} $0 == 1
+    Push 1
+    Return
+  ${EndIf}
+  ${If} "${OLD_APP_EXE}" != "${APP_EXE}"
+    StrCpy $R8 "$INSTDIR\${OLD_APP_EXE}"
+    Call PathIsLocked
+    Pop $0
+    ${If} $0 == 1
+      Push 1
+      Return
+    ${EndIf}
+  ${EndIf}
   Push 0
-  Return
-  ExeIsInUse_Yes:
-  Push 1
 FunctionEnd
 
 Function CheckAppNotRunning
@@ -360,6 +386,10 @@ Section "${APP_NAME} (required)" SecApp
   Call CheckAppNotRunning
   SetOutPath "$INSTDIR"
   File "/oname=${APP_EXE}" "${EXE_PATH}"
+  ; Upgrade from the pre-rename exe: leave the new file, remove the leftover name, and shortcuts are rewritten below.
+  ${If} "${OLD_APP_EXE}" != "${APP_EXE}"
+    Delete "$INSTDIR\${OLD_APP_EXE}"
+  ${EndIf}
   File "/oname=README.md" "${SRC_DIR}\README.md"
   File "/oname=NOTES.md" "${SRC_DIR}\NOTES.md"
   ; tells the app it is installed: settings go to %APPDATA%, not next to the exe
@@ -498,6 +528,9 @@ Section "un.${APP_NAME}" UnSecApp
   Delete "$DESKTOP\${PREV_BRAND_APP_NAME}.lnk"
   Delete "$DESKTOP\${PREV_APP_NAME}.lnk"
   Delete "$INSTDIR\${APP_EXE}"
+  ${If} "${OLD_APP_EXE}" != "${APP_EXE}"
+    Delete "$INSTDIR\${OLD_APP_EXE}"
+  ${EndIf}
   Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\NOTES.md"
   Delete "$INSTDIR\${MARKER}"

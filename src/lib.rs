@@ -30,8 +30,13 @@ pub const PUBLISHER: &str = "PrimeCrew Software";
 pub const DATA_DIR_NAME: &str = "Encode FFS";
 /// Pre-0.6.0-rc.3 data folder name, directly under %APPDATA% / %LOCALAPPDATA%.
 pub const LEGACY_DATA_DIR_NAME: &str = "FFmpegEncoder";
-/// Prefix of the portable files next to the exe.
+/// Prefix of the portable files next to the exe (settings, presets, layout, logs, installed marker).
+/// Kept as FFmpegEncoder so a portable folder with an older exe name still finds its files.
 pub const FILE_STEM: &str = "FFmpegEncoder";
+/// File name of the Windows program (installer, portable zip, version resource).
+pub const EXE_FILE: &str = "Encode FFS.exe";
+/// Pre-rename program file, deleted on upgrade and still recognised by the uninstaller / “already running” check.
+pub const LEGACY_EXE_FILE: &str = "FFmpegEncoder.exe";
 /// Other editions' data folders, relative to %APPDATA% / %LOCALAPPDATA%
 /// (their downloaded FFmpeg is never used or moved by this app).
 pub const OTHER_EDITION_DATA_DIR_NAMES: &[&str] = &[

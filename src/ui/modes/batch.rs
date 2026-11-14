@@ -211,7 +211,7 @@ impl Mode for BatchMode {
         if bs.passthrough.encodes_video() {
             section(ui, &format!("Video ({})", bs.video.codec.encoder()));
             egui::Grid::new("m7v").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                crate::ui::codecs_ui::video_codec_ui(ui, "m7", &mut bs.video, cx.encoders.as_ref(), None);
+                crate::ui::codecs_ui::video_codec_ui(ui, "m7", &mut bs.video, None, &cx.ff_status());
                 range_ui(ui, &mut bs.range_convert, probed_range);
                 crate::ui::common::row_label_tip(ui, "Deinterlace", option_tips::DEINTERLACE);
                 ui.vertical(|ui| {
@@ -228,7 +228,7 @@ impl Mode for BatchMode {
         if bs.passthrough.encodes_audio() {
             section(ui, "Audio");
             egui::Grid::new("m7a").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                crate::ui::codecs_ui::audio_codec_ui(ui, "m7a", &mut bs.audio, cx.encoders.as_ref(), true);
+                crate::ui::codecs_ui::audio_codec_ui(ui, "m7a", &mut bs.audio, true, &cx.ff_status());
             });
         }
         egui::Grid::new("m7f").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
@@ -238,7 +238,7 @@ impl Mode for BatchMode {
 
     fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
         let bs = &self.st.bs;
-        crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), bs.passthrough.encodes_video().then_some(&bs.video), bs.passthrough.encodes_audio().then_some(&bs.audio))?;
+        crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), bs.passthrough.encodes_video().then_some(&bs.video), bs.passthrough.encodes_audio().then_some(&bs.audio), cx.ff)?;
         if bs.passthrough.encodes_video() {
             ffenc::cmd::common::parse_output_fps(&bs.video.output_fps)?;
         }

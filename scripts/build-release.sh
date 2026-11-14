@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 APP_NAME="Encode FFS"
 APP_ID="FFmpegEncoder"                        # Add/Remove Programs key; the experimental edition uses FFmpegEncoderExperimental
 APP_DIRNAME="FFmpeg Encoder"                 # install folder name
-FILE_STEM="FFmpegEncoder"                     # exe / zip / setup names
+FILE_STEM="FFmpegEncoder"                     # zip / setup / marker names (crate bin stays FFmpegEncoder)
 DATA_PUBLISHER="PrimeCrew Software"
 DATA_DIR="Encode FFS"                       # leaf under %APPDATA%/%LOCALAPPDATA%\$DATA_PUBLISHER (src/lib.rs DATA_DIR_NAME)
 LEGACY_DATA_DIR="FFmpegEncoder"              # pre-0.6.0-rc.3 data folder
@@ -22,27 +22,33 @@ TARGET=x86_64-pc-windows-gnu
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 # 0.6.0-dev.1 -> 0.6.0.1 (Windows needs four numbers)
 VERSION4=$(python3 -c "import re,sys; v=sys.argv[1]; m=re.match(r'(\d+)\.(\d+)\.(\d+)(?:-[a-z]+\.(\d+))?',v); print('.'.join(x or '0' for x in m.groups()))" "$VERSION")
-EXE="$FILE_STEM.exe"
+# Cargo still emits FFmpegEncoder.exe (the crate bin name is unchanged so Linux cargo test keeps a simple name).
+CARGO_EXE="$FILE_STEM.exe"
+APP_EXE="Encode FFS.exe"
+OLD_APP_EXE="FFmpegEncoder.exe"
 
 echo "== $APP_NAME $VERSION ($VERSION4)"
 grep -q "pub const DATA_DIR_NAME: &str = \"$DATA_DIR\"" src/lib.rs || { echo "DATA_DIR differs from src/lib.rs" >&2; exit 1; }
 grep -q "pub const LEGACY_DATA_DIR_NAME: &str = \"$LEGACY_DATA_DIR\"" src/lib.rs || { echo "LEGACY_DATA_DIR differs from src/lib.rs" >&2; exit 1; }
 grep -q "pub const PUBLISHER: &str = \"$DATA_PUBLISHER\"" src/lib.rs || { echo "DATA_PUBLISHER differs from src/lib.rs" >&2; exit 1; }
+grep -q "pub const EXE_FILE: &str = \"$APP_EXE\"" src/lib.rs || { echo "APP_EXE differs from src/lib.rs EXE_FILE" >&2; exit 1; }
+grep -q "pub const LEGACY_EXE_FILE: &str = \"$OLD_APP_EXE\"" src/lib.rs || { echo "OLD_APP_EXE differs from src/lib.rs LEGACY_EXE_FILE" >&2; exit 1; }
 # Don't embed this machine's paths in panic messages (release only)
 src_root="$(pwd)"
 cargo_home="${CARGO_HOME:-$HOME/.cargo}"
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=${src_root}=. --remap-path-prefix=${cargo_home}=cargo"
 cargo build --release --target "$TARGET"
-BIN="target/$TARGET/release/$EXE"
+BIN="target/$TARGET/release/$CARGO_EXE"
 [ -f "$BIN" ] || { echo "missing $BIN" >&2; exit 1; }
 
 mkdir -p "$OUT_DIR"
-cp "$BIN" "$OUT_DIR/$EXE"
+rm -f "$OUT_DIR/$OLD_APP_EXE"
+cp "$BIN" "$OUT_DIR/$APP_EXE"
 
 # ---- portable zip (exe + docs; settings are created next to the exe on first start)
 ZIP="$OUT_DIR/$FILE_STEM-$VERSION-win64.zip"
 rm -f "$ZIP"
-python3 - "$ZIP" "$OUT_DIR/$EXE" "$EXE" <<'PY'
+python3 - "$ZIP" "$OUT_DIR/$APP_EXE" "$APP_EXE" <<'PY'
 import sys, zipfile
 z, exe, name = sys.argv[1:4]
 with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as f:
@@ -55,9 +61,9 @@ PY
 command -v makensis >/dev/null || { echo "makensis not found (apt install nsis)" >&2; exit 1; }
 SETUP="$OUT_DIR/$FILE_STEM-$VERSION-setup.exe"
 makensis -V2 -INPUTCHARSET UTF8 \
-  -DAPP_NAME="$APP_NAME" -DAPP_ID="$APP_ID" -DAPP_DIRNAME="$APP_DIRNAME" -DAPP_EXE="$EXE" \
+  -DAPP_NAME="$APP_NAME" -DAPP_ID="$APP_ID" -DAPP_DIRNAME="$APP_DIRNAME" -DAPP_EXE="$APP_EXE" -DOLD_APP_EXE="$OLD_APP_EXE" \
   -DAPP_VERSION="$VERSION" -DVERSION4="$VERSION4" -DPUBLISHER="$PUBLISHER" -DPREV_APP_NAME="$PREV_APP_NAME" -DPREV_BRAND_APP_NAME="$PREV_BRAND_APP_NAME" -DDATA_PUBLISHER="$DATA_PUBLISHER" -DDATA_DIR="$DATA_DIR" -DLEGACY_DATA_DIR="$LEGACY_DATA_DIR" \
-  -DMARKER="$FILE_STEM.installed" -DICON="$PWD/assets/app.ico" -DEXE_PATH="$PWD/$BIN" -DSRC_DIR="$PWD" \
+  -DMARKER="$FILE_STEM.installed" -DICON="$PWD/assets/app.ico" -DEXE_PATH="$PWD/$OUT_DIR/$APP_EXE" -DSRC_DIR="$PWD" \
   -DOUTFILE="$PWD/$SETUP" installer/installer.nsi
 
 ( cd "$OUT_DIR" && sha256sum "$(basename "$ZIP")" "$(basename "$SETUP")" > "$FILE_STEM-$VERSION-SHA256SUMS.txt" )
