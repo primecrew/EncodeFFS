@@ -2,6 +2,16 @@
 
 Detailed implementation notes. The user-facing history is in [CHANGELOG.md](CHANGELOG.md).
 
+## Unreleased — Visible exe name Encode FFS (Codecs).exe
+- Official Windows artifacts rename the Cargo bin after the build: `FFmpegEncoder-Codecs.exe` →
+  `Encode FFS (Codecs).exe`. The crate, repo, zip and setup filenames, `FILE_STEM`, portable settings
+  (`FFmpegEncoder-Codecs.settings.json`) and the `.installed` marker stay `FFmpegEncoder-Codecs*`.
+  Import from stable still uses `FFmpegEncoder.settings.json`. The installer accepts either exe name
+  when detecting or locking a running install, then deletes leftover `FFmpegEncoder-Codecs.exe` and
+  rewrites shortcuts.
+- Codec pickers show a Using: line from the located FfPaths source, and can switch the configured
+  FFmpeg folder to the app-managed copy (settings only; the user's own FFmpeg is never overwritten).
+
 ## 0.5.5-codecs.3 — One-click fixes, sidebar, bitrate and Speed drop-downs, hover help, leftover-update cleanup
 - **One-click conflict fixes** (`src/cmd/conflicts.rs`, form buttons and the pre-run `ConflictDlg`): unusual
   combinations offer “Fix it” (says exactly what will change) or “Keep my setting” / “Run as set”. Settings

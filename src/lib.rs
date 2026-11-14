@@ -42,6 +42,10 @@ pub const LEGACY_STABLE_DATA_DIR_NAME: &str = "FFmpegEncoder";
 /// Prefix of the portable files next to the exe (stable: "FFmpegEncoder").
 pub const FILE_STEM: &str = "FFmpegEncoder-Codecs";
 pub const STABLE_FILE_STEM: &str = "FFmpegEncoder";
+/// Visible program file (official Windows artifacts). The Cargo bin name is still FILE_STEM.
+pub const EXE_FILE: &str = "Encode FFS (Codecs).exe";
+/// Previous program file, removed on installer upgrade.
+pub const LEGACY_EXE_FILE: &str = "FFmpegEncoder-Codecs.exe";
 /// Other editions' data folders, relative to %APPDATA% / %LOCALAPPDATA%
 /// (their downloaded FFmpeg is never used or moved by this app).
 pub const OTHER_EDITION_DATA_DIR_NAMES: &[&str] = &[

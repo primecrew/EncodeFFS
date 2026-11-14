@@ -481,6 +481,17 @@ pub fn import_portable(from: &Path, roaming: &Path) -> Result<Vec<String>, Strin
     Ok(notes)
 }
 
+/// Point the FFmpeg folder setting at the app-managed copy (the folder that contains ffmpeg/ffprobe).
+/// Does not move, copy, overwrite or delete any FFmpeg files (the user's own copy is left alone).
+pub fn set_configured_ffmpeg_to_managed(settings: &mut Settings) -> Result<PathBuf, String> {
+    let bin = crate::ffmpeg::locate::managed_bin();
+    if !crate::ffmpeg::locate::bin_dir_ok(&bin) {
+        return Err("No app-managed FFmpeg is installed yet. Help › Check for FFmpeg updates… can download one.".into());
+    }
+    settings.ffmpeg_bin_path = bin.to_string_lossy().into_owned();
+    Ok(bin)
+}
+
 /// Folder for the app log (next to the settings file).
 pub fn logs_dir() -> PathBuf {
     settings_path().parent().map(|p| p.join("logs")).unwrap_or_else(|| roaming_dir().join("logs"))
@@ -855,6 +866,69 @@ mod tests {
         assert_ne!(INSTALLED_MARKER, "FFmpegEncoder-Experimental.installed");
         std::fs::remove_dir_all(&root).unwrap();
     }
+
+    #[test]
+    fn portable_settings_keep_the_ffmpegencoder_filename_next_to_the_renamed_exe() {
+        // The program file is now Encode FFS (Codecs).exe, but portable files keep the
+        // FFmpegEncoder-Codecs.* names so an existing portable folder is still found after the rename.
+        assert_eq!(crate::EXE_FILE, "Encode FFS (Codecs).exe");
+        assert_eq!(crate::LEGACY_EXE_FILE, "FFmpegEncoder-Codecs.exe");
+        assert_ne!(PORTABLE_FILE, "Encode FFS (Codecs).settings.json");
+        assert_eq!(PORTABLE_FILE, "FFmpegEncoder-Codecs.settings.json");
+        assert_eq!(PORTABLE_FILE, format!("{}.settings.json", crate::FILE_STEM));
+        assert_eq!(INSTALLED_MARKER, "FFmpegEncoder-Codecs.installed");
+        assert_eq!(INSTALLED_MARKER, format!("{}.installed", crate::FILE_STEM));
+        // Import from the stable edition still looks for the stable portable name (not the new exe stem).
+        assert_eq!(STABLE_PORTABLE_FILE, "FFmpegEncoder.settings.json");
+        let root = std::env::temp_dir().join(format!("ffenc_exe_{}", crate::util::unique_id()));
+        let (exe, roam) = (root.join("portable"), root.join("roaming"));
+        std::fs::create_dir_all(&exe).unwrap();
+        std::fs::write(exe.join(PORTABLE_FILE), r#"{"crf": 20}"#).unwrap();
+        // settings are found next to Encode FFS (Codecs).exe in the same folder
+        assert_eq!(settings_path_in(&exe, &roam), exe.join("FFmpegEncoder-Codecs.settings.json"));
+        assert!(exe.join(PORTABLE_FILE).is_file());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn switching_to_managed_ffmpeg_only_changes_the_setting_and_leaves_the_users_copy() {
+        let root = std::env::temp_dir().join(format!("ffenc_sw_{}", crate::util::unique_id()));
+        let user = root.join("mine").join("bin");
+        std::fs::create_dir_all(&user).unwrap();
+        let user_ff = user.join(crate::ffmpeg::locate::exe("ffmpeg"));
+        let user_fp = user.join(crate::ffmpeg::locate::exe("ffprobe"));
+        std::fs::write(&user_ff, b"user-ffmpeg").unwrap();
+        std::fs::write(&user_fp, b"user-ffprobe").unwrap();
+
+        // Isolated managed location (default root is %LOCALAPPDATA%\…\ffmpeg; override for the test).
+        let prev = std::env::var_os("FFENC_LOCAL_DIR");
+        std::env::set_var("FFENC_LOCAL_DIR", root.join("managed-root"));
+        let bin = crate::ffmpeg::locate::managed_bin();
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join(crate::ffmpeg::locate::exe("ffmpeg")), b"managed-ffmpeg").unwrap();
+        std::fs::write(bin.join(crate::ffmpeg::locate::exe("ffprobe")), b"managed-ffprobe").unwrap();
+
+        let mut s = Settings { ffmpeg_bin_path: user.to_string_lossy().into_owned(), ..Settings::default() };
+        let got = set_configured_ffmpeg_to_managed(&mut s).expect("managed copy exists");
+        assert_eq!(got, bin);
+        assert_eq!(PathBuf::from(&s.ffmpeg_bin_path), bin);
+        assert_eq!(std::fs::read(&user_ff).unwrap(), b"user-ffmpeg", "user's ffmpeg is not touched");
+        assert_eq!(std::fs::read(&user_fp).unwrap(), b"user-ffprobe");
+        assert_eq!(std::fs::read(bin.join(crate::ffmpeg::locate::exe("ffmpeg"))).unwrap(), b"managed-ffmpeg");
+
+        // no managed copy: error, setting unchanged
+        std::fs::remove_dir_all(&bin).unwrap();
+        s.ffmpeg_bin_path = user.to_string_lossy().into_owned();
+        assert!(set_configured_ffmpeg_to_managed(&mut s).is_err());
+        assert_eq!(PathBuf::from(&s.ffmpeg_bin_path), user);
+
+        match prev {
+            Some(v) => std::env::set_var("FFENC_LOCAL_DIR", v),
+            None => std::env::remove_var("FFENC_LOCAL_DIR"),
+        }
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
 
     #[test]
     fn migrate_app_folders_seeds_from_last_preset_and_leaves_existing() {

@@ -168,6 +168,47 @@ fn search_path() -> Option<PathBuf> {
     std::env::split_paths(&path).find(|d| bin_dir_ok(d))
 }
 
+/// Shorten a path for the “Using: …” line, keeping a short head and the last component
+/// (e.g. `D:\...\bin`). Unchanged when it already fits in `max_chars`.
+pub fn shorten_path(p: &Path, max_chars: usize) -> String {
+    let s = p.to_string_lossy();
+    if max_chars == 0 || s.chars().count() <= max_chars {
+        return s.into_owned();
+    }
+    let sep = if s.contains('\\') && !s.contains('/') { '\\' } else { '/' };
+    // Split on the display separator so a Windows path still shortens when tests run on Linux.
+    let last = s.rsplit(sep).next().unwrap_or("").to_string();
+    let head: String = if s.chars().nth(1) == Some(':') {
+        s.chars().take(3).collect()
+    } else if s.starts_with('/') {
+        "/".into()
+    } else {
+        s.chars().take(2).collect()
+    };
+    let short = format!("{head}...{sep}{last}");
+    if short.chars().count() <= max_chars.max(last.chars().count() + 4) {
+        short
+    } else {
+        format!("...{sep}{last}")
+    }
+}
+
+impl FfPaths {
+    /// Status line for the codec picker, and an optional hover with the full path.
+    /// App-managed copies never put the path in the label (it is always in the hover).
+    /// The user's own FFmpeg includes a shortened path; the hover is set when it was shortened.
+    pub fn using_line(&self, max_path_chars: usize) -> (String, Option<String>) {
+        let full = self.bin_dir.display().to_string();
+        if self.is_app_managed() {
+            ("Using: app-managed FFmpeg".into(), Some(full))
+        } else {
+            let short = shorten_path(&self.bin_dir, max_path_chars);
+            let hover = (short != full).then_some(full);
+            (format!("Using: your FFmpeg ({short})"), hover)
+        }
+    }
+}
+
 pub fn locate(configured: &Path) -> Option<FfPaths> {
     let found = candidates(configured)
         .into_iter()
@@ -233,5 +274,51 @@ mod tests {
         let configured_to_managed = FfPaths { bin_dir: managed_bin(), ..own.clone() };
         assert!(configured_to_managed.is_app_managed());
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn shorten_path_keeps_short_ones_and_ellipsizes_long_ones() {
+        assert_eq!(shorten_path(Path::new(r"D:\ffmpeg\bin"), 40), r"D:\ffmpeg\bin");
+        let s = shorten_path(Path::new(r"D:\Users\Public\some long folder\tools\ffmpeg\bin"), 28);
+        assert!(s.starts_with(r"D:\"), "{s}");
+        assert!(s.ends_with("bin"), "{s}");
+        assert!(s.contains("..."), "{s}");
+        let u = shorten_path(Path::new("/usr/local/very/long/ffmpeg/bin"), 24);
+        assert!(u.contains("..."), "{u}");
+        assert!(u.ends_with("bin"), "{u}");
+    }
+
+    #[test]
+    fn using_line_distinguishes_managed_and_your_ffmpeg() {
+        let managed = managed_bin();
+        let own = FfPaths {
+            ffmpeg: "x".into(),
+            ffprobe: "y".into(),
+            bin_dir: PathBuf::from(r"D:\Tools\FFmpeg\bin"),
+            source: FfSource::Configured,
+        };
+        let (l, h) = own.using_line(40);
+        assert_eq!(l, r"Using: your FFmpeg (D:\Tools\FFmpeg\bin)");
+        assert_eq!(h, None, "short path stays in the label");
+        let long = FfPaths {
+            bin_dir: PathBuf::from(r"D:\Users\Public\some long folder\tools\ffmpeg\bin"),
+            ..own.clone()
+        };
+        let (l, h) = long.using_line(28);
+        assert!(l.starts_with("Using: your FFmpeg ("), "{l}");
+        assert!(l.contains("..."), "{l}");
+        assert_eq!(h.as_deref(), Some(r"D:\Users\Public\some long folder\tools\ffmpeg\bin"));
+        let mg = FfPaths { source: FfSource::Managed, bin_dir: managed.clone(), ..own };
+        let (l, h) = mg.using_line(40);
+        assert_eq!(l, "Using: app-managed FFmpeg");
+        assert_eq!(h.as_deref(), Some(managed.display().to_string()).as_deref());
+        let path_ff = FfPaths {
+            ffmpeg: "x".into(),
+            ffprobe: "y".into(),
+            bin_dir: PathBuf::from(r"C:\Windows\System32"),
+            source: FfSource::SystemPath,
+        };
+        let (l, _) = path_ff.using_line(40);
+        assert_eq!(l, r"Using: your FFmpeg (C:\Windows\System32)");
     }
 }

@@ -111,11 +111,11 @@ impl Mode for StillMode {
                 set_image(st, &p);
             }
             let before = st.video.codec;
-            crate::ui::codecs_ui::video_codec_ui(ui, "m2", &mut st.video, cx.encoders.as_ref(), None);
+            crate::ui::codecs_ui::video_codec_ui(ui, "m2", &mut st.video, None, &cx.ff_status());
             if before != st.video.codec && st.video.codec == VideoCodec::H264 && st.video.tune.is_none() {
                 st.video.tune = Some("stillimage".into());
             }
-            crate::ui::codecs_ui::audio_codec_ui(ui, "m2", &mut st.audio_encode, cx.encoders.as_ref(), false);
+            crate::ui::codecs_ui::audio_codec_ui(ui, "m2", &mut st.audio_encode, false, &cx.ff_status());
             faststart_ui(ui, &mut st.faststart, true);
             range_ui(ui, &mut st.range_convert, None);
         });
@@ -138,7 +138,7 @@ impl Mode for StillMode {
             faststart: st.faststart,
             range_convert: st.range_convert,
         };
-        crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&st.video), Some(&st.audio_encode))?;
+        crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&st.video), Some(&st.audio_encode), cx.ff)?;
         let cmd = still::build(&pr)?;
         let dur = pr.duration_s.unwrap_or(audio_dur);
         Ok(Plan {

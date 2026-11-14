@@ -1,9 +1,12 @@
 //! Codec choice rows (codecs branch): video codec (H.264 default / HEVC / AV1) with codec-specific
 //! options, and audio codec (AAC default / AC3 / copy). H.264 + AAC show exactly the 0.5.x rows.
 
+use std::cell::Cell;
+
 use eframe::egui::{self, RichText, Ui};
 use ffenc::cmd::codecs::{self, AudioCodec, Encoders, VideoCodec, AC3_BITRATES, CRF_NOTE, FILM_GRAIN_MAX, SVT_PRESET_MAX, SVT_SPEEDS, X265_PRESETS, X265_TUNES};
 use ffenc::cmd::common::{AudioEncode, VideoEncode};
+use ffenc::ffmpeg::locate::FfPaths;
 use ffenc::ffmpeg::probe::MediaInfo;
 
 use super::common::{
@@ -18,6 +21,58 @@ pub fn source_pix_fmt(info: Option<&MediaInfo>) -> Option<String> {
 }
 pub fn source_channels(info: Option<&MediaInfo>) -> Option<u32> {
     info?.of_type("audio").filter_map(|s| s.channels).max()
+}
+
+/// In-use FFmpeg (and an optional app-managed copy) for the Using: line and the switch button.
+pub struct FfCodecStatus<'a> {
+    pub paths: Option<&'a FfPaths>,
+    pub encoders: Option<Encoders>,
+    pub managed_encoders: Option<Encoders>,
+    pub switch_to_managed: Option<&'a Cell<bool>>,
+}
+
+impl FfCodecStatus<'_> {
+    pub fn none() -> Self {
+        Self { paths: None, encoders: None, managed_encoders: None, switch_to_managed: None }
+    }
+
+    pub fn offer_switch(&self, encoder: &str) -> bool {
+        codecs::can_switch_to_managed(self.paths, self.encoders.as_ref(), self.managed_encoders.as_ref(), encoder)
+    }
+
+    pub fn offer_switch_any(&self) -> bool {
+        codecs::can_switch_to_managed_for_any(self.paths, self.encoders.as_ref(), self.managed_encoders.as_ref())
+    }
+
+    pub fn missing(&self, encoder: &str) -> String {
+        codecs::missing_note_for(encoder, self.paths)
+    }
+
+    fn disabled_tip(&self, encoder: &str) -> String {
+        let note = self.missing(encoder);
+        if self.offer_switch(encoder) {
+            format!("{note}\n\nThe app-managed FFmpeg has this encoder. Click “Switch to the app-managed FFmpeg” to use it (your own FFmpeg is left as it is).")
+        } else {
+            note
+        }
+    }
+}
+
+fn using_and_switch_ui(ui: &mut Ui, ff: &FfCodecStatus<'_>) {
+    if let Some(p) = ff.paths {
+        let (line, hover) = p.using_line(32);
+        let r = ui.label(RichText::new(line).small());
+        if let Some(h) = hover {
+            r.on_hover_text(h);
+        }
+    }
+    if ff.offer_switch_any() && ui.button("Switch to the app-managed FFmpeg").on_hover_text(
+        "Point the FFmpeg folder setting at the copy the app downloaded. Your own FFmpeg is not moved or overwritten.",
+    ).clicked() {
+        if let Some(flag) = ff.switch_to_managed {
+            flag.set(true);
+        }
+    }
 }
 
 /// Full H.264 / HEVC / AV1 playback comparison, shown on hover of the selected codec's one-line note.
@@ -73,26 +128,28 @@ fn av1_speed_ui(ui: &mut Ui, id: &str, preset: &mut u32) {
     ui.data_mut(|d| d.insert_temp(custom_id, custom_open));
 }
 
-/// Video rows inside a 2-column Grid. `enc` = encoders of the current FFmpeg (None = unknown yet).
-pub fn video_codec_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&Encoders>, src_pix_fmt: Option<&str>) {
-    video_codec_ui_ex(ui, id, v, enc, src_pix_fmt, None, true);
+/// Video rows inside a 2-column Grid.
+pub fn video_codec_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, src_pix_fmt: Option<&str>, ff: &FfCodecStatus<'_>) {
+    video_codec_ui_ex(ui, id, v, src_pix_fmt, None, true, ff);
 }
 
 /// Like [`video_codec_ui`], with optional extra hover/hint on the 10-bit checkbox (Frameserver).
-pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option<&Encoders>, src_pix_fmt: Option<&str>, ten_bit_hover: Option<&str>, show_output_fps: bool) {
+pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, src_pix_fmt: Option<&str>, ten_bit_hover: Option<&str>, show_output_fps: bool, ff: &FfCodecStatus<'_>) {
     crate::ui::common::row_label_tip(ui, "Video codec", option_tips::VIDEO_CODEC);
     ui.vertical(|ui| {
         let before = v.codec;
+        let enc = ff.encoders.as_ref();
         egui::ComboBox::from_id_salt(format!("{id}_codec")).width(300.0).selected_text(v.codec.label()).show_ui(ui, |ui| {
             for c in VideoCodec::ALL {
                 let ok = enc.is_none_or(|e| e.video(c));
                 let r = ui.add_enabled(ok, egui::SelectableLabel::new(v.codec == c, c.label()));
-                let r = r.on_disabled_hover_text(codecs::missing_note(c.encoder()));
+                let r = r.on_disabled_hover_text(ff.disabled_tip(c.encoder()));
                 if r.clicked() {
                     v.codec = c;
                 }
             }
         });
+        using_and_switch_ui(ui, ff);
         if v.codec != before {
             // sensible starting values for the new codec (CRF scales differ)
             v.crf = v.codec.default_crf(false);
@@ -102,7 +159,7 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option
             }
         }
         if enc.is_some_and(|e| !e.video(v.codec)) {
-            warn(ui, codecs::missing_note(v.codec.encoder()));
+            warn(ui, ff.missing(v.codec.encoder()));
         }
         // One-line note for the selected codec; the full comparison is in the hover.
         let note = v.codec.compat_note();
@@ -188,26 +245,34 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, enc: Option
 }
 
 /// Audio rows inside a 2-column Grid. `allow_copy` = false where audio is mixed (join).
-pub fn audio_codec_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode, enc: Option<&Encoders>, allow_copy: bool) {
-    audio_codec_ui_ex(ui, id, a, enc, allow_copy, true);
+pub fn audio_codec_ui(ui: &mut Ui, id: &str, a: &mut AudioEncode, allow_copy: bool, ff: &FfCodecStatus<'_>) {
+    audio_codec_ui_ex(ui, id, a, allow_copy, true, ff);
 }
 
 /// Like [`audio_codec_ui`]; `show_filters` is false in Settings (gain / compressor have their own default rows).
-pub fn audio_codec_ui_ex(ui: &mut Ui, id: &str, a: &mut AudioEncode, enc: Option<&Encoders>, allow_copy: bool, show_filters: bool) {
+pub fn audio_codec_ui_ex(ui: &mut Ui, id: &str, a: &mut AudioEncode, allow_copy: bool, show_filters: bool, ff: &FfCodecStatus<'_>) {
     crate::ui::common::row_label_tip(ui, "Audio codec", option_tips::AUDIO_CODEC);
     ui.vertical(|ui| {
+        let enc = ff.encoders.as_ref();
         egui::ComboBox::from_id_salt(format!("{id}_acodec")).width(300.0).selected_text(a.codec.label()).show_ui(ui, |ui| {
             for c in AudioCodec::ALL {
                 if c == AudioCodec::Copy && !allow_copy {
                     continue;
                 }
                 let ok = enc.is_none_or(|e| e.audio(c));
-                let r = ui.add_enabled(ok, egui::SelectableLabel::new(a.codec == c, c.label())).on_disabled_hover_text(codecs::missing_note("ac3"));
+                let r = ui.add_enabled(ok, egui::SelectableLabel::new(a.codec == c, c.label())).on_disabled_hover_text(ff.disabled_tip("ac3"));
                 if r.clicked() {
                     a.codec = c;
                 }
             }
         });
+        if ff.offer_switch("ac3") && ui.button("Switch to the app-managed FFmpeg").on_hover_text(
+            "Point the FFmpeg folder setting at the copy the app downloaded. Your own FFmpeg is not moved or overwritten.",
+        ).clicked() {
+            if let Some(flag) = ff.switch_to_managed {
+                flag.set(true);
+            }
+        }
         if !allow_copy && a.codec == AudioCodec::Copy {
             a.codec = AudioCodec::Aac;
         }
@@ -236,13 +301,13 @@ pub fn audio_codec_ui_ex(ui: &mut Ui, id: &str, a: &mut AudioEncode, enc: Option
 }
 
 /// Error for a codec the current FFmpeg can't encode (checked when building jobs).
-pub fn check_available(enc: Option<&Encoders>, v: Option<&VideoEncode>, a: Option<&AudioEncode>) -> Result<(), String> {
+pub fn check_available(enc: Option<&Encoders>, v: Option<&VideoEncode>, a: Option<&AudioEncode>, ff: Option<&FfPaths>) -> Result<(), String> {
     let Some(e) = enc else { return Ok(()) };
     if let Some(v) = v.filter(|v| !e.video(v.codec)) {
-        return Err(codecs::missing_note(v.codec.encoder()));
+        return Err(codecs::missing_note_for(v.codec.encoder(), ff));
     }
     if a.is_some_and(|a| !e.audio(a.codec)) {
-        return Err(codecs::missing_note("ac3"));
+        return Err(codecs::missing_note_for("ac3", ff));
     }
     Ok(())
 }

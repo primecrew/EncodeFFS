@@ -221,7 +221,7 @@ impl Mode for CustomMode {
             });
             ui.end_row();
             if o.video == VideoAction::X264 {
-                crate::ui::codecs_ui::video_codec_ui(ui, "cu", &mut o.video_encode, cx.encoders.as_ref(), None);
+                crate::ui::codecs_ui::video_codec_ui(ui, "cu", &mut o.video_encode, None, &cx.ff_status());
                 crate::ui::common::row_label_tip(ui, "Resize", option_tips::RESIZE);
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut o.resize, "New vertical resolution");
@@ -347,7 +347,7 @@ impl Mode for CustomMode {
 
     fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
         if self.st.o.video == VideoAction::X264 {
-            crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&self.st.o.video_encode), None)?;
+            crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&self.st.o.video_encode), None, cx.ff)?;
         }
         let st = &self.st;
         if st.o.video == VideoAction::X264 {

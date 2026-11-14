@@ -13,6 +13,7 @@ pub mod source;
 pub mod updater;
 pub mod theme;
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -266,6 +267,11 @@ pub struct App {
     ff: Option<FfPaths>,
     ff_check: Option<Result<FfmpegCheck, String>>,
     ff_task: Option<Bg<Result<FfmpegCheck, String>>>,
+    /// Encoders of the app-managed copy (when it exists and is not already in use).
+    managed_encoders: Option<ffenc::cmd::codecs::Encoders>,
+    managed_task: Option<Bg<Result<FfmpegCheck, String>>>,
+    /// Set during a frame when the user clicks “Switch to the app-managed FFmpeg”.
+    switch_to_managed: Cell<bool>,
     preview: Option<Preview>,
     conflict_dlg: Option<ConflictDlg>,
     error: Option<String>,
@@ -467,6 +473,9 @@ impl App {
             ff: None,
             ff_check: None,
             ff_task: None,
+            managed_encoders: None,
+            managed_task: None,
+            switch_to_managed: Cell::new(false),
             preview: None,
             conflict_dlg: None,
             error: None,
@@ -539,6 +548,8 @@ impl App {
         self.ff = locate::locate(Path::new(self.settings.ffmpeg_bin_path.trim()));
         self.ff_check = None;
         self.ff_task = None;
+        self.managed_encoders = None;
+        self.managed_task = None;
         match &self.ff {
             Some(f) => {
                 self.queue.log(format!("Using FFmpeg from {} ({})", f.bin_dir.display(), f.source.label()));
@@ -546,6 +557,38 @@ impl App {
                 self.ff_task = Some(Bg::spawn(ctx, move || version::check_ffmpeg(&p)));
             }
             None => self.queue.log("FFmpeg not found."),
+        }
+        self.start_managed_probe(ctx);
+    }
+
+    /// Probe the app-managed copy when it exists and is not already the in-use FFmpeg.
+    fn start_managed_probe(&mut self, ctx: &egui::Context) {
+        if self.ff.as_ref().is_some_and(|f| f.is_app_managed()) {
+            return;
+        }
+        let bin = locate::managed_bin();
+        if !locate::bin_dir_ok(&bin) {
+            return;
+        }
+        let p = bin.join(locate::exe("ffmpeg"));
+        self.managed_task = Some(Bg::spawn(ctx, move || version::check_ffmpeg(&p)));
+    }
+
+    /// Point the FFmpeg folder setting at the app-managed copy, save, and re-probe.
+    /// The user's own FFmpeg files are not moved or overwritten.
+    fn apply_switch_to_managed(&mut self, ctx: &egui::Context) {
+        let old = self.settings.ffmpeg_bin_path.clone();
+        match settings::set_configured_ffmpeg_to_managed(&mut self.settings) {
+            Ok(bin) => {
+                let from = if old.trim().is_empty() { "the previous location".into() } else { old };
+                self.queue.log(format!("Switched to the app-managed FFmpeg at {} (was {from}).", bin.display()));
+                self.save_settings();
+                if let Some(ed) = self.settings_edit.as_mut() {
+                    ed.ffmpeg_bin_path = bin.to_string_lossy().into_owned();
+                }
+                self.refresh_ffmpeg(ctx);
+            }
+            Err(e) => self.error = Some(e),
         }
     }
 
@@ -695,7 +738,7 @@ impl App {
                 self.pre.list.extend(new);
                 if n > 0 {
                     let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-                    let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
+                    let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed) };
                     self.pre.select(first, &cx);
                 }
                 self.save_presets();
@@ -839,7 +882,7 @@ impl App {
                 _ => {}
             }
         }
-        let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
+        let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed) };
         match self.pre.editor(idx, &self.settings).mode.build(&cx) {
             Ok(plan) => {
                 let preset_name = self.pre.list[idx].name.clone();
@@ -1580,7 +1623,7 @@ if ui.button("About").clicked() {
         let act = self.pre.dialogs(ctx);
         if !matches!(act, Action::None) {
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
+            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed) };
             let r = self.pre.apply(act, &cx);
             if let Err(e) = r {
                 self.error = Some(e);
@@ -1694,7 +1737,7 @@ if ui.button("About").clicked() {
     /// Files from a drop or Ctrl+O into the selected preset.
     fn route_paths(&mut self, ctx: &egui::Context, dropped: Vec<PathBuf>) {
         let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-        let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
+        let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed) };
         let idx = self.pre.current;
         let ed = self.pre.editor(idx, &self.settings);
         let paths = if ed.mode.wants_folders() { dropped.clone() } else { ffenc::util::expand_dropped(&dropped) };
@@ -1855,7 +1898,14 @@ if ui.button("About").clicked() {
                         film_grain_denoise: ed.film_grain_denoise,
                         output_fps: String::new(),
                     };
-                    crate::ui::codecs_ui::video_codec_ui_ex(ui, "set", &mut v, self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders).as_ref(), None, None, false);
+                    let enc = self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders);
+                    let ff = crate::ui::codecs_ui::FfCodecStatus {
+                        paths: self.ff.as_ref(),
+                        encoders: enc,
+                        managed_encoders: self.managed_encoders,
+                        switch_to_managed: Some(&self.switch_to_managed),
+                    };
+                    crate::ui::codecs_ui::video_codec_ui_ex(ui, "set", &mut v, None, None, false, &ff);
                     ed.crf = v.crf;
                     ed.preset = v.preset;
                     ed.video_codec = v.codec;
@@ -1872,7 +1922,7 @@ if ui.button("About").clicked() {
                         advanced: ed.compressor,
                         source_channels: None,
                     };
-                    crate::ui::codecs_ui::audio_codec_ui_ex(ui, "set", &mut a, self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders).as_ref(), false, false);
+                    crate::ui::codecs_ui::audio_codec_ui_ex(ui, "set", &mut a, false, false, &ff);
                     ed.audio_bitrate_k = a.bitrate_k;
                     ed.audio_codec = a.codec;
                     ed.ac3_bitrate_k = a.ac3_bitrate_k;
@@ -2034,6 +2084,19 @@ if ui.button("About").clicked() {
                 }
                 self.ff_check = Some(r);
                 self.ff_task = None;
+                if self.ff.as_ref().is_some_and(|f| f.is_app_managed()) {
+                    if let Ok(c) = &self.ff_check.as_ref().unwrap() {
+                        self.managed_encoders = Some(c.encoders);
+                    }
+                }
+            }
+        }
+        if let Some(t) = &self.managed_task {
+            if let Some(r) = t.poll() {
+                if let Ok(c) = &r {
+                    self.managed_encoders = Some(c.encoders);
+                }
+                self.managed_task = None;
             }
         }
         // Wait for the version before comparing.
@@ -2133,7 +2196,7 @@ impl eframe::App for App {
         let presets_panel = egui::SidePanel::left(layout::panel_id("presets")).resizable(true).default_width(presets_w).width_range(150.0..=(screen.x * 0.45).max(200.0)).show(ctx, |ui| {
             ui.add_space(4.0);
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
+            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed) };
             match self.pre.sidebar(ui, &cx) {
                 None => {}
                 Some(SideEvent::Selected) => self.save_settings(),
@@ -2229,7 +2292,7 @@ impl eframe::App for App {
             }
             egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                 let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-                let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders) };
+                let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed) };
                 self.pre.editor(idx, &self.settings).mode.ui(ui, &cx);
                 let (inp, out) = crate::ui::presets::take_app_folders(&*self.pre.editor(idx, &self.settings).mode);
                 let mut folders_changed = false;
@@ -2302,6 +2365,10 @@ impl eframe::App for App {
         // keep progress bars moving while jobs run
         if self.queue.is_busy() || self.updater.busy() {
             ctx.request_repaint_after(Duration::from_millis(250));
+        }
+        if self.switch_to_managed.get() {
+            self.switch_to_managed.set(false);
+            self.apply_switch_to_managed(ctx);
         }
     }
 
