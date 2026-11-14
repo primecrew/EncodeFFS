@@ -17,6 +17,11 @@ This edition is a separate app next to the stable build, with its own exe and da
 
 - The program file is now `Encode FFS (Codecs).exe` (the crate, repo, zip and setup names stay `FFmpegEncoder-Codecs`). An installer upgrade deletes a leftover `FFmpegEncoder-Codecs.exe` from the install folder and repoints shortcuts. A portable copy still reads `FFmpegEncoder-Codecs.settings.json` next to the exe. Import from the stable edition still looks for `FFmpegEncoder.settings.json`.
 
+
+- The **Using:** line under the codec picker is normal body text (full-strength colour, not small or grey). The **Switch to the app-managed FFmpeg** button is shown once per form: under the video picker when a missing video encoder is in the managed copy, or under the audio picker if only AC3 is the reason.
+
+- The MP4 from still image subtitle is now “One image + one audio file -> MP4 video.” (the H.264/AAC defaults are unchanged).
+
 - Advanced compressor controls are easier to find: the Compressor drop-down uses **advanced…**, and the ratio, threshold, knee, attack, release and make-up gain fields appear in that order (after the Gain / pre-gain row) when Advanced is selected. Audio & subtitles now shows those controls under the track list. File › Settings lists them as **Advanced compressor defaults**.
 - Frameserver colour matrix defaults to **PC.709** (keep full range, recommended for Vegas 8-bit). Rec709 is labelled as the squeeze-to-TV choice for 32-bit full-range Vegas projects. Saved presets keep the matrix they stored; older files that omitted the field still load as Rec709.
 - Re-encode, Batch, Custom pipeline and similar forms warn (but still run) when the source is tagged as TV (limited) range and **Convert full-range to limited-range** is on. A one-click fix turns the conversion off; **Run as set** keeps it. Missing or unknown tags are not warned about (a short hover notes that the range is untagged). README has a **Colour range and Vegas frameserving** section.

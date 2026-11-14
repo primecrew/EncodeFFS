@@ -44,6 +44,14 @@ impl FfCodecStatus<'_> {
         codecs::can_switch_to_managed_for_any(self.paths, self.encoders.as_ref(), self.managed_encoders.as_ref())
     }
 
+    pub fn offer_switch_video(&self) -> bool {
+        codecs::switch_under_video(self.paths, self.encoders.as_ref(), self.managed_encoders.as_ref())
+    }
+
+    pub fn offer_switch_audio(&self) -> bool {
+        codecs::switch_under_audio(self.paths, self.encoders.as_ref(), self.managed_encoders.as_ref())
+    }
+
     pub fn missing(&self, encoder: &str) -> String {
         codecs::missing_note_for(encoder, self.paths)
     }
@@ -58,15 +66,19 @@ impl FfCodecStatus<'_> {
     }
 }
 
-fn using_and_switch_ui(ui: &mut Ui, ff: &FfCodecStatus<'_>) {
+fn using_line_ui(ui: &mut Ui, ff: &FfCodecStatus<'_>) {
     if let Some(p) = ff.paths {
         let (line, hover) = p.using_line(32);
-        let r = ui.label(RichText::new(line).small());
+        // Normal body size and full-strength colour (not small/weak) so it stays readable.
+        let r = ui.label(RichText::new(line));
         if let Some(h) = hover {
             r.on_hover_text(h);
         }
     }
-    if ff.offer_switch_any() && ui.button("Switch to the app-managed FFmpeg").on_hover_text(
+}
+
+fn switch_button_ui(ui: &mut Ui, ff: &FfCodecStatus<'_>) {
+    if ui.button("Switch to the app-managed FFmpeg").on_hover_text(
         "Point the FFmpeg folder setting at the copy the app downloaded. Your own FFmpeg is not moved or overwritten.",
     ).clicked() {
         if let Some(flag) = ff.switch_to_managed {
@@ -149,7 +161,10 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, src_pix_fmt
                 }
             }
         });
-        using_and_switch_ui(ui, ff);
+        using_line_ui(ui, ff);
+        if ff.offer_switch_video() {
+            switch_button_ui(ui, ff);
+        }
         if v.codec != before {
             // sensible starting values for the new codec (CRF scales differ)
             v.crf = v.codec.default_crf(false);
@@ -266,12 +281,8 @@ pub fn audio_codec_ui_ex(ui: &mut Ui, id: &str, a: &mut AudioEncode, allow_copy:
                 }
             }
         });
-        if ff.offer_switch("ac3") && ui.button("Switch to the app-managed FFmpeg").on_hover_text(
-            "Point the FFmpeg folder setting at the copy the app downloaded. Your own FFmpeg is not moved or overwritten.",
-        ).clicked() {
-            if let Some(flag) = ff.switch_to_managed {
-                flag.set(true);
-            }
+        if ff.offer_switch_audio() {
+            switch_button_ui(ui, ff);
         }
         if !allow_copy && a.codec == AudioCodec::Copy {
             a.codec = AudioCodec::Aac;
