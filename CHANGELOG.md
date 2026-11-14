@@ -14,6 +14,8 @@ Create Slideshow is part of this stable build (the old **Slideshow** branch is a
 
 - The **Add commentary track** preset is now **Add Additional Audio Track** (sidebar, form, hover help). The default track title is **Additional audio** (File › Settings › Added audio track name). Saved presets and the `commentary_name` settings key are unchanged; existing saved titles are kept.
 
+- Remux MKV → MP4 warns when a copied audio or subtitle track cannot go in an MP4 (for example TrueHD, MLP, some PCM, SRT, ASS, PGS, WebVTT) or when the file has attachments, naming the track. FLAC, Opus, Vorbis and the PCM types FFmpeg can store in MP4 get a note that many players will not play them. The remux command is unchanged (warn, don’t block); a failed job still keeps its MKV.
+
 ## 0.6.0-rc.3
 
 - Installer and first-run wording offers to use your existing FFmpeg or download a copy in the app (Help › Check for FFmpeg updates…), instead of leading with “FFmpeg is not included”. Behaviour is unchanged: the installer does not download FFmpeg, and a download never overwrites your own FFmpeg folder.
