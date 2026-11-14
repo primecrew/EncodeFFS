@@ -6,6 +6,8 @@ Create Slideshow is part of this stable build (the old **Slideshow** branch is a
 
 ## Unreleased
 
+## 0.6.0-rc.4
+
 - Extract audio to WAV warns when a file has more than one audio track, names the default-disposition track FFmpeg would pick, and offers a choice: the default track (same command as today), a specific track, or each track to its own WAV (`<name> - Track 2 - Mic.wav`). The status line and sample rate follow the track that will actually be extracted.
 
 - Join / stitch files (re-encode method) warns when any file has more than one audio track that only the first track of each file is kept. The lossless copy method is unchanged.
