@@ -1,4 +1,4 @@
-//! Mode 3 – add a commentary track.
+//! Mode 3 – add an additional audio track.
 
 use std::path::PathBuf;
 
@@ -56,7 +56,7 @@ pub struct CommentaryMode {
 }
 
 fn sfx() -> String {
-    "_with_commentary".into()
+    "_additional_audio".into()
 }
 
 fn set_video(st: &mut State, p: &std::path::Path) {
@@ -69,10 +69,10 @@ impl Mode for CommentaryMode {
         "commentary"
     }
     fn title(&self) -> &'static str {
-        "Add commentary track"
+        "Add Additional Audio Track"
     }
     fn description(&self) -> &'static str {
-        "Copy video + original audio and add an AAC commentary track with a title."
+        "Copy video + original audio and add an AAC audio track with a title."
     }
     fn run_fields(&self) -> &'static [&'static str] {
         &["video", "commentary", "out_name", "last_auto"]
@@ -89,7 +89,7 @@ impl Mode for CommentaryMode {
             ui.label("");
             self.vprobe.status_ui(ui, describe_video);
             ui.end_row();
-            path_row(ui, "Commentary audio", &mut st.commentary, Pick::File("Audio", AUDIO_EXTS), &cx.settings.input_folder);
+            path_row(ui, "Additional audio", &mut st.commentary, Pick::File("Audio", AUDIO_EXTS), &cx.settings.input_folder);
             ui.label("");
             self.aprobe.status_ui(ui, describe_audio);
             ui.end_row();
@@ -100,14 +100,14 @@ impl Mode for CommentaryMode {
             crate::ui::common::row_label(ui, "Track name");
             ui.text_edit_singleline(&mut st.title);
             ui.end_row();
-            bitrate_ui(ui, "Commentary bitrate", &mut st.bitrate_k);
+            bitrate_ui(ui, "Audio bitrate", &mut st.bitrate_k);
             faststart_ui(ui, &mut st.faststart, is_mp4_like(&PathBuf::from(&st.out_name)));
         });
     }
     fn build(&mut self, _cx: &Ctx) -> Result<Plan, String> {
         let st = &self.st;
         let video = check_input(&st.video, VIDEO_EXTS, "input video")?;
-        let commentary = check_input(&st.commentary, AUDIO_EXTS, "commentary audio")?;
+        let commentary = check_input(&st.commentary, AUDIO_EXTS, "additional audio")?;
         let info = self.vprobe.require("Video")?;
         let output = check_output(&st.out_dir, &st.out_name)?;
         if same_file(&video, &output) {
@@ -124,7 +124,7 @@ impl Mode for CommentaryMode {
         };
         let cmd = commentary::build(&pr)?;
         Ok(Plan {
-            jobs: vec![JobSpec::new(format!("Add commentary -> {}", st.out_name), cmd, output.clone(), log_path_for(&output), info.duration())],
+            jobs: vec![JobSpec::new(format!("Add additional audio -> {}", st.out_name), cmd, output.clone(), log_path_for(&output), info.duration())],
             ..Default::default()
         })
     }

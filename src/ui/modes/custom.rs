@@ -269,6 +269,17 @@ impl Mode for CustomMode {
                 audio_encode_ui(ui, "cu_ae", &mut o.audio_encode);
             }
         });
+        if o.audio == AudioAction::Replace {
+            if o.batch {
+                if self.rows.iter().filter_map(|r| r.info.as_ref().ok()).any(|i| i.audio_count() > 1) {
+                    warn(ui, "Some videos have more than one audio track; all of those tracks are replaced by the audio file.");
+                }
+            } else if let Some(i) = self.probe.info() {
+                if i.audio_count() > 1 {
+                    warn(ui, format!("The video has {} audio tracks; all of them are replaced by the WAV.", i.audio_count()));
+                }
+            }
+        }
 
         let csrc = if o.batch {
             let ok: Vec<&MediaInfo> = self.rows.iter().filter_map(|r| r.info.as_ref().ok()).collect();

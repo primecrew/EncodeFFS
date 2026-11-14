@@ -38,6 +38,27 @@ pub struct StreamInfo {
     pub attached_pic: bool,
 }
 
+impl StreamInfo {
+    /// User-facing name: the title when set, otherwise "Track N (stereo, 48 kHz)".
+    pub fn audio_label(&self, track_1based: usize) -> String {
+        if let Some(t) = self.title.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            return t.to_string();
+        }
+        let ch = match self.channels {
+            Some(1) => "mono".to_string(),
+            Some(2) => "stereo".to_string(),
+            Some(n) => format!("{n} ch"),
+            None => "audio".to_string(),
+        };
+        let rate = match self.sample_rate {
+            Some(r) if r % 1000 == 0 => format!(", {} kHz", r / 1000),
+            Some(r) => format!(", {:.1} kHz", r as f64 / 1000.0),
+            None => String::new(),
+        };
+        format!("Track {track_1based} ({ch}{rate})")
+    }
+}
+
 /// A chapter already present in the file (seconds).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ProbeChapter {
@@ -237,6 +258,22 @@ impl MediaInfo {
         self.of_type("audio").next().and_then(|a| a.sample_rate)
     }
 
+    /// 0-based index among audio streams of the track FFmpeg picks without `-map`
+    /// (the first with default disposition, otherwise the first audio stream).
+    pub fn default_audio_index(&self) -> Option<usize> {
+        let a: Vec<_> = self.of_type("audio").collect();
+        if a.is_empty() {
+            None
+        } else {
+            Some(a.iter().position(|s| s.default).unwrap_or(0))
+        }
+    }
+
+    /// The Nth audio stream (0-based among audio streams, not the container index).
+    pub fn audio_at(&self, audio_index: usize) -> Option<&StreamInfo> {
+        self.of_type("audio").nth(audio_index)
+    }
+
     /// Tagged colour range of the first real video stream, when ffprobe reported a known value.
     pub fn video_color_range(&self) -> Option<ColorRange> {
         self.video().and_then(|v| v.color_range.as_deref().and_then(ColorRange::parse))
@@ -364,6 +401,26 @@ mod tests {
         assert_eq!((m.size, m.bit_rate, m.format_long_name.as_deref()), (Some(12345), Some(999), Some("QuickTime / MOV")));
         assert_eq!(parse_rate("25"), Some(25.0));
         assert_eq!(parse_rate("0/0"), None);
+    }
+
+    #[test]
+    fn default_audio_index_and_label() {
+        let none = r#"{"streams":[
+            {"index":0,"codec_type":"video","width":2,"height":2},
+            {"index":1,"codec_type":"audio","codec_name":"aac","sample_rate":"48000","channels":2,"tags":{"title":"Game"}},
+            {"index":2,"codec_type":"audio","codec_name":"aac","sample_rate":"44100","channels":1,"disposition":{"default":1},"tags":{"title":"Mic"}}
+        ]}"#;
+        let m = parse_probe_json(none).unwrap();
+        assert_eq!(m.default_audio_index(), Some(1));
+        assert_eq!(m.audio_at(1).unwrap().sample_rate, Some(44100));
+        assert_eq!(m.audio_at(1).unwrap().audio_label(2), "Mic");
+        let untitled = StreamInfo { channels: Some(2), sample_rate: Some(48000), ..Default::default() };
+        assert_eq!(untitled.audio_label(2), "Track 2 (stereo, 48 kHz)");
+        let odd = StreamInfo { channels: Some(6), sample_rate: Some(44100), ..Default::default() };
+        assert_eq!(odd.audio_label(3), "Track 3 (6 ch, 44.1 kHz)");
+        let first_only = parse_probe_json(MKV).unwrap();
+        assert_eq!(first_only.default_audio_index(), Some(0), "no default flag -> first audio");
+        assert_eq!(first_only.audio_at(0).unwrap().audio_label(1), "Track 1 (stereo, 48 kHz)");
     }
 
     #[test]

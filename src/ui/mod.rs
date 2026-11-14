@@ -1931,7 +1931,7 @@ if ui.button("About").clicked() {
                         common::hint(ui, "Audio & subtitles: added tracks this close to the video's length count as matching (no warning).");
                     });
                     ui.end_row();
-                    crate::ui::common::row_label_tip(ui, "Commentary name", "Default title given to an added commentary audio track.");
+                    crate::ui::common::row_label_tip(ui, "Added audio track name", "Default title given to a newly added audio track.");
                     ui.text_edit_singleline(&mut ed.commentary_name);
                     ui.end_row();
                     crate::ui::common::row_label_tip(ui, "Fallback sample rate", "Audio sample rate used when ffprobe cannot read the source's rate.");

@@ -6,6 +6,14 @@ Create Slideshow is part of this stable build (the old **Slideshow** branch is a
 
 ## Unreleased
 
+- Extract audio to WAV warns when a file has more than one audio track, names the default-disposition track FFmpeg would pick, and offers a choice: the default track (same command as today), a specific track, or each track to its own WAV (`<name> - Track 2 - Mic.wav`). The status line and sample rate follow the track that will actually be extracted.
+
+- Join / stitch files (re-encode method) warns when any file has more than one audio track that only the first track of each file is kept. The lossless copy method is unchanged.
+
+- Custom pipeline’s Replace action shows the same “all N tracks are replaced” warning as Replace primary audio.
+
+- The **Add commentary track** preset is now **Add Additional Audio Track** (sidebar, form, hover help). The default track title is **Additional audio** (File › Settings › Added audio track name). Saved presets and the `commentary_name` settings key are unchanged; existing saved titles are kept.
+
 ## 0.6.0-rc.3
 
 - Installer and first-run wording offers to use your existing FFmpeg or download a copy in the app (Help › Check for FFmpeg updates…), instead of leading with “FFmpeg is not included”. Behaviour is unchanged: the installer does not download FFmpeg, and a download never overwrites your own FFmpeg folder.

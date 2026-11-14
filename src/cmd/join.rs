@@ -305,6 +305,9 @@ pub fn build(pr: &JoinParams) -> Result<BuiltCommand, String> {
             if has_v {
                 cmd.warnings.push(format!("Re-encode join: every file is scaled/padded to {w}x{h} at {fps} fps{}; subtitles are not carried over.", if has_a { format!(", audio {rate} Hz {layout}") } else { String::new() }));
             }
+            if pr.inputs.iter().any(|f| f.audio_tracks > 1) {
+                cmd.warnings.push("Some files have more than one audio track. Only the first track of each file will be in the joined file.".into());
+            }
         }
     }
     a.push("-map_chapters".into());
@@ -431,5 +434,12 @@ anullsrc=r=44100:cl=stereo,atrim=duration=4[a1];\
         let g8 = &b8.args[b8.args.iter().position(|x| x == "-filter_complex").unwrap() + 1];
         assert!(g8.contains("format=yuv420p["), "{g8}");
         assert!(!g8.contains("yuv420p10le"), "{g8}");
+        // extra audio tracks are dropped in the concat graph ([i:a:0] only); warn about it
+        pr.inputs[0].audio_tracks = 3;
+        let w = build(&pr).unwrap();
+        assert!(w.warnings.iter().any(|x| x.contains("Only the first track of each file will be in the joined file")), "{:?}", w.warnings);
+        // Copy path stays silent about extra tracks (it keeps them)
+        let cpy = build(&params(pr.inputs.clone(), JoinMethod::Copy, false, "/o/j.mkv")).unwrap();
+        assert!(cpy.warnings.iter().all(|x| !x.contains("Only the first track")), "{:?}", cpy.warnings);
     }
 }

@@ -29,7 +29,7 @@ pub fn build(pr: &CommentaryParams) -> Result<BuiltCommand, String> {
     }
     a.push_all(["-map", "1:a", "-c:v", "copy", "-c:a", "copy"]);
     a.push_all([format!("-c:a:{n}"), "aac".into(), format!("-b:a:{n}"), format!("{}k", pr.bitrate_k)]);
-    let title = if pr.title.trim().is_empty() { "Commentary Track" } else { pr.title.trim() };
+    let title = if pr.title.trim().is_empty() { "Additional audio" } else { pr.title.trim() };
     a.push_all([format!("-metadata:s:a:{n}"), format!("title={title}")]);
     if is_mp4_like(&pr.output) {
         // MP4 has no per-track "title"; players show the handler name instead.
