@@ -6,6 +6,8 @@ Create Slideshow is part of this stable build (the old **Slideshow** branch is a
 
 ## Unreleased
 
+## 0.6.0-rc.5
+
 - The Encoding Finished window is wide enough for a typical file name such as `2025-04-25 17-01-45.mp4` to stay on one line, with the size and time underneath and the Go to file buttons aligned. Scroll, Open folder and Close are unchanged.
 
 - **Remux MKV → MP4** is now **Remux**. Add files, a folder, or drag and drop, and pick the output container: MKV, MP4, MOV, WebM or TS (no AVI). Tracks are always stream-copied, never re-encoded. Each container warns about tracks (video, audio, subtitles, attachments) that FFmpeg cannot copy into it. Files already in the chosen container are skipped. MPEG-TS notes that chapters and track names are mostly lost. Older “Remux MKV → MP4” presets still load as Remux with MP4. A remux from MKV to MP4 uses the same command as before.
