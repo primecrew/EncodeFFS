@@ -138,7 +138,7 @@ impl Mode for StillMode {
             faststart: st.faststart,
             range_convert: st.range_convert,
         };
-        crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&st.video), Some(&st.audio_encode), cx.ff)?;
+        crate::ui::codecs_ui::check_available(cx, Some(&st.video), Some(&st.audio_encode))?;
         let cmd = still::build(&pr)?;
         let dur = pr.duration_s.unwrap_or(audio_dur);
         Ok(Plan {

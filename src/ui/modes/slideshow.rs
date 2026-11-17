@@ -768,7 +768,7 @@ impl Mode for SlideshowMode {
         }
         let images = self.image_inputs()?;
         let output = check_output(&self.st.out_dir, &self.st.out_name)?;
-        crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&self.st.video), Some(&self.st.audio_encode), cx.ff)?;
+        crate::ui::codecs_ui::check_available(cx, Some(&self.st.video), Some(&self.st.audio_encode))?;
         let (audio, audio_duration_s) = if self.st.audio.trim().is_empty() {
             (None, None)
         } else {

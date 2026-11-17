@@ -68,6 +68,35 @@ fn details(f: &Finished) -> String {
     v.join(" · ")
 }
 
+/// Widths that keep a typical name like "2025-04-25 17-01-45.mp4" on one line
+/// next to a "Go to file" button, scaling with the current font size.
+/// Returns (window width, name column width).
+fn popup_widths(ui: &egui::Ui, items: &[Finished], screen_w: f32) -> (f32, f32) {
+    let typ = egui::TextStyle::Body.resolve(ui.style());
+    let color = ui.visuals().text_color();
+    let measure = |s: &str| ui.fonts(|f| f.layout_no_wrap(s.to_owned(), typ.clone(), color).size().x);
+    let btn = measure("Go to file") + ui.spacing().button_padding.x * 2.0 + ui.spacing().item_spacing.x + 8.0;
+    let mut name_w = measure("2025-04-25 17-01-45.mp4");
+    for f in items {
+        name_w = name_w.max(measure(&name_of(&f.path)));
+    }
+    let m = ui.spacing().window_margin;
+    let pad = (m.left as f32) + (m.right as f32) + 32.0;
+    let max = (screen_w - 48.0).max(360.0);
+    let want = (name_w + btn + pad).clamp(360.0, max);
+    // If the window had to shrink for a very long name, shrink the name column too.
+    let name_col = name_w.min((want - btn - pad).max(80.0));
+    (want, name_col)
+}
+
+fn filename_label(ui: &mut egui::Ui, name: &str, path: &Path, name_col: f32) -> egui::Response {
+    ui.scope(|ui| {
+        ui.set_min_width(name_col);
+        ui.set_max_width(name_col);
+        ui.add(egui::Label::new(name).wrap_mode(egui::TextWrapMode::Extend))
+    }).inner.on_hover_text(path.display().to_string())
+}
+
 impl FinishedUi {
     /// Watch the queue (call every frame). `enabled` = Settings › Show Encoding Finished popup.
     pub fn watch(&mut self, ctx: &egui::Context, jobs: &[Job], enabled: bool) {
@@ -98,10 +127,12 @@ impl FinishedUi {
         let single = p.items.len() == 1;
         let last = p.items.last().map(|f| f.path.clone()).unwrap_or_default();
         common::fit(egui::Window::new("Encoding Finished").id(egui::Id::new("encoding_finished")).collapsible(false).resizable(false).order(egui::Order::Foreground).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]), ctx, false).show(ctx, |ui| {
-            ui.set_max_width((ctx.screen_rect().width() - 60.0).clamp(240.0, 560.0));
+            let (w, name_col) = popup_widths(ui, &p.items, ctx.screen_rect().width());
+            ui.set_min_width(w);
+            ui.set_max_width(w);
             if single {
                 let f = &p.items[0];
-                ui.label(RichText::new(name_of(&f.path)).strong());
+                ui.add(egui::Label::new(RichText::new(name_of(&f.path)).strong()).wrap_mode(egui::TextWrapMode::Extend)).on_hover_text(f.path.display().to_string());
                 hint(ui, format!("in {}", folder_of(&f.path).display()));
                 let d = details(f);
                 if !d.is_empty() {
@@ -110,10 +141,11 @@ impl FinishedUi {
             } else {
                 ui.label(RichText::new(format!("{} files finished", p.items.len())).strong());
                 egui::ScrollArea::vertical().max_height((ctx.screen_rect().height() * 0.45).max(80.0)).show(ui, |ui| {
-                    egui::Grid::new("finished_list").num_columns(2).spacing([12.0, 4.0]).striped(true).show(ui, |ui| {
+                    ui.set_min_width(w - 16.0);
+                    egui::Grid::new("finished_list").num_columns(2).spacing([16.0, 8.0]).min_col_width(80.0).striped(true).show(ui, |ui| {
                         for f in &p.items {
                             ui.vertical(|ui| {
-                                ui.label(name_of(&f.path)).on_hover_text(f.path.display().to_string());
+                                filename_label(ui, &name_of(&f.path), &f.path, name_col);
                                 let d = details(f);
                                 if !d.is_empty() {
                                     hint(ui, d);

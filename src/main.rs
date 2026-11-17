@@ -25,6 +25,12 @@ mod icon_tests {
 }
 
 fn main() -> eframe::Result<()> {
+    if let Ok(kind) = std::env::var("FFENC_SCREENSHOT") {
+        if !kind.is_empty() {
+            let out = std::env::var("FFENC_SCREENSHOT_OUT").unwrap_or_else(|_| format!("/tmp/ffenc-shot-{kind}.png"));
+            return ui::shot::run(&kind, std::path::Path::new(&out));
+        }
+    }
     // where the window opens: the saved layout (if "Remember window layout" is on and it is still
     // on a connected screen), otherwise the default size, centered
     let startup = ui::layout::Startup::decide();

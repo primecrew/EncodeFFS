@@ -358,7 +358,7 @@ impl Mode for CustomMode {
 
     fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
         if self.st.o.video == VideoAction::X264 {
-            crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), Some(&self.st.o.video_encode), None, cx.ff)?;
+            crate::ui::codecs_ui::check_available(cx, Some(&self.st.o.video_encode), None)?;
         }
         let st = &self.st;
         if st.o.video == VideoAction::X264 {

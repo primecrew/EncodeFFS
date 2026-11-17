@@ -1,4 +1,4 @@
-//! Mode 9 – remux MKV -> MP4 (container copy, never overwrite).
+//! Remux – stream-copy into a chosen container (never overwrite).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{restore, Ctx, Mode, Plan};
 use crate::ui::common::*;
-use ffenc::cmd::remux;
+use ffenc::cmd::remux::{self, Container};
 use ffenc::ffmpeg::probe::{self, MediaInfo};
 use ffenc::ffmpeg::runner::{JobSpec, PostAction};
 use ffenc::settings::Settings;
@@ -19,6 +19,8 @@ struct State {
     src_dir: String,
     /// Empty = same as the source folder (script default).
     out_dir: String,
+    /// Default is MP4 so older “Remux MKV -> MP4” presets load as Remux with MP4.
+    container: Container,
     /// Never remembered: deleting sources must be an explicit choice each session.
     #[serde(skip)]
     delete_sources: bool,
@@ -34,12 +36,12 @@ pub struct RemuxMode {
     scan: Option<Bg<Vec<(PathBuf, Result<MediaInfo, String>)>>>,
 }
 
-fn list_mkv(dir: &Path) -> Result<Vec<PathBuf>, String> {
+fn list_videos(dir: &Path) -> Result<Vec<PathBuf>, String> {
     let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
         .map_err(|e| format!("Cannot read {}: {e}", dir.display()))?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.is_file() && ffenc::util::ext_lower(p) == "mkv")
+        .filter(|p| p.is_file() && remux::is_remux_input(p))
         .collect();
     v.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
     Ok(v)
@@ -51,7 +53,7 @@ impl RemuxMode {
         self.list_error = None;
         self.probes.clear();
         self.scan = None;
-        match list_mkv(Path::new(self.st.src_dir.trim())) {
+        match list_videos(Path::new(self.st.src_dir.trim())) {
             Ok(v) => self.files = v.into_iter().map(|p| (p, true)).collect(),
             Err(e) => {
                 self.files.clear();
@@ -61,7 +63,7 @@ impl RemuxMode {
     }
     fn add_files(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
         for p in paths {
-            if ffenc::util::ext_lower(&p) == "mkv" && !self.files.iter().any(|(f, _)| *f == p) {
+            if remux::is_remux_input(&p) && !self.files.iter().any(|(f, _)| *f == p) {
                 self.files.push((p, true));
             }
         }
@@ -72,6 +74,10 @@ impl RemuxMode {
         } else {
             PathBuf::from(self.st.out_dir.trim())
         }
+    }
+
+    fn dest_of(&self, src: &Path) -> PathBuf {
+        self.dest_dir().join(format!("{}.{}", ffenc::util::stem(src), self.st.container.ext()))
     }
 
     fn poll_probes(&mut self, cx: &Ctx) {
@@ -107,12 +113,23 @@ impl RemuxMode {
         let Some(Ok(info)) = self.probes.get(path) else {
             return vec![];
         };
-        Self::warnings_for_info(path, info)
+        Self::warnings_for_info(path, info, self.st.container)
     }
 
-    fn warnings_for_info(path: &Path, info: &MediaInfo) -> Vec<String> {
+    fn warnings_for_info(path: &Path, info: &MediaInfo, container: Container) -> Vec<String> {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string());
-        remux::copy_warnings(info).into_iter().map(|w| format!("{name}: {w}")).collect()
+        remux::copy_warnings_for(info, container).into_iter().map(|w| format!("{name}: {w}")).collect()
+    }
+
+    fn will_skip(&self, path: &Path) -> Option<String> {
+        let ext = self.st.container.ext();
+        if ffenc::util::ext_lower(path) == ext {
+            return Some(format!("(already {} – will be skipped)", self.st.container.a_name()));
+        }
+        if self.dest_of(path).exists() {
+            return Some(format!("({} exists – will be skipped)", self.st.container.label()));
+        }
+        None
     }
 }
 
@@ -121,10 +138,10 @@ impl Mode for RemuxMode {
         "remux"
     }
     fn title(&self) -> &'static str {
-        "Remux MKV -> MP4"
+        "Remux"
     }
     fn description(&self) -> &'static str {
-        "Container copy (-map 0 -c copy). Never overwrites; existing MP4s are skipped."
+        "Container copy (-map 0 -c copy). Never overwrites; files already in the chosen container are skipped."
     }
     fn run_fields(&self) -> &'static [&'static str] {
         &["src_dir"]
@@ -155,6 +172,13 @@ impl Mode for RemuxMode {
                 });
             });
             ui.end_row();
+            crate::ui::common::row_label(ui, "Output container");
+            ui.horizontal(|ui| {
+                for c in Container::ALL {
+                    ui.radio_value(&mut self.st.container, c, c.label());
+                }
+            });
+            ui.end_row();
         });
         if refresh {
             self.refresh();
@@ -164,7 +188,8 @@ impl Mode for RemuxMode {
                 self.refresh();
             }
             if ui.button("Add files…").clicked() {
-                if let Some(v) = rfd::FileDialog::new().add_filter("MKV", &["mkv"]).pick_files() {
+                let (label, exts) = remux::INPUT_FILTER;
+                if let Some(v) = rfd::FileDialog::new().add_filter(label, exts).pick_files() {
                     self.add_files(v);
                 }
             }
@@ -179,27 +204,29 @@ impl Mode for RemuxMode {
         if let Some(e) = &self.list_error {
             ui.colored_label(crate::ui::theme::c().err, e);
         } else if self.files.is_empty() && !self.st.src_dir.trim().is_empty() {
-            warn(ui, format!("No MKV files found in: {}", self.st.src_dir));
+            warn(ui, format!("No video files found in: {}", self.st.src_dir));
         }
-        let dest_dir = self.dest_dir();
+        let skip_hints: Vec<Option<String>> = self.files.iter().map(|(p, _)| self.will_skip(p)).collect();
         egui::ScrollArea::vertical().max_height(260.0).id_salt("m9files").show(ui, |ui| {
-            for (p, on) in &mut self.files {
+            for ((p, on), skip) in self.files.iter_mut().zip(skip_hints.into_iter()) {
                 ui.horizontal(|ui| {
                     ui.checkbox(on, p.file_name().unwrap_or_default().to_string_lossy());
-                    let dest = dest_dir.join(format!("{}.mp4", ffenc::util::stem(p)));
-                    if dest.exists() {
-                        hint(ui, "(MP4 exists – will be skipped)");
+                    if let Some(h) = skip {
+                        hint(ui, h);
                     }
                 });
             }
         });
         ui.add_space(6.0);
-        ui.checkbox(&mut self.st.delete_sources, egui::RichText::new("Delete successfully converted source MKVs").color(crate::ui::theme::c().err));
+        ui.checkbox(&mut self.st.delete_sources, egui::RichText::new("Delete successfully remuxed source files").color(crate::ui::theme::c().err));
+        if self.st.container == Container::Ts {
+            hint(ui, remux::TS_CHAPTERS_NOTE);
+        }
         for (p, on) in &self.files {
             if !*on {
                 continue;
             }
-            if dest_dir.join(format!("{}.mp4", ffenc::util::stem(p))).exists() {
+            if self.will_skip(p).is_some() {
                 continue;
             }
             for w in self.warnings_for(p) {
@@ -209,29 +236,36 @@ impl Mode for RemuxMode {
         if self.scan.is_some() {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label("Checking tracks for MP4 compatibility…");
+                ui.label(format!("Checking tracks for {} compatibility…", self.st.container.label()));
             });
         }
-        hint(ui, "All tracks are copied as they are. If a job fails, its MKV is kept.");
+        hint(ui, "All tracks are copied as they are. If a job fails, its source file is kept.");
     }
     fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
         let selected: Vec<PathBuf> = self.files.iter().filter(|f| f.1).map(|f| f.0.clone()).collect();
         if selected.is_empty() {
-            return Err("Select at least one MKV file.".into());
+            return Err("Select at least one video file.".into());
         }
         let dest_dir = self.dest_dir();
         if dest_dir.as_os_str().is_empty() {
             return Err("Choose a source or output folder.".into());
         }
         std::fs::create_dir_all(&dest_dir).map_err(|e| format!("Cannot use output folder: {e}"))?;
-        let plan = remux::plan(&selected, &dest_dir, &|p| p.exists(), ffenc::util::unique_id);
+        let plan = remux::plan(&selected, &dest_dir, self.st.container, &|p| p.exists(), ffenc::util::unique_id);
         let mut notes: Vec<String> = plan.skipped.iter().map(|(s, why)| format!("Skipping {}: {why}", s.display())).collect();
         if plan.jobs.is_empty() {
-            return Err(format!("No files to process. Existing MP4s and source MKVs were kept.\n{}", notes.join("\n")));
+            return Err(format!(
+                "No files to process. Files already in the chosen container and existing outputs were kept.\n{}",
+                notes.join("\n")
+            ));
         }
         if self.st.delete_sources {
-            notes.push("Source MKVs will be DELETED after each successful conversion.".into());
+            notes.push("Source files will be DELETED after each successful remux.".into());
         }
+        if self.st.container == Container::Ts {
+            notes.push(remux::TS_CHAPTERS_NOTE.into());
+        }
+        let container = self.st.container;
         let jobs = plan
             .jobs
             .iter()
@@ -239,7 +273,7 @@ impl Mode for RemuxMode {
                 let info = self.probes.get(&j.source).and_then(|r| r.as_ref().ok()).cloned().or_else(|| {
                     cx.ffprobe.and_then(|fp| probe::probe(fp, &j.source).ok())
                 });
-                let warnings = info.map(|i| Self::warnings_for_info(&j.source, &i)).unwrap_or_default();
+                let warnings = info.map(|i| Self::warnings_for_info(&j.source, &i, container)).unwrap_or_default();
                 JobSpec {
                     label: format!("Remux {} -> {}", j.source.file_name().unwrap_or_default().to_string_lossy(), j.dest.file_name().unwrap_or_default().to_string_lossy()),
                     args: remux::args(j),
@@ -273,6 +307,7 @@ impl Mode for RemuxMode {
         if self.st.src_dir.trim().is_empty() {
             self.st.src_dir = s.input_folder.clone();
         }
+        // Older presets have no `container` field; serde default is MP4.
         self.files.clear();
         self.listed_dir = None;
         self.probes.clear();

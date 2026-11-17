@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 
 use eframe::egui::{self, RichText, Ui};
-use ffenc::cmd::codecs::AAC_BITRATES;
+use ffenc::cmd::codecs::{AAC_BITRATES, VideoCodec};
+use ffenc::cmd::crf;
 use ffenc::cmd::common::*;
 use ffenc::ffmpeg::probe::{self, MediaInfo};
 use ffenc::util::fmt_hms;
@@ -335,11 +336,37 @@ pub fn passthrough_ui(ui: &mut Ui, id: &str, p: &mut Passthrough) {
     ui.end_row();
 }
 
+
+/// Clickable (?) next to CRF; opens a short pop-up. Never changes the value.
+pub fn crf_help_button(ui: &mut Ui, id: &str, codec: VideoCodec, height: Option<u32>) {
+    let open_id = ui.id().with(("crf_help", id, codec.short()));
+    let r = ui.add(egui::Button::new("(?)").small()).on_hover_text("What CRF means, and a suggested range for this video's size");
+    if r.clicked() {
+        ui.data_mut(|d| d.insert_temp(open_id, true));
+    }
+    let mut open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+    if open {
+        egui::Window::new("About CRF")
+            .id(open_id)
+            .collapsible(false)
+            .resizable(false)
+            .pivot(egui::Align2::LEFT_TOP)
+            .default_pos(r.rect.right_top() + egui::vec2(8.0, 0.0))
+            .open(&mut open)
+            .show(ui.ctx(), |ui| {
+                ui.set_max_width(420.0);
+                ui.label(crf::popup_text(codec, height));
+            });
+        ui.data_mut(|d| d.insert_temp(open_id, open));
+    }
+}
+
 /// CRF / preset / tune rows (inside a Grid).
-pub fn video_encode_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, show_tune: bool, show_output_fps: bool) {
+pub fn video_encode_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, show_tune: bool, show_output_fps: bool, src_height: Option<u32>) {
     row_label_tip(ui, "CRF", option_tips::CRF);
     ui.horizontal(|ui| {
         num_u32(ui, &mut v.crf, 0..=51, "");
+        crf_help_button(ui, id, VideoCodec::H264, src_height);
         hint(ui, "lower = better quality / bigger file");
     });
     ui.end_row();

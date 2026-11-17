@@ -535,15 +535,15 @@ impl Queue {
         if let PostAction::Remux { temp, dest, delete_source } = &spec.post {
             if let Err(e) = publish_no_overwrite(temp, dest) {
                 let _ = std::fs::remove_file(temp);
-                return JobStatus::Failed(format!("{e}. Source MKV kept."));
+                return JobStatus::Failed(format!("{e}. Source file kept."));
             }
             self.set_progress(job.id, |j| j.final_output = Some(dest.clone()));
             let mut s = self.shared.lock().unwrap();
             let mut deleted = None;
             if let Some(src) = delete_source {
-                // Only after the MP4 is verified non-empty at its final name.
+                // Only after the output is verified non-empty at its final name.
                 let good = std::fs::metadata(dest).map(|m| m.len() > 0).unwrap_or(false);
-                deleted = Some(if good { std::fs::remove_file(src).map_err(|e| e.to_string()) } else { Err("Completed MP4 is missing or empty; source MKV kept.".into()) });
+                deleted = Some(if good { std::fs::remove_file(src).map_err(|e| e.to_string()) } else { Err("Completed output is missing or empty; source file kept.".into()) });
             }
             if let Some(g) = job.group.and_then(|g| s.groups.get_mut(&g)) {
                 g.summary.converted += 1;
@@ -554,7 +554,7 @@ impl Queue {
                 }
             }
             match deleted {
-                Some(Ok(())) => s.push_log(format!("Deleted source MKV: {}", delete_source.as_ref().unwrap().display())),
+                Some(Ok(())) => s.push_log(format!("Deleted source file: {}", delete_source.as_ref().unwrap().display())),
                 Some(Err(e)) => s.push_log(format!("Could not delete {}: {e}", delete_source.as_ref().unwrap().display())),
                 None => {}
             }

@@ -168,7 +168,7 @@ impl Mode for SubsMode {
             ui.checkbox(&mut st.copy_only, "Copy without re-encoding (recommended)");
             ui.end_row();
             if !st.copy_only {
-                video_encode_ui(ui, "m8", &mut st.video, false, true);
+                video_encode_ui(ui, "m8", &mut st.video, false, true, None);
                 bitrate_ui(ui, "AAC bitrate", &mut st.audio_bitrate_k);
                 range_ui(ui, &mut st.range_convert, self.dprobe.info().map(|i| i.video_color_range()));
             }
