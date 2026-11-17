@@ -77,7 +77,7 @@ cancelled job deletes just that partial file – an existing file is never touch
 rename never replaces a file; if one appeared meanwhile, the result is saved as `name (2).ext` and the log says so.
 The confirmation and **Copy** show exactly this: the ffmpeg command with the partial name plus the rename step
 (`[IO.File]::Move` in PowerShell, `move` in cmd). Partial files left by a crash are removed at the next start.
-Remux (MKV → MP4) keeps its own rule: existing MP4s are skipped.
+Remux keeps its own rule: files already in the chosen container, and existing outputs, are skipped.
 
 ## Drag and drop
 Drop files or folders anywhere on the window; they go to the selected preset. While you drag, the window gets an accent
@@ -269,7 +269,7 @@ Everything in the preset panel is a **preset**: a named, saved set of options fo
 | Mix audio tracks (MKV) | amix of ≥2 tracks into one AAC track; video copied; chapters kept. |
 | Batch re-encode folder | Scans a folder, probes every file, include/exclude per file, same options as re-encode, per-file progress + summary. |
 | Copy subtitle tracks | Re-mux or re-encode with chosen subtitle tracks from a second file; MP4 converts text subs to mov_text (or try copy). |
-| Remux MKV → MP4 | Stream copy, never overwrites, optional delete of source only after the MP4 verifies; warns when an audio or subtitle track (or attachments) cannot be copied into MP4, or when FLAC/Opus/Vorbis/PCM may not play in many players; summary in the script's wording. |
+| Remux | Stream-copy into MKV, MP4, MOV, WebM or TS (never overwrites). Warns about tracks that cannot be copied into the chosen container; files already in that container are skipped. MPEG-TS notes that chapters and track names are mostly lost. Optional delete of the source only after the output verifies. A remux from MKV to MP4 uses the same command as before. |
 | **Join / stitch files** | Concatenate several videos: lossless concat demuxer or re-encode with the concat filter, chapter per file (see above). |
 | **Audio & subtitles** | Keep/remove/rename/reorder tracks, add commentary or second-language audio, replace audio, add/remove subtitles, extract audio or subtitles (see above). |
 | **Frameserver (AviSynth script)** | DebugMode FrameServer signpost .avi -> generated AviSynth script -> H.264/AAC by default (or HEVC / AV1 and AC3 / copy) in MP4/MKV (see above). |
@@ -353,7 +353,7 @@ These figures are approximate and vary a lot by content. The only reliable check
 
 **When to use which.** H.264 if it has to play on almost anything, or you want a fast encode. HEVC if you want a smaller file and the players you care about already handle it. AV1 if you want the smallest file, can wait for the encode, and the playback devices are recent enough.
 
-**CRF, not a target size.** You pick a quality (CRF); the encoder spends whatever bits it needs. A lower CRF is higher quality and a larger file. The number scales differ between encoders: the same CRF on H.264, HEVC and AV1 is not the same quality.
+**CRF, not a target size.** You pick a quality (CRF); the encoder spends whatever bits it needs. A lower CRF is higher quality and a larger file. The number scales differ between encoders: the same CRF on H.264, HEVC and AV1 is not the same quality. A **(?)** next to the CRF control opens a short explanation and a suggested range for the current video's size (from HandBrake's official quality tables). It never changes the value you set.
 
 Rough starting points for 1080p gameplay (try a clip and adjust):
 
@@ -511,6 +511,7 @@ File › Settings › **App-managed FFmpeg location**: where the FFmpeg the app 
 - Updates always go into the app-managed folder (the Settings path is switched to it). **Your own FFmpeg
   folder is never modified** (0.5.4; earlier versions offered an optional in-place update). Blocked
   while jobs run.
+- If your FFmpeg lacks the encoder for a job (for example AV1) but the app-managed copy has it, that encode runs with the app-managed FFmpeg and the **Using:** line says so. Your folder setting is not changed. If the app-managed copy is not installed yet, you are asked: “Your FFmpeg doesn't support AV1. Download the current FFmpeg build?” Download goes only to the app-managed folder.
 - The previous managed build is kept in `<bin>.previous`; **Help › Roll back FFmpeg** swaps back (one
   generation, app-managed copy only).
 - **Automatic check:** when the app starts it looks for a newer FFmpeg at most once a day and shows a notice if

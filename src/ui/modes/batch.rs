@@ -238,7 +238,7 @@ impl Mode for BatchMode {
 
     fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
         let bs = &self.st.bs;
-        crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), bs.passthrough.encodes_video().then_some(&bs.video), bs.passthrough.encodes_audio().then_some(&bs.audio), cx.ff)?;
+        crate::ui::codecs_ui::check_available(cx, bs.passthrough.encodes_video().then_some(&bs.video), bs.passthrough.encodes_audio().then_some(&bs.audio))?;
         if bs.passthrough.encodes_video() {
             ffenc::cmd::common::parse_output_fps(&bs.video.output_fps)?;
         }

@@ -405,6 +405,153 @@ pub fn ten_bit_note(source_pix_fmt: Option<&str>, v: &VideoEncode) -> Option<Str
     })
 }
 
+
+/// Which FFmpeg a job should run with when the chosen encoder may be missing
+/// from the configured copy. Never modifies the user's own FFmpeg.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EncoderRuntime {
+    /// The FFmpeg in use has the encoder (or none is needed).
+    Current,
+    /// Use the app-managed copy for this encode only; leave the user's folder as it is.
+    UseManaged { short: &'static str },
+    /// The app-managed copy is not installed yet. Offer to download it.
+    NeedDownload { short: &'static str },
+    /// Neither copy has the encoder.
+    Unavailable { short: &'static str },
+}
+
+impl EncoderRuntime {
+    pub fn short(&self) -> Option<&'static str> {
+        match self {
+            EncoderRuntime::Current => None,
+            EncoderRuntime::UseManaged { short } | EncoderRuntime::NeedDownload { short } | EncoderRuntime::Unavailable { short } => Some(*short),
+        }
+    }
+}
+
+pub fn encoder_short(encoder: &str) -> &'static str {
+    match encoder {
+        "libx265" => "HEVC",
+        "libsvtav1" => "AV1",
+        "ac3" => "AC3",
+        "libx264" => "H.264",
+        _ => "this codec",
+    }
+}
+
+/// Exact prompt when the managed copy still needs to be downloaded.
+pub fn download_prompt(short: &str) -> String {
+    format!("Your FFmpeg doesn't support {short}. Download the current FFmpeg build?")
+}
+
+/// Note on the form when this encode will use the app-managed copy.
+pub fn use_managed_note(short: &str) -> String {
+    format!("Your FFmpeg doesn't have {short}. This encode will use the app-managed FFmpeg. Your FFmpeg is left as it is.")
+}
+
+/// Note on the form when a download will be offered at Run.
+pub fn need_download_note(short: &str) -> String {
+    format!("Your FFmpeg doesn't have {short}. When you run the encode, you can download the current FFmpeg build (into the app-managed folder). Your FFmpeg is left as it is.")
+}
+
+fn enc_has(enc: &Encoders, encoder: &str) -> bool {
+    match encoder {
+        "libx264" => true,
+        "libx265" => enc.libx265,
+        "libsvtav1" => enc.libsvtav1,
+        "ac3" => enc.ac3,
+        _ => true,
+    }
+}
+
+/// Encoders a `VideoEncode` / `AudioEncode` pair will actually invoke.
+pub fn needed_encoders(v: Option<&VideoEncode>, a: Option<&AudioEncode>) -> Vec<&'static str> {
+    let mut n = Vec::new();
+    if let Some(v) = v {
+        match v.codec {
+            VideoCodec::Hevc => n.push("libx265"),
+            VideoCodec::Av1 => n.push("libsvtav1"),
+            VideoCodec::H264 => {}
+        }
+    }
+    if let Some(a) = a {
+        if a.codec == AudioCodec::Ac3 {
+            n.push("ac3");
+        }
+    }
+    n
+}
+
+/// Encoders mentioned in already-built ffmpeg arguments (`-c:v libsvtav1`, `-c:a ac3`, …).
+pub fn encoders_in_args(args: &[String]) -> Vec<&'static str> {
+    let mut n = Vec::new();
+    for pair in args.windows(2) {
+        if pair[0] == "-c:v" || pair[0] == "-codec:v" || pair[0] == "-vcodec" {
+            match pair[1].as_str() {
+                "libx265" if !n.contains(&"libx265") => n.push("libx265"),
+                "libsvtav1" if !n.contains(&"libsvtav1") => n.push("libsvtav1"),
+                _ => {}
+            }
+        }
+        if pair[0] == "-c:a" || pair[0] == "-codec:a" || pair[0] == "-acodec" {
+            if pair[1] == "ac3" && !n.contains(&"ac3") {
+                n.push("ac3");
+            }
+        }
+    }
+    n
+}
+
+fn join_shorts(encoders: &[&str]) -> &'static str {
+    // Only the three optional encoders are ever missing. Keep a static string
+    // so the prompt does not allocate a new label type.
+    match encoders {
+        ["libx265"] => "HEVC",
+        ["libsvtav1"] => "AV1",
+        ["ac3"] => "AC3",
+        ["libx265", "ac3"] => "HEVC or AC3",
+        ["libsvtav1", "ac3"] => "AV1 or AC3",
+        ["libx265", "libsvtav1"] => "HEVC or AV1",
+        ["libx265", "libsvtav1", "ac3"] => "HEVC, AV1 or AC3",
+        [] => "",
+        _ => encoder_short(encoders[0]),
+    }
+}
+
+/// Decide which FFmpeg should run the job. `managed_installed` is true when the
+/// app-managed folder already contains ffmpeg and ffprobe.
+pub fn encoder_runtime(
+    needed: &[&str],
+    current: Option<&crate::ffmpeg::locate::FfPaths>,
+    current_enc: Option<&Encoders>,
+    managed_enc: Option<&Encoders>,
+    managed_installed: bool,
+) -> EncoderRuntime {
+    let missing: Vec<&str> = needed
+        .iter()
+        .copied()
+        .filter(|e| current_enc.is_none_or(|enc| !enc_has(enc, e)))
+        .collect();
+    if missing.is_empty() {
+        return EncoderRuntime::Current;
+    }
+    let short = join_shorts(&missing);
+    if current.is_some_and(|p| p.is_app_managed()) {
+        return EncoderRuntime::Unavailable { short };
+    }
+    if managed_enc.is_some_and(|m| missing.iter().all(|e| enc_has(m, e))) {
+        return EncoderRuntime::UseManaged { short };
+    }
+    if !managed_installed {
+        return EncoderRuntime::NeedDownload { short };
+    }
+    // Managed is present but lacks the encoder (or has not been probed yet).
+    if managed_enc.is_none() {
+        return EncoderRuntime::UseManaged { short };
+    }
+    EncoderRuntime::Unavailable { short }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -603,4 +750,39 @@ mod tests {
         let a10 = v(VideoCodec::Av1);
         assert_eq!(range_filter(&a10), format!("{RANGE_FILTER},format=yuv420p10le"));
     }
+
+
+    #[test]
+    fn encoder_runtime_uses_managed_when_current_lacks_av1() {
+        use crate::ffmpeg::locate::{FfPaths, FfSource};
+        let own = FfPaths { ffmpeg: "D:\\Tools\\FFmpeg\\bin\\ffmpeg.exe".into(), ffprobe: "D:\\Tools\\FFmpeg\\bin\\ffprobe.exe".into(), bin_dir: "D:\\Tools\\FFmpeg\\bin".into(), source: FfSource::Configured };
+        let thin = Encoders { libx265: false, libsvtav1: false, ac3: false };
+        let full = Encoders { libx265: true, libsvtav1: true, ac3: true };
+        assert_eq!(
+            encoder_runtime(&["libsvtav1"], Some(&own), Some(&thin), Some(&full), true),
+            EncoderRuntime::UseManaged { short: "AV1" }
+        );
+        assert_eq!(
+            encoder_runtime(&["libsvtav1"], Some(&own), Some(&thin), None, false),
+            EncoderRuntime::NeedDownload { short: "AV1" }
+        );
+        assert_eq!(encoder_runtime(&["libsvtav1"], Some(&own), Some(&full), Some(&full), true), EncoderRuntime::Current);
+        assert_eq!(download_prompt("AV1"), "Your FFmpeg doesn't support AV1. Download the current FFmpeg build?");
+        assert_eq!(
+            encoder_runtime(&["libsvtav1", "ac3"], Some(&own), Some(&thin), None, false),
+            EncoderRuntime::NeedDownload { short: "AV1 or AC3" }
+        );
+    }
+
+    #[test]
+    fn encoders_in_args_finds_svt_and_ac3() {
+        let a = ["-c:v".into(), "libsvtav1".into(), "-crf".into(), "28".into(), "-c:a".into(), "ac3".into()];
+        assert_eq!(encoders_in_args(&a), ["libsvtav1", "ac3"]);
+        assert!(encoders_in_args(&["-c:v".into(), "libx264".into(), "-c:a".into(), "aac".into()]).is_empty());
+        let v = VideoEncode { codec: VideoCodec::Av1, ..Default::default() };
+        let au = AudioEncode { codec: AudioCodec::Ac3, ..Default::default() };
+        assert_eq!(needed_encoders(Some(&v), Some(&au)), ["libsvtav1", "ac3"]);
+        assert!(needed_encoders(Some(&VideoEncode::default()), Some(&AudioEncode::default())).is_empty());
+    }
 }
+

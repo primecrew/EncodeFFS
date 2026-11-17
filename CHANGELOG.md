@@ -6,6 +6,15 @@ This edition is a separate app next to the stable build, with its own exe and da
 
 ## Unreleased
 
+- The Encoding Finished window is wide enough for a typical file name such as `2025-04-25 17-01-45.mp4` to stay on one line, with the size and time underneath and the Go to file buttons aligned. Scroll, Open folder and Close are unchanged.
+
+- **Remux MKV → MP4** is now **Remux**. Add files, a folder, or drag and drop, and pick the output container: MKV, MP4, MOV, WebM or TS (no AVI). Tracks are always stream-copied, never re-encoded. Each container warns about tracks (video, audio, subtitles, attachments) that FFmpeg cannot copy into it. Files already in the chosen container are skipped. MPEG-TS notes that chapters and track names are mostly lost. Older “Remux MKV → MP4” presets still load as Remux with MP4. A remux from MKV to MP4 uses the same command as before.
+
+- If your FFmpeg does not have the encoder for a job (for example AV1) and the app-managed FFmpeg does, that encode runs with the app-managed copy. The **Using:** line shows this. Your own FFmpeg is not changed. If the app-managed copy is not installed yet, you are asked: “Your FFmpeg doesn't support AV1. Download the current FFmpeg build?” with Download / Cancel. A download goes only into the app-managed folder.
+
+- A **(?)** next to CRF opens a short explanation (lower number = better quality, bigger file) and a suggested range for the current video's size. Suggestions follow HandBrake's official quality tables (the same x264/x265 ranges, and a separate SVT-AV1 table). Your CRF value is never changed automatically.
+
+
 - Extract audio to WAV warns when a file has more than one audio track, names the default-disposition track FFmpeg would pick, and offers a choice: the default track (same command as today), a specific track, or each track to its own WAV (`<name> - Track 2 - Mic.wav`). The status line and sample rate follow the track that will actually be extracted.
 
 - Join / stitch files (re-encode method) warns when any file has more than one audio track that only the first track of each file is kept. The lossless copy method is unchanged.

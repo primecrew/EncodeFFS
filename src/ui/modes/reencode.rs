@@ -184,7 +184,7 @@ impl Mode for ReencodeMode {
             section(ui, &format!("Video ({})", st.video.codec.encoder()));
             let pix = crate::ui::codecs_ui::source_pix_fmt(self.probe.info());
             egui::Grid::new("m1v").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                crate::ui::codecs_ui::video_codec_ui(ui, "m1", &mut st.video, pix.as_deref(), &cx.ff_status());
+                crate::ui::codecs_ui::video_codec_ui(ui, "m1", &mut st.video, pix.as_deref(), &cx.ff_status().with_height(crate::ui::codecs_ui::source_height(self.probe.info())));
                 crate::ui::common::row_label_tip(ui, "Resize", option_tips::RESIZE);
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut st.resize, "New vertical resolution");
@@ -224,7 +224,7 @@ impl Mode for ReencodeMode {
         if st.passthrough.encodes_audio() {
             section(ui, "Audio");
             egui::Grid::new("m1a").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                crate::ui::codecs_ui::audio_codec_ui(ui, "m1a", &mut st.audio, true, &cx.ff_status());
+                crate::ui::codecs_ui::audio_codec_ui(ui, "m1a", &mut st.audio, true, &cx.ff_status().with_height(crate::ui::codecs_ui::source_height(self.probe.info())));
             });
             if summary.as_ref().map(|s| s.audio_count > 1).unwrap_or(false) && st.audio.filter_chain().is_some() {
                 hint(ui, "Gain/compressor is applied to every audio track separately.");
@@ -269,7 +269,7 @@ impl Mode for ReencodeMode {
             return Err("Trim duration exceeds video duration".into());
         }
         let chapters = chapters::chapter_input(out_dur, mode, st.chapter_interval_min * 60.0, &st.manual)?;
-        crate::ui::codecs_ui::check_available(cx.encoders.as_ref(), st.passthrough.encodes_video().then_some(&st.video), st.passthrough.encodes_audio().then_some(&st.audio), cx.ff)?;
+        crate::ui::codecs_ui::check_available(cx, st.passthrough.encodes_video().then_some(&st.video), st.passthrough.encodes_audio().then_some(&st.audio))?;
         let mut audio = st.audio.clone();
         audio.source_channels = crate::ui::codecs_ui::source_channels(Some(info));
         let pr = ReencodeParams {

@@ -45,12 +45,13 @@ impl<'a> Ctx<'a> {
             encoders: self.encoders,
             managed_encoders: self.managed_encoders,
             switch_to_managed: self.switch_to_managed,
+            source_height: None,
         }
     }
 }
 
 /// Jobs to preview and queue.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Plan {
     pub jobs: Vec<JobSpec>,
     /// (label, is_remux, pre-skipped count) for a batch summary.

@@ -4,7 +4,7 @@
 use std::cell::Cell;
 
 use eframe::egui::{self, RichText, Ui};
-use ffenc::cmd::codecs::{self, AudioCodec, Encoders, VideoCodec, AC3_BITRATES, CRF_NOTE, FILM_GRAIN_MAX, SVT_PRESET_MAX, SVT_SPEEDS, X265_PRESETS, X265_TUNES};
+use ffenc::cmd::codecs::{self, AudioCodec, EncoderRuntime, Encoders, VideoCodec, AC3_BITRATES, CRF_NOTE, FILM_GRAIN_MAX, SVT_PRESET_MAX, SVT_SPEEDS, X265_PRESETS, X265_TUNES};
 use ffenc::cmd::common::{AudioEncode, VideoEncode};
 use ffenc::ffmpeg::locate::FfPaths;
 use ffenc::ffmpeg::probe::MediaInfo;
@@ -22,6 +22,9 @@ pub fn source_pix_fmt(info: Option<&MediaInfo>) -> Option<String> {
 pub fn source_channels(info: Option<&MediaInfo>) -> Option<u32> {
     info?.of_type("audio").filter_map(|s| s.channels).max()
 }
+pub fn source_height(info: Option<&MediaInfo>) -> Option<u32> {
+    info?.of_type("video").find(|s| !s.attached_pic).and_then(|s| s.height).filter(|h| *h > 0)
+}
 
 /// In-use FFmpeg (and an optional app-managed copy) for the Using: line and the switch button.
 pub struct FfCodecStatus<'a> {
@@ -29,11 +32,18 @@ pub struct FfCodecStatus<'a> {
     pub encoders: Option<Encoders>,
     pub managed_encoders: Option<Encoders>,
     pub switch_to_managed: Option<&'a Cell<bool>>,
+    /// Height of the current source, when known (for the CRF (?) suggestion).
+    pub source_height: Option<u32>,
 }
 
 impl FfCodecStatus<'_> {
     pub fn none() -> Self {
-        Self { paths: None, encoders: None, managed_encoders: None, switch_to_managed: None }
+        Self { paths: None, encoders: None, managed_encoders: None, switch_to_managed: None, source_height: None }
+    }
+
+    pub fn with_height(mut self, height: Option<u32>) -> Self {
+        self.source_height = height;
+        self
     }
 
     pub fn offer_switch(&self, encoder: &str) -> bool {
@@ -56,6 +66,14 @@ impl FfCodecStatus<'_> {
         codecs::missing_note_for(encoder, self.paths)
     }
 
+    pub fn managed_installed(&self) -> bool {
+        ffenc::ffmpeg::locate::bin_dir_ok(&ffenc::ffmpeg::locate::managed_bin())
+    }
+
+    pub fn runtime(&self, needed: &[&str]) -> EncoderRuntime {
+        codecs::encoder_runtime(needed, self.paths, self.encoders.as_ref(), self.managed_encoders.as_ref(), self.managed_installed())
+    }
+
     fn disabled_tip(&self, encoder: &str) -> String {
         let note = self.missing(encoder);
         if self.offer_switch(encoder) {
@@ -66,7 +84,12 @@ impl FfCodecStatus<'_> {
     }
 }
 
-fn using_line_ui(ui: &mut Ui, ff: &FfCodecStatus<'_>) {
+fn using_line_ui(ui: &mut Ui, ff: &FfCodecStatus<'_>, runtime: &EncoderRuntime) {
+    if let EncoderRuntime::UseManaged { short } = runtime {
+        let r = ui.label(RichText::new("Using: app-managed FFmpeg"));
+        r.on_hover_text(codecs::use_managed_note(short));
+        return;
+    }
     if let Some(p) = ff.paths {
         let (line, hover) = p.using_line(32);
         // Normal body size and full-strength colour (not small/weak) so it stays readable.
@@ -76,6 +99,7 @@ fn using_line_ui(ui: &mut Ui, ff: &FfCodecStatus<'_>) {
         }
     }
 }
+
 
 fn switch_button_ui(ui: &mut Ui, ff: &FfCodecStatus<'_>) {
     if ui.button("Switch to the app-managed FFmpeg").on_hover_text(
@@ -161,7 +185,8 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, src_pix_fmt
                 }
             }
         });
-        using_line_ui(ui, ff);
+        let runtime = ff.runtime(&codecs::needed_encoders(Some(v), None));
+        using_line_ui(ui, ff, &runtime);
         if ff.offer_switch_video() {
             switch_button_ui(ui, ff);
         }
@@ -174,7 +199,11 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, src_pix_fmt
             }
         }
         if enc.is_some_and(|e| !e.video(v.codec)) {
-            warn(ui, ff.missing(v.codec.encoder()));
+            match ff.runtime(&[v.codec.encoder()]) {
+                EncoderRuntime::UseManaged { short } => hint(ui, codecs::use_managed_note(short)),
+                EncoderRuntime::NeedDownload { short } => hint(ui, codecs::need_download_note(short)),
+                _ => warn(ui, ff.missing(v.codec.encoder())),
+            }
         }
         // One-line note for the selected codec; the full comparison is in the hover.
         let note = v.codec.compat_note();
@@ -184,12 +213,13 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, src_pix_fmt
     });
     ui.end_row();
     match v.codec {
-        VideoCodec::H264 => video_encode_ui(ui, id, v, true, show_output_fps),
+        VideoCodec::H264 => video_encode_ui(ui, id, v, true, show_output_fps, ff.source_height),
         VideoCodec::Hevc | VideoCodec::Av1 => {
             crate::ui::common::row_label_tip(ui, "CRF", option_tips::CRF);
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     num_u32(ui, &mut v.crf, v.codec.crf_range(), "");
+                    super::common::crf_help_button(ui, id, v.codec, ff.source_height);
                     let line = format!(
                         "lower = better quality / bigger file (archive: {} game, {} camera)",
                         v.codec.default_crf(false),
@@ -284,6 +314,14 @@ pub fn audio_codec_ui_ex(ui: &mut Ui, id: &str, a: &mut AudioEncode, allow_copy:
         if ff.offer_switch_audio() {
             switch_button_ui(ui, ff);
         }
+        if a.codec == AudioCodec::Ac3 {
+            match ff.runtime(&["ac3"]) {
+                EncoderRuntime::UseManaged { short } => hint(ui, codecs::use_managed_note(short)),
+                EncoderRuntime::NeedDownload { short } => hint(ui, codecs::need_download_note(short)),
+                EncoderRuntime::Unavailable { .. } => warn(ui, ff.missing("ac3")),
+                EncoderRuntime::Current => {}
+            }
+        }
         if !allow_copy && a.codec == AudioCodec::Copy {
             a.codec = AudioCodec::Aac;
         }
@@ -312,15 +350,19 @@ pub fn audio_codec_ui_ex(ui: &mut Ui, id: &str, a: &mut AudioEncode, allow_copy:
 }
 
 /// Error for a codec the current FFmpeg can't encode (checked when building jobs).
-pub fn check_available(enc: Option<&Encoders>, v: Option<&VideoEncode>, a: Option<&AudioEncode>, ff: Option<&FfPaths>) -> Result<(), String> {
-    let Some(e) = enc else { return Ok(()) };
-    if let Some(v) = v.filter(|v| !e.video(v.codec)) {
-        return Err(codecs::missing_note_for(v.codec.encoder(), ff));
+pub fn check_available(cx: &crate::ui::modes::Ctx<'_>, v: Option<&VideoEncode>, a: Option<&AudioEncode>) -> Result<(), String> {
+    let needed = codecs::needed_encoders(v, a);
+    if needed.is_empty() {
+        return Ok(());
     }
-    if a.is_some_and(|a| !e.audio(a.codec)) {
-        return Err(codecs::missing_note_for("ac3", ff));
+    let managed_ok = ffenc::ffmpeg::locate::bin_dir_ok(&ffenc::ffmpeg::locate::managed_bin());
+    match codecs::encoder_runtime(&needed, cx.ff, cx.encoders.as_ref(), cx.managed_encoders.as_ref(), managed_ok) {
+        EncoderRuntime::Unavailable { short } => {
+            let enc = needed.iter().copied().find(|e| codecs::encoder_short(e) == short.split(' ').next().unwrap_or(short)).unwrap_or(needed[0]);
+            Err(codecs::missing_note_for(enc, cx.ff))
+        }
+        _ => Ok(()),
     }
-    Ok(())
 }
 
 #[cfg(test)]

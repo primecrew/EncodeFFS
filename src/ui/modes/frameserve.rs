@@ -730,10 +730,9 @@ impl Mode for FrameserveMode {
     fn build(&mut self, cx: &Ctx) -> Result<Plan, String> {
         ffenc::cmd::common::parse_output_fps(&self.st.video.output_fps)?;
         crate::ui::codecs_ui::check_available(
-            cx.encoders.as_ref(),
+            cx,
             Some(&self.st.video),
             (self.st.audio_mode != AudioMode::None).then_some(&self.st.audio),
-            cx.ff,
         )?;
         if let Some(s) = &self.status {
             if s.demuxer == Some(false) {

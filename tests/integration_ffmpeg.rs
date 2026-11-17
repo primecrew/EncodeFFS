@@ -376,7 +376,7 @@ fn all_modes_end_to_end() {
     std::fs::copy(d.join("two_audio.mkv"), rdir.join("exists.mkv")).unwrap();
     std::fs::write(rdir.join("exists.mp4"), b"keep me").unwrap();
     let sources = vec![rdir.join("good.mkv"), rdir.join("bad.mkv"), rdir.join("exists.mkv")];
-    let plan = remux::plan(&sources, &rdir, &|p| p.exists(), ffenc::util::unique_id);
+    let plan = remux::plan(&sources, &rdir, remux::Container::Mp4, &|p| p.exists(), ffenc::util::unique_id);
     assert_eq!(plan.jobs.len(), 2);
     assert_eq!(plan.skipped.len(), 1);
     let specs = plan
@@ -407,7 +407,7 @@ fn all_modes_end_to_end() {
     std::thread::sleep(Duration::from_millis(300));
     let log: Vec<String> = env.queue.shared.lock().unwrap().log.iter().cloned().collect();
     assert!(
-        log.iter().any(|l| l == "Queue finished: 1 converted, 1 failed, 1 skipped, 1 source MKV(s) deleted, 0 deletion failure(s)."),
+        log.iter().any(|l| l == "Queue finished: 1 converted, 1 failed, 1 skipped, 1 source file(s) deleted, 0 deletion failure(s)."),
         "summary missing"
     );
 

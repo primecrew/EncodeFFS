@@ -3,6 +3,7 @@
 pub mod chapter_creator;
 pub mod codecs_ui;
 pub mod common;
+pub mod fallback;
 pub mod finished;
 pub mod layout;
 pub mod managed_loc;
@@ -31,6 +32,7 @@ use ffenc::util::{fmt_hms, now_unix};
 use common::{copy_button, hint, Bg};
 use modes::{kinds, new_mode, Ctx, Plan};
 use presets::{Action, Dialog, PresetUi, SideEvent};
+use fallback::{FallbackEvent, FallbackPrompt};
 use updater::{UpdaterEvent, UpdaterUi};
 
 struct Preview {
@@ -289,6 +291,7 @@ pub struct App {
     show_help: bool,
     settings_edit: Option<Settings>,
     updater: UpdaterUi,
+    fallback_prompt: Option<FallbackPrompt>,
     show_about: bool,
     first_run_dismissed: bool,
     locate: Option<LocateDlg>,
@@ -492,6 +495,7 @@ impl App {
             show_help: false,
             settings_edit: None,
             updater: UpdaterUi::default(),
+            fallback_prompt: None,
             mloc: managed_loc::ManagedLocUi::default(),
             finished: finished::FinishedUi::default(),
             history: Default::default(),
@@ -887,12 +891,37 @@ impl App {
             Ok(plan) => {
                 let preset_name = self.pre.list[idx].name.clone();
                 let values = self.pre.editor(idx, &self.settings).mode.save();
-                self.preview_origin = Some(ffenc::job_history::Origin { preset_name, values });
+                let origin = ffenc::job_history::Origin { preset_name, values };
                 let items = self.pre.editor(idx, &self.settings).mode.conflict_warnings();
-                if ffenc::cmd::conflicts::any_fixable(&items) {
-                    self.conflict_dlg = Some(ConflictDlg { items, plan, program: ff.ffmpeg.clone(), focus_run_as_set: true });
-                } else {
-                    self.preview = Some(Preview::new(plan, ff.ffmpeg.clone(), self.settings.when_exists));
+                let mut needed = Vec::new();
+                for j in &plan.jobs {
+                    for e in ffenc::cmd::codecs::encoders_in_args(&j.args) {
+                        if !needed.contains(&e) {
+                            needed.push(e);
+                        }
+                    }
+                }
+                let enc = self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders);
+                let managed_ok = locate::bin_dir_ok(&locate::managed_bin());
+                match ffenc::cmd::codecs::encoder_runtime(&needed, self.ff.as_ref(), enc.as_ref(), self.managed_encoders.as_ref(), managed_ok) {
+                    ffenc::cmd::codecs::EncoderRuntime::NeedDownload { short } => {
+                        self.preview_origin = Some(origin.clone());
+                        self.fallback_prompt = Some(FallbackPrompt::ask(short.to_string(), plan, items, Some(origin), self.settings.when_exists));
+                    }
+                    ffenc::cmd::codecs::EncoderRuntime::UseManaged { short } => {
+                        self.queue.log(ffenc::cmd::codecs::use_managed_note(short));
+                        self.open_run_preview(plan, FallbackPrompt::managed_program(), items, origin);
+                    }
+                    ffenc::cmd::codecs::EncoderRuntime::Unavailable { short } => {
+                        self.error = Some(ffenc::cmd::codecs::missing_note_for(
+                            needed.first().copied().unwrap_or("libsvtav1"),
+                            self.ff.as_ref(),
+                        ));
+                        let _ = short;
+                    }
+                    ffenc::cmd::codecs::EncoderRuntime::Current => {
+                        self.open_run_preview(plan, ff.ffmpeg.clone(), items, origin);
+                    }
                 }
             }
             Err(e) => {
@@ -907,6 +936,16 @@ impl App {
                 }
                 self.error = Some(e);
             }
+        }
+    }
+
+
+    fn open_run_preview(&mut self, plan: Plan, program: PathBuf, items: Vec<ffenc::cmd::conflicts::Conflict>, origin: ffenc::job_history::Origin) {
+        self.preview_origin = Some(origin);
+        if ffenc::cmd::conflicts::any_fixable(&items) {
+            self.conflict_dlg = Some(ConflictDlg { items, plan, program, focus_run_as_set: true });
+        } else {
+            self.preview = Some(Preview::new(plan, program, self.settings.when_exists));
         }
     }
 
@@ -1654,6 +1693,21 @@ if ui.button("About").clicked() {
         self.history_window(ctx);
         self.new_confirm_dialog(ctx);
         self.finished.show(ctx);
+        if let Some(prompt) = self.fallback_prompt.as_mut() {
+            match prompt.show(ctx, &self.settings) {
+                FallbackEvent::Ready { plan, program, items, origin, policy: _ } => {
+                    self.fallback_prompt = None;
+                    self.start_managed_probe(ctx);
+                    if let Some(origin) = origin {
+                        self.open_run_preview(plan, program, items, origin);
+                    }
+                }
+                FallbackEvent::Cancelled => {
+                    self.fallback_prompt = None;
+                }
+                FallbackEvent::None => {}
+            }
+        }
         self.settings_dialog(ctx);
         if let Some(o) = self.mloc.poll(ctx) {
             self.apply_managed_location(ctx, o);
@@ -1904,6 +1958,7 @@ if ui.button("About").clicked() {
                         encoders: enc,
                         managed_encoders: self.managed_encoders,
                         switch_to_managed: Some(&self.switch_to_managed),
+                        source_height: None,
                     };
                     crate::ui::codecs_ui::video_codec_ui_ex(ui, "set", &mut v, None, None, false, &ff);
                     ed.crf = v.crf;

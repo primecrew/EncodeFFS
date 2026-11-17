@@ -82,7 +82,7 @@ pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
     ("builtin-mix", "mix", "Mix audio tracks to one (MKV)", "Mix every audio track into one AAC track; video copied."),
     ("builtin-batch", "batch", "Batch re-encode folder", "Re-encode every video in a folder with shared settings."),
     ("builtin-subs", "subs", "Copy subtitle tracks", "Copy subtitle tracks from one file into another."),
-    ("builtin-remux", "remux", "Remux MKV -> MP4", "Stream-copy every MKV in a folder to MP4 (never overwrites)."),
+    ("builtin-remux", "remux", "Remux", "Stream-copy into MKV, MP4, MOV, WebM or TS (never overwrites)."),
     ("builtin-join", "join", "Join / stitch files", "Concatenate several videos into one – lossless when they match, or re-encoded – with a chapter per file."),
     ("builtin-frameserve", "frameserve", "Frameserver (AviSynth script)", "Encode straight from your editor through DebugMode FrameServer: pick the signpost .avi, the app writes the AviSynth script (ConvertToYUV420 by default) and encodes it with H.264 + AAC by default (or HEVC / AV1 and AC3 / copy)."),
     ("builtin-custom", "custom", "Custom pipeline", "Build your own: video / audio / subtitle actions, trim, chapters, container, extra ffmpeg args."),
