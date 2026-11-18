@@ -562,3 +562,7 @@ Usually not needed: a Custom pipeline preset covers most new workflows. For a ne
    `on_drop`, `save`/`load`). Use helpers in `src/ui/common.rs`.
 3. Register it in `all_modes()` in `src/ui/modes/mod.rs`; optionally add a factory preset to `BUILTINS` in `src/presets.rs`.
 4. Optionally add a case to `tests/integration_ffmpeg.rs`.
+
+## License
+
+Copyright (C) 2026 PrimeCrew Software. Licensed under the GNU General Public License v3.0 or later. See LICENSE.
