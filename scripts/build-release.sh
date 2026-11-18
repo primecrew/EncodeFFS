@@ -55,6 +55,7 @@ with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as f:
     f.write(exe, name)
     f.write("README.md", "README.md")
     f.write("NOTES.md", "NOTES.md")
+    f.write("LICENSE", "LICENSE")
 PY
 
 # ---- installer

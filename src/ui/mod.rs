@@ -1624,6 +1624,7 @@ if ui.button("About").clicked() {
                 ui.label(format!("A front end for FFmpeg. {}.", ffenc::PUBLISHER));
                 ui.label("GUI port of the FFmpeg processing PowerShell script v22.0.");
                 ui.label(format!("Build: {} {}", std::env::consts::OS, std::env::consts::ARCH));
+                ui.label("Licensed under GPL v3");
                 ui.separator();
                 match (&self.ff, &self.ff_check) {
                     (Some(f), Some(Ok(c))) => {

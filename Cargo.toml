@@ -3,6 +3,7 @@ name = "ffmpeg-encoder"
 version = "0.6.0-rc.5"
 edition = "2021"
 description = "Windows GUI for common FFmpeg encoding jobs"
+license = "GPL-3.0-or-later"
 build = "build.rs"
 
 [lib]
