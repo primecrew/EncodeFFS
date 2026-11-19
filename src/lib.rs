@@ -57,7 +57,7 @@ pub fn legacy_data_dir_rel() -> std::path::PathBuf {
     std::path::PathBuf::from(LEGACY_DATA_DIR_NAME)
 }
 
-/// Window title, e.g. "Encode FFS 0.6.0-rc.5".
+/// Window title, e.g. "Encode FFS 0.6.0-rc.6".
 pub fn full_title() -> String {
     format!("{APP_NAME} {APP_VERSION}")
 }
