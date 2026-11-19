@@ -141,6 +141,46 @@ fn show_remux_warn(ctx: &egui::Context) {
     });
 }
 
+fn show_remux_after_new(ctx: &egui::Context) {
+    let def = std::env::temp_dir().join("ffenc-shot-default");
+    let rec = std::env::temp_dir().join("ffenc-shot-recent");
+    let _ = std::fs::create_dir_all(&def);
+    let _ = std::fs::create_dir_all(&rec);
+    let def_s = def.to_string_lossy().into_owned();
+    let recents = vec![rec.to_string_lossy().into_owned()];
+    let mut src = String::new();
+    let mut out = String::new();
+    common::fit(
+        egui::Window::new("Remux")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]),
+        ctx,
+        false,
+    )
+    .show(ctx, |ui| {
+        ui.set_min_width(720.0);
+        ui.label("Container copy (-map 0 -c copy). Never overwrites; files already in the chosen container are skipped.");
+        ui.add_space(6.0);
+        egui::Grid::new("shot_remux_new").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+            let _ = common::folder_row(ui, "shot_remux_src", "Source folder", &mut src, &def_s, &recents, true, "");
+            let _ = common::folder_row_nodrop(ui, "shot_remux_out", "Output folder", &mut out, &def_s, &recents, "(same as source folder)");
+            crate::ui::common::row_label(ui, "Output container");
+            ui.horizontal(|ui| {
+                let mut c = Container::Mp4;
+                for opt in Container::ALL {
+                    ui.radio_value(&mut c, opt, opt.label());
+                }
+                let _ = c;
+            });
+            ui.end_row();
+        });
+        hint(ui, "All tracks are copied as they are. If a job fails, its source file is kept.");
+        ui.add_space(8.0);
+        let _ = ui.add(egui::Button::new(RichText::new("Preview & run…").strong()));
+    });
+}
+
 fn show_crf(ctx: &egui::Context) {
     common::fit(
         egui::Window::new("Re-encode video")
@@ -182,6 +222,7 @@ impl eframe::App for ShotApp {
                 show_finished_new_layout(ctx, &items);
             }
             "remux-warn" => show_remux_warn(ctx),
+            "remux-new" => show_remux_after_new(ctx),
             "fallback-prompt" => {
                 // A static ask-stage prompt (no settings needed beyond defaults).
                 // Construct via ask() and show; Cancel/Download must not be clicked.

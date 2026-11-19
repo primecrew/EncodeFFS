@@ -15,6 +15,7 @@ pub mod finished;
 pub mod output_guard;
 pub mod presets;
 pub mod settings;
+pub mod recent_folders;
 pub mod data_migrate;
 pub mod updater;
 pub mod util;

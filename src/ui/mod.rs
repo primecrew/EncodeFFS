@@ -353,7 +353,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("F5", "Run selected preset (opens the confirmation with the full command)"),
     ("Enter / Space", "In the confirmation: Run (focused first) · elsewhere: press the focused button"),
     ("Esc", "Close the confirmation / dialog"),
-    ("Ctrl+N", "File › New: start a new job with the selected preset (clears its files and option edits)"),
+    ("Ctrl+N", "File › New: start a new job with the selected preset (clears its files and option edits; folder-based presets start with empty folders)"),
     ("Ctrl+O", "Open file(s) for the selected preset (folder for folder presets)"),
     ("Ctrl+S", "Save preset (built-in presets: Save as new preset)"),
     ("Ctrl+F", "Search presets"),
@@ -366,6 +366,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
 
 const REMEMBER_LAYOUT_HELP: &str = "On (the default): the window's position, size, maximized state and screen, the panel sizes and which sections are open are saved (shortly after a change and on exit) and restored at the next start. A window that would be off-screen or too small opens centered at the default size instead.";
 const RESET_LAYOUT_HELP: &str = "Puts the window back to the default size, centered on its screen, and the panels and sections back to their defaults. Applies immediately.";
+const REMEMBER_RECENT_FOLDERS_HELP: &str = "How many recently used folders to offer on Remux, Batch re-encode, and Custom (folder mode). The Settings default folder is always first in the list. 0 means don't remember any. Maximum 20. Default 4.";
 const OWN_FOLDER_NOTE: &str = "Doesn't apply: you're using your own FFmpeg folder, so the app never checks for FFmpeg updates by itself. This option only matters for the copy the app downloads. Help › Check for FFmpeg updates… still works and can download an app-managed copy.";
 const NEVER_CHECK_HELP: &str = "Unchecked (the default): when the app starts it looks online for a newer FFmpeg, at most once a day, and only shows a notice; it never installs anything without asking. Checked: the app never looks for FFmpeg updates by itself and never shows an update notice. You can still check any time with Help › Check for FFmpeg updates….";
 
@@ -771,6 +772,21 @@ impl App {
         self.save_settings();
     }
 
+    /// Remember folders currently set on a folder-based form (picked or used on a run).
+    fn remember_used_folders(&mut self) {
+        let idx = self.pre.current;
+        let paths = crate::ui::presets::used_folders(&*self.pre.editor(idx, &self.settings).mode);
+        let mut changed = false;
+        for p in paths {
+            if std::path::Path::new(p.trim()).is_dir() && self.settings.remember_recent_folder(&p) {
+                changed = true;
+            }
+        }
+        if changed {
+            self.save_settings();
+        }
+    }
+
     fn new_confirm_dialog(&mut self, ctx: &egui::Context) {
         if !self.confirm_new {
             return;
@@ -877,6 +893,7 @@ impl App {
         let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed) };
         match self.pre.editor(idx, &self.settings).mode.build(&cx) {
             Ok(plan) => {
+                self.remember_used_folders();
                 let preset_name = self.pre.list[idx].name.clone();
                 let values = self.pre.editor(idx, &self.settings).mode.save();
                 let origin = ffenc::job_history::Origin { preset_name, values };
@@ -947,7 +964,7 @@ impl App {
                     ui.close_menu();
                 }
                 if ui.add(egui::Button::new("New").shortcut_text(ctx.format_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::N))))
-                    .on_hover_text("Start a new job with the selected preset: clears the files and options of the form back to the preset's settings. Running and queued jobs, presets and Settings are not changed.")
+                    .on_hover_text("Start a new job with the selected preset: clears the files and option edits on the form. Folder-based presets (Remux, Batch re-encode, Custom in folder mode) start with empty folder fields; the Recent list and Settings folders are not changed. Other presets still use the Settings output folder. Running and queued jobs, presets and Settings are not changed.")
                     .clicked()
                 {
                     self.file_new();
@@ -1787,6 +1804,9 @@ if ui.button("About").clicked() {
         let before = ed.mode.save();
         ed.mode.on_drop(&paths, &cx);
         let accepted = ed.mode.save() != before;
+        if accepted && self.pre.editor(idx, &self.settings).mode.wants_folders() {
+            self.remember_used_folders();
+        }
         let name = self.pre.cur().name.clone();
         self.drop_note = Some((
             if accepted {
@@ -1804,8 +1824,13 @@ if ui.button("About").clicked() {
         let idx = self.pre.current;
         let folders = self.pre.editor(idx, &self.settings).mode.wants_folders();
         let mut d = rfd::FileDialog::new().set_title(format!("Open for “{}”", self.pre.cur().name));
-        if Path::new(&self.settings.input_folder).is_dir() {
-            d = d.set_directory(&self.settings.input_folder);
+        if let Some(s) = ffenc::recent_folders::browse_dir(
+            "",
+            &self.settings.input_folder,
+            &self.settings.recent_folders,
+            |p| Path::new(p).is_dir(),
+        ) {
+            d = d.set_directory(s);
         }
         let picked = if folders { d.pick_folder().map(|p| vec![p]) } else { d.pick_files() };
         if let Some(v) = picked.filter(|v| !v.is_empty()) {
@@ -1916,7 +1941,14 @@ if ui.button("About").clicked() {
                     ui.end_row();
                     common::path_row_nodrop(ui, "Input folder", &mut ed.input_folder, common::Pick::Folder, &d);
                     common::path_row_nodrop(ui, "Output folder", &mut ed.output_folder, common::Pick::Folder, &d);
+                    crate::ui::common::row_label(ui, "Remember recent folders");
+                    ui.horizontal(|ui| {
+                        let r = crate::ui::common::num_u32(ui, &mut ed.recent_folder_limit, 0..=ffenc::recent_folders::MAX_LIMIT, "");
+                        crate::ui::common::hover_tip(r, REMEMBER_RECENT_FOLDERS_HELP);
+                    });
+                    ui.end_row();
                 });
+                hint(ui, REMEMBER_RECENT_FOLDERS_HELP);
                 hint(ui, "FFmpeg lookup order: this folder -> ffmpeg\\ next to the app -> app-managed copy -> PATH.");
                 common::section(ui, "App-managed FFmpeg location");
                 hint(ui, managed_loc::HELP);
@@ -2070,7 +2102,8 @@ if ui.button("About").clicked() {
                 if ui.button("Reset to script defaults").clicked() {
                     let drafts = std::mem::take(&mut ed.drafts);
                     let (input_folder, output_folder, ffmpeg_bin_path) = (ed.input_folder.clone(), ed.output_folder.clone(), ed.ffmpeg_bin_path.clone());
-                    ed = Settings { drafts, last_preset: ed.last_preset.clone(), input_folder, output_folder, ffmpeg_bin_path, ..Settings::default() };
+                    let (recent_folders, recent_folder_limit) = (ed.recent_folders.clone(), ed.recent_folder_limit);
+                    ed = Settings { drafts, last_preset: ed.last_preset.clone(), input_folder, output_folder, ffmpeg_bin_path, recent_folders, recent_folder_limit, ..Settings::default() };
                 }
             });
         });
@@ -2095,6 +2128,7 @@ if ui.button("About").clicked() {
             ed.appearance = self.settings.appearance.clone();
             // so is the app-managed FFmpeg location ("Reset to script defaults" keeps it)
             ed.managed_ffmpeg_dir = self.settings.managed_ffmpeg_dir.clone();
+            ed.sanitize_recent_folders();
             self.settings = ed;
             self.pre.rebase(&self.settings);
             self.pre.apply_app_folders_all(&self.settings);
@@ -2337,7 +2371,19 @@ impl eframe::App for App {
             egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                 let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
                 let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed) };
+                let folders_before = crate::ui::presets::used_folders(&*self.pre.editor(idx, &self.settings).mode);
                 self.pre.editor(idx, &self.settings).mode.ui(ui, &cx);
+                let folders_after = crate::ui::presets::used_folders(&*self.pre.editor(idx, &self.settings).mode);
+                let mut recents_changed = false;
+                for p in &folders_after {
+                    let is_new = !folders_before.iter().any(|b| ffenc::recent_folders::folder_key(b) == ffenc::recent_folders::folder_key(p));
+                    if is_new && Path::new(p.trim()).is_dir() && self.settings.remember_recent_folder(p) {
+                        recents_changed = true;
+                    }
+                }
+                if recents_changed {
+                    self.save_settings();
+                }
                 let (inp, out) = crate::ui::presets::take_app_folders(&*self.pre.editor(idx, &self.settings).mode);
                 let mut folders_changed = false;
                 if let Some(o) = out {

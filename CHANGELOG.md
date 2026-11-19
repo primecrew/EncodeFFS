@@ -6,6 +6,8 @@ Create Slideshow is part of this stable build (the old **Slideshow** branch is a
 
 ## Unreleased
 
+- Folder-based presets (Remux, Batch re-encode, Custom in folder mode) start with empty folder fields, including after File › New. A Recent drop-down lists the Settings default folder first, then folders you used recently. File › Settings › Remember recent folders is 4 by default (0 = none, maximum 20). Picking a folder or running a job remembers it; the Settings default folders are not changed. Other presets still use the Settings output folder on New.
+
 ## 0.6.0-rc.5
 
 - The Encoding Finished window is wide enough for a typical file name such as `2025-04-25 17-01-45.mp4` to stay on one line, with the size and time underneath and the Go to file buttons aligned. Scroll, Open folder and Close are unchanged.

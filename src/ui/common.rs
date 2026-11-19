@@ -222,6 +222,79 @@ pub fn path_row_nodrop(ui: &mut Ui, label: &str, value: &mut String, pick: Pick,
     path_row_impl(ui, label, value, pick, fallback_dir, false)
 }
 
+pub const FOLDER_RECENT_HELP: &str = "The Settings default folder is first, then folders you used recently, newest first. Pick one, or Browse. Missing recent folders are left out of the list.";
+pub const FOLDER_OUTPUT_BLANK_HELP: &str = "Leave this blank to write into the same folder as the source.";
+
+/// Folder field with a Recent drop-down (Settings default first, then recents).
+/// `empty_hint` is shown in the empty text field (for example "(same as source folder)").
+pub fn folder_row(ui: &mut Ui, id: &str, label: &str, value: &mut String, default_folder: &str, recents: &[String], droppable: bool, empty_hint: &str) -> bool {
+    folder_row_impl(ui, id, label, value, default_folder, recents, droppable, empty_hint)
+}
+
+pub fn folder_row_nodrop(ui: &mut Ui, id: &str, label: &str, value: &mut String, default_folder: &str, recents: &[String], empty_hint: &str) -> bool {
+    folder_row_impl(ui, id, label, value, default_folder, recents, false, empty_hint)
+}
+
+fn folder_row_impl(ui: &mut Ui, id: &str, label: &str, value: &mut String, default_folder: &str, recents: &[String], droppable: bool, empty_hint: &str) -> bool {
+    use ffenc::recent_folders;
+    let mut changed = false;
+    row_label(ui, label);
+    ui.horizontal(|ui| {
+        let w = (ui.available_width() - 200.0).max(120.0);
+        let mut te = egui::TextEdit::singleline(value).desired_width(w);
+        let hint = if empty_hint.is_empty() {
+            if droppable { "Drop a folder here, or Browse…".to_string() } else { String::new() }
+        } else {
+            empty_hint.to_string()
+        };
+        if !hint.is_empty() {
+            te = te.hint_text(hint);
+        }
+        let r = ui.add(te);
+        changed |= r.changed();
+        let r = if empty_hint.contains("same as source") {
+            hover_tip(r, FOLDER_OUTPUT_BLANK_HELP)
+        } else {
+            r
+        };
+        if droppable && files_hovering(ui.ctx()) {
+            paint_drop_target(ui, r.rect);
+        }
+        let entries = recent_folders::menu_entries(default_folder, recents, |p| std::path::Path::new(p).is_dir());
+        let combo = egui::ComboBox::from_id_salt(id).width(120.0).selected_text("Recent");
+        let resp = combo.show_ui(ui, |ui| {
+            if entries.is_empty() {
+                ui.label(RichText::new("No recent folders").weak());
+            }
+            for (i, p) in entries.iter().enumerate() {
+                let chosen = recent_folders::folder_key(value) == recent_folders::folder_key(p);
+                let label = if i == 0 && !default_folder.trim().is_empty() && recent_folders::folder_key(p) == recent_folders::folder_key(default_folder) {
+                    format!("{p}  (default)")
+                } else {
+                    p.clone()
+                };
+                if ui.selectable_label(chosen, label).clicked() {
+                    *value = p.clone();
+                    changed = true;
+                }
+            }
+        }).response;
+        hover_tip(named(resp, egui::WidgetType::ComboBox, "Recent folders"), FOLDER_RECENT_HELP);
+        if ui.button("Browse…").clicked() {
+            let mut d = rfd::FileDialog::new();
+            if let Some(s) = recent_folders::browse_dir(value, default_folder, recents, |p| std::path::Path::new(p).is_dir()) {
+                d = d.set_directory(s);
+            }
+            if let Some(p) = d.pick_folder() {
+                *value = p.to_string_lossy().into_owned();
+                changed = true;
+            }
+        }
+    });
+    ui.end_row();
+    changed
+}
+
 fn path_row_impl(ui: &mut Ui, label: &str, value: &mut String, pick: Pick, fallback_dir: &str, droppable: bool) -> bool {
     let mut changed = false;
     row_label(ui, label);
