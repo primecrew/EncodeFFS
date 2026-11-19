@@ -138,7 +138,7 @@ impl Mode for CustomMode {
             });
             ui.end_row();
             if st.o.batch {
-                if path_row(ui, "Input folder", &mut st.input, Pick::Folder, &cx.settings.input_folder) {
+                if folder_row(ui, "cu_in", "Input folder", &mut st.input, &cx.settings.input_folder, &cx.settings.recent_folders, true, "") {
                     rescan = Path::new(st.input.trim()).is_dir();
                 }
                 ui.label("");
@@ -156,7 +156,7 @@ impl Mode for CustomMode {
                     }
                 });
                 ui.end_row();
-                path_row_nodrop(ui, "Output folder", &mut st.out_dir, Pick::Folder, &cx.settings.output_folder);
+                folder_row_nodrop(ui, "cu_out", "Output folder", &mut st.out_dir, &cx.settings.output_folder, &cx.settings.recent_folders, "");
                 crate::ui::common::row_label(ui, "Name suffix");
                 ui.text_edit_singleline(&mut st.o.suffix);
                 ui.end_row();
@@ -477,10 +477,14 @@ impl Mode for CustomMode {
             chapter_interval_min: s.chapter_interval_min,
             ..Default::default()
         };
-        let base = State { out_dir: s.output_folder.clone(), o, ..Default::default() };
+        let batch = v.get("batch").and_then(|b| b.as_bool()).unwrap_or(o.batch);
+        let base = State { out_dir: if batch { String::new() } else { s.output_folder.clone() }, o, ..Default::default() };
         // partial values (e.g. a factory preset) are laid over the settings-derived defaults
         let v = if v.is_object() { ffenc::presets::overlay(serde_json::to_value(&base).unwrap_or_default(), v) } else { v.clone() };
         self.st = restore(&v, base);
+        if self.st.o.batch && !v.get("out_dir").and_then(|x| x.as_str()).map(|s| !s.trim().is_empty()).unwrap_or(false) {
+            self.st.out_dir.clear();
+        }
         self.probe = ProbeSlot::default();
         self.rows.clear();
         self.scanned.clear();

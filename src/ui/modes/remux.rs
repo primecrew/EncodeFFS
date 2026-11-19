@@ -156,22 +156,10 @@ impl Mode for RemuxMode {
         self.poll_probes(cx);
         let mut refresh = false;
         egui::Grid::new("m9").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            if path_row(ui, "Source folder", &mut self.st.src_dir, Pick::Folder, &cx.settings.input_folder) && PathBuf::from(self.st.src_dir.trim()).is_dir() {
+            if folder_row(ui, "remux_src", "Source folder", &mut self.st.src_dir, &cx.settings.input_folder, &cx.settings.recent_folders, true, "") && PathBuf::from(self.st.src_dir.trim()).is_dir() {
                 refresh = true;
             }
-            crate::ui::common::row_label(ui, "Output folder");
-            ui.vertical(|ui| {
-                ui.horizontal(|ui| {
-                    let w = (ui.available_width() - 80.0).max(120.0);
-                    ui.add(egui::TextEdit::singleline(&mut self.st.out_dir).hint_text("(same as source folder)").desired_width(w));
-                    if ui.button("Browse…").clicked() {
-                        if let Some(p) = rfd::FileDialog::new().pick_folder() {
-                            self.st.out_dir = s(&p);
-                        }
-                    }
-                });
-            });
-            ui.end_row();
+            folder_row_nodrop(ui, "remux_out", "Output folder", &mut self.st.out_dir, &cx.settings.output_folder, &cx.settings.recent_folders, "(same as source folder)");
             crate::ui::common::row_label(ui, "Output container");
             ui.horizontal(|ui| {
                 for c in Container::ALL {
@@ -303,10 +291,8 @@ impl Mode for RemuxMode {
         serde_json::to_value(&self.st).unwrap_or_default()
     }
     fn load(&mut self, v: &serde_json::Value, s: &Settings) {
-        self.st = restore(v, State { src_dir: s.input_folder.clone(), ..Default::default() });
-        if self.st.src_dir.trim().is_empty() {
-            self.st.src_dir = s.input_folder.clone();
-        }
+        let _ = s;
+        self.st = restore(v, State::default());
         // Older presets have no `container` field; serde default is MP4.
         self.files.clear();
         self.listed_dir = None;

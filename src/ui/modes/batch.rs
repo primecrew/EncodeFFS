@@ -116,7 +116,7 @@ impl Mode for BatchMode {
         }
         let mut rescan = false;
         egui::Grid::new("m7").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            if path_row(ui, "Input folder", &mut self.st.in_dir, Pick::Folder, &cx.settings.input_folder) {
+            if folder_row(ui, "batch_in", "Input folder", &mut self.st.in_dir, &cx.settings.input_folder, &cx.settings.recent_folders, true, "") {
                 rescan = PathBuf::from(self.st.in_dir.trim()).is_dir();
             }
             ui.label("");
@@ -134,7 +134,7 @@ impl Mode for BatchMode {
                 }
             });
             ui.end_row();
-            path_row_nodrop(ui, "Output folder", &mut self.st.out_dir, Pick::Folder, &cx.settings.output_folder);
+            folder_row_nodrop(ui, "batch_out", "Output folder", &mut self.st.out_dir, &cx.settings.output_folder, &cx.settings.recent_folders, "");
         });
         if rescan {
             self.start_scan(cx);
@@ -296,10 +296,7 @@ impl Mode for BatchMode {
             audio: default_audio(s),
             ..Default::default()
         };
-        self.st = restore(v, State { in_dir: s.input_folder.clone(), out_dir: s.output_folder.clone(), bs });
-        if self.st.in_dir.trim().is_empty() {
-            self.st.in_dir = s.input_folder.clone();
-        }
+        self.st = restore(v, State { bs, ..Default::default() });
         self.rows.clear();
         self.scanned_dir.clear();
     }

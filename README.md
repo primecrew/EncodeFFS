@@ -377,8 +377,14 @@ These notes are approximate. The only reliable check is a dark scene on the scre
 
 ## Input / output folders (0.5.5-codecs.1)
 Input and output folders are remembered at the app level (File › Settings), not in presets. On first run they
-default to the Windows Videos folder. Switching presets or File › New does not change them. Exporting a preset
-omits folder paths.
+default to the Windows Videos folder. Exporting a preset omits folder paths.
+
+On **Remux**, **Batch re-encode**, and **Custom pipeline** in folder mode, the folder fields start blank
+(File › New also leaves them blank). Each field has a **Recent** drop-down: the Settings default folder
+is first, then folders you used recently, newest first. Missing recent folders are left out of the list.
+File › Settings › **Remember recent folders** is 4 by default (0 = don't remember any; maximum 20).
+Picking a folder or running a job remembers it. The Settings default folders themselves are not changed.
+On Remux, a blank output folder still means "same as the source folder."
 
 ## Audio bitrate
 The audio bitrate row shows **Will encode: N kb/s**, then a drop-down of typical rates for the selected
@@ -387,8 +393,10 @@ value. A rate that is not in the list shows as Custom, with the typed box next t
 
 ## File › New (0.5.4)
 **File › New** (Ctrl+N) starts a new job with the selected preset: the form goes back to the preset's settings
-with no input/output files (folders come from Settings). If you changed the preset's options without saving,
-it asks first. Running and queued jobs, presets, Settings and the job history are not changed.
+with no input/output files. Folder-based presets (Remux, Batch re-encode, Custom in folder mode) start with
+empty folder fields; the Recent list and Settings folders are not changed. Other presets still use the
+Settings output folder. If you changed the preset's options without saving, it asks first. Running and
+queued jobs, presets, Settings and the job history are not changed.
 
 ## Output frame rate (0.5.4)
 In the **Video** section of Re-encode, Batch re-encode, Custom pipeline (when re-encoding video), Join

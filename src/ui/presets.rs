@@ -52,6 +52,11 @@ pub fn builtin_differs(p: &Preset, s: &Settings) -> bool {
 }
 
 pub fn apply_app_folders(mode: &mut dyn Mode, s: &Settings) {
+    // Folder-based presets keep their own fields (blank on a fresh form; recents
+    // remember last used). App-level default folders stay as set in Settings.
+    if mode.wants_folders() {
+        return;
+    }
     let mut v = mode.save();
     let Some(obj) = v.as_object_mut() else { return };
     let mut changed = false;
@@ -73,10 +78,32 @@ pub fn apply_app_folders(mode: &mut dyn Mode, s: &Settings) {
 }
 
 pub fn take_app_folders(mode: &dyn Mode) -> (Option<String>, Option<String>) {
+    if mode.wants_folders() {
+        return (None, None);
+    }
     let v = mode.save();
     let out = v.get("out_dir").and_then(|x| x.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     let inp = v.get("in_dir").or_else(|| v.get("src_dir")).and_then(|x| x.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     (inp, out)
+}
+
+/// Folder paths currently set on a folder-based form (to remember as recents).
+pub fn used_folders(mode: &dyn Mode) -> Vec<String> {
+    let v = mode.save();
+    let mut out = Vec::new();
+    for k in ["src_dir", "in_dir", "out_dir"] {
+        if let Some(s) = v.get(k).and_then(|x| x.as_str()).map(str::trim).filter(|s| !s.is_empty()) {
+            out.push(s.to_string());
+        }
+    }
+    if mode.wants_folders() {
+        if let Some(s) = v.get("input").and_then(|x| x.as_str()).map(str::trim).filter(|s| !s.is_empty()) {
+            if !out.iter().any(|p| ffenc::recent_folders::folder_key(p) == ffenc::recent_folders::folder_key(s)) {
+                out.push(s.to_string());
+            }
+        }
+    }
+    out
 }
 
 pub fn make_editor(p: &Preset, s: &Settings, draft: Option<&Value>) -> Option<Editor> {
@@ -341,9 +368,10 @@ impl PresetUi {
     }
 
     /// File › New: a fresh form for the selected preset, exactly as the preset defines it
-    /// (input/output files cleared, unsaved option edits dropped, folders from Settings).
-    /// Only this form is replaced: the stored presets, other forms, settings and the queue are
-    /// untouched.
+    /// (input/output files cleared, unsaved option edits dropped). Folder-based presets
+    /// start with blank folder fields; single-file presets still take output folders from
+    /// Settings. Only this form is replaced: the stored presets, other forms, settings and
+    /// the queue are untouched.
     pub fn new_job(&mut self, s: &Settings) {
         let p = self.list[self.current].clone();
         let e = make_editor(&p, s, None).or_else(|| make_editor(&Preset { kind: "custom".into(), ..p.clone() }, s, None)).expect("custom kind exists");
@@ -1468,6 +1496,63 @@ mod tests {
         assert!(!pu.modified(&id0));
         set(pu.editor(0, &s), "out_dir", json!("/other/out"), &s);
         assert!(!pu.modified(&id0), "folder is not a preset field");
+    }
+
+    #[test]
+    fn file_new_leaves_folder_presets_blank_and_single_file_unchanged() {
+        let s = Settings { output_folder: "/app/out".into(), input_folder: "/app/in".into(), ..Settings::default() };
+        let mut pu = ui_with(presets::factory_all());
+        let remux = pu.index_of("builtin-remux").expect("remux");
+        let batch = pu.index_of("builtin-batch").expect("batch");
+        assert_eq!(pu.list[0].kind, "reencode");
+
+        let rv = make_editor(&pu.list[remux], &s, None).unwrap().mode.save();
+        assert_eq!(rv["src_dir"], json!(""));
+        assert_eq!(rv["out_dir"], json!(""));
+        let bv = make_editor(&pu.list[batch], &s, None).unwrap().mode.save();
+        assert_eq!(bv["in_dir"], json!(""));
+        assert_eq!(bv["out_dir"], json!(""));
+
+        pu.current = remux;
+        set(pu.editor(remux, &s), "src_dir", json!("/picked/in"), &s);
+        set(pu.editor(remux, &s), "out_dir", json!("/picked/out"), &s);
+        assert_eq!(take_app_folders(&*pu.editor(remux, &s).mode), (None, None));
+        apply_app_folders(&mut *pu.editor(remux, &s).mode, &s);
+        let v = pu.editor(remux, &s).mode.save();
+        assert_eq!(v["src_dir"], json!("/picked/in"), "apply_app_folders must not overwrite Remux folders");
+        assert_eq!(v["out_dir"], json!("/picked/out"));
+
+        pu.new_job(&s);
+        let v = pu.editor(remux, &s).mode.save();
+        assert_eq!(v["src_dir"], json!(""));
+        assert_eq!(v["out_dir"], json!(""));
+
+        // single-file presets still take the Settings output folder
+        let ev = make_editor(&pu.list[0], &s, None).unwrap().mode.save();
+        assert_eq!(ev["out_dir"], json!("/app/out"));
+        pu.current = 0;
+        set(pu.editor(0, &s), "input", json!("/v/a.mkv"), &s);
+        set(pu.editor(0, &s), "out_dir", json!("/should-reset"), &s);
+        apply_app_folders(&mut *pu.editor(0, &s).mode, &s);
+        pu.new_job(&s);
+        let v = pu.editor(0, &s).mode.save();
+        assert_eq!(v["out_dir"], json!("/app/out"));
+        assert_eq!(v["input"], json!(""));
+        assert_eq!(take_app_folders(&*pu.editor(0, &s).mode), (None, Some("/app/out".into())));
+        // Custom in folder mode starts blank; file mode still uses Settings output
+        let custom = pu.index_of("builtin-custom").expect("custom");
+        let mut cv = make_editor(&pu.list[custom], &s, None).unwrap().mode.save();
+        cv["batch"] = json!(true);
+        if let Some(obj) = cv.as_object_mut() {
+            obj.remove("out_dir");
+            obj.remove("input");
+        }
+        let batch_preset = Preset { values: cv, ..pu.list[custom].clone() };
+        let bv = make_editor(&batch_preset, &s, None).unwrap().mode.save();
+        assert_eq!(bv["input"], json!(""));
+        assert_eq!(bv["out_dir"], json!(""));
+        let fv = make_editor(&pu.list[custom], &s, None).unwrap().mode.save();
+        assert_eq!(fv["out_dir"], json!("/app/out"));
     }
 
     #[test]

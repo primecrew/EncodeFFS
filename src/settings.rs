@@ -192,6 +192,10 @@ pub struct Settings {
     pub ffmpeg_bin_path: String,
     pub input_folder: String,
     pub output_folder: String,
+    /// Folders recently used on folder-based presets, newest first.
+    pub recent_folders: Vec<String>,
+    /// How many recent folders to keep (0 = none). Default 4, maximum 20.
+    pub recent_folder_limit: u32,
     pub crf: u32,
     pub audio_bitrate_k: u32,
     pub chapter_interval_min: f64,
@@ -267,6 +271,8 @@ impl Default for Settings {
             ffmpeg_bin_path: String::new(),
             input_folder: default_videos_dir_string(),
             output_folder: default_videos_dir_string(),
+            recent_folders: Vec::new(),
+            recent_folder_limit: crate::recent_folders::DEFAULT_LIMIT,
             crf: 22,
             audio_bitrate_k: 192,
             chapter_interval_min: 5.0,
@@ -531,6 +537,7 @@ impl Settings {
         }
         s.auto_check_updates = !s.never_check_updates;
         s.appearance = s.appearance.sanitized();
+        s.sanitize_recent_folders();
         Some(s)
     }
 
@@ -574,6 +581,24 @@ impl Settings {
 
     pub fn save(&self) -> Result<(), String> {
         self.save_to(&settings_path())
+    }
+
+    /// Clamp the limit and drop extra (or all, when the limit is 0) recent folders.
+    pub fn sanitize_recent_folders(&mut self) {
+        self.recent_folder_limit = crate::recent_folders::clamp_limit(self.recent_folder_limit);
+        if self.recent_folder_limit == 0 {
+            self.recent_folders.clear();
+        } else {
+            self.recent_folders.truncate(self.recent_folder_limit as usize);
+        }
+    }
+
+    /// Remember a folder that was picked or used on a run. Returns true if the list changed.
+    pub fn remember_recent_folder(&mut self, path: &str) -> bool {
+        self.sanitize_recent_folders();
+        let before = self.recent_folders.clone();
+        crate::recent_folders::remember(&mut self.recent_folders, path, self.recent_folder_limit);
+        self.recent_folders != before
     }
 
     /// If input/output folders are unset (empty), seed them once from the user's last
@@ -929,7 +954,6 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
-
     #[test]
     fn migrate_app_folders_seeds_from_last_preset_and_leaves_existing() {
         let vids = default_videos_dir_string();
@@ -1040,6 +1064,20 @@ mod tests {
         assert_eq!(std::fs::read_to_string(src.join(PORTABLE_FILE)).unwrap(), r#"{"crf": 99}"#);
         assert!(!installed_settings_missing(&src, &roam)); // no marker in src
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn old_settings_get_recent_folder_defaults() {
+        let s = Settings::from_json(r#"{"crf": 20}"#).unwrap();
+        assert!(s.recent_folders.is_empty());
+        assert_eq!(s.recent_folder_limit, crate::recent_folders::DEFAULT_LIMIT);
+        let over = Settings::from_json(r#"{"recent_folder_limit": 99, "recent_folders": ["C:\\Videos"]}"#).unwrap();
+        assert_eq!(over.recent_folder_limit, crate::recent_folders::MAX_LIMIT);
+        assert_eq!(over.recent_folders.len(), 1);
+        let trimmed = Settings::from_json(r#"{"recent_folder_limit": 2, "recent_folders": ["A", "B", "C"]}"#).unwrap();
+        assert_eq!(trimmed.recent_folders, ["A", "B"]);
+        let none = Settings::from_json(r#"{"recent_folder_limit": 0, "recent_folders": ["A"]}"#).unwrap();
+        assert!(none.recent_folders.is_empty());
     }
 
     #[test]
