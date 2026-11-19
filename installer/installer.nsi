@@ -7,10 +7,16 @@
 ; - Start Menu shortcut under <PUBLISHER>\<APP_NAME> (default on), desktop shortcut (optional)
 ; - On upgrade, leftover Start Menu / desktop shortcuts from earlier names are removed
 ; - Listed in Add/Remove Programs (HKCU or HKLM ...\Uninstall\<APP_ID>)
-; - A newer setup detects that entry and upgrades in place (same folder and install mode);
-;   the welcome page says so, and the who/where pages are skipped. Same version or an older
-;   setup can reinstall with a note. If the app is running, setup asks you to close it first.
-;   Settings, presets and leftover portable files are not removed.
+; - A newer setup detects that entry and upgrades in place (same folder and install mode).
+;   The first page and the Ready to Install page show a banner
+;   "Updating existing installation: <APP_NAME> v<old> → v<new>" and a read-only
+;   "Installed in:" path (v(unknown) if DisplayVersion is missing). The who/where
+;   pages are skipped and INSTDIR is forced to that folder (including when /D= is
+;   passed). A fresh install is titled "New installation" and has the usual
+;   directory page, labelled "Install to:". The last page says "Updated to v<new>
+;   in <path>" or "Installed v<new> to <path>". Same version or an older setup can
+;   reinstall. If the app is running, setup asks you to close it first. Settings,
+;   presets and leftover portable files are not removed.
 ; - Uninstall keeps settings/presets unless "Remove my settings and presets" is ticked
 ; - FFmpeg is not in the installer (the app can use an existing install or download a copy)
 ; Silent: setup.exe /S [/ALLUSERS] [/DESKTOP] [/D=path]   uninstall.exe /S [/REMOVESETTINGS]
@@ -65,7 +71,9 @@ Var RadioAll
 Var WantDesktop     ; 1 = desktop shortcut (silent /DESKTOP)
 Var Upgrade         ; 1 = existing install found (upgrade / reinstall / downgrade)
 Var InstalledVersion
-Var WelcomeMsg
+Var InstalledVerLabel  ; installed version, or "(unknown)"
+Var UpgradeBanner      ; "Updating existing installation: … v<old> → v<new>"
+Var FinishMsg
 
 !define MUI_ICON "${ICON}"
 !define MUI_UNICON "${ICON}"
@@ -75,13 +83,20 @@ Var WelcomeMsg
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${APP_EXE}"
 !define MUI_FINISHPAGE_RUN_TEXT "Start ${APP_NAME} now"
 
+!define MUI_WELCOMEPAGE_TITLE "New installation"
+!define MUI_WELCOMEPAGE_TITLE_3LINES
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW WelcomeShow
 !insertmacro MUI_PAGE_WELCOME
 Page custom InstallModePage InstallModeLeave
+!define MUI_DIRECTORYPAGE_TEXT_DESTINATION "Install to:"
 !define MUI_PAGE_CUSTOMFUNCTION_PRE DirectoryPagePre
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW DirectoryPageShow
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_COMPONENTS
+Page custom ReadyPage
 !insertmacro MUI_PAGE_INSTFILES
+!define MUI_FINISHPAGE_TITLE_3LINES
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW FinishShow
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -214,29 +229,28 @@ Function CompareAppVersions
   Pop $R0
 FunctionEnd
 
-Function SetUpgradeWelcome
+Function SetUpgradeTexts
   ${If} $InstalledVersion == ""
-    StrCpy $WelcomeMsg "${APP_NAME} is already installed. This will replace it in place with ${APP_VERSION}. Your settings and presets are kept.$\r$\n$\r$\n${APP_NAME} can use your existing FFmpeg install, or download a copy for you (Help › Check for FFmpeg updates…)."
-    Return
-  ${EndIf}
-  ${If} $InstalledVersion == "${APP_VERSION}"
-    StrCpy $WelcomeMsg "${APP_NAME} ${APP_VERSION} is already installed. This will reinstall it in place. Your settings and presets are kept.$\r$\n$\r$\n${APP_NAME} can use your existing FFmpeg install, or download a copy for you (Help › Check for FFmpeg updates…)."
-    Return
-  ${EndIf}
-  StrCpy $R5 $InstalledVersion
-  StrCpy $R6 "${APP_VERSION}"
-  Call CompareAppVersions
-  ${If} $R7 == 2
-    StrCpy $WelcomeMsg "${APP_NAME} $InstalledVersion is installed. This will replace it with ${APP_VERSION}, which is an older version. Your settings and presets are kept.$\r$\n$\r$\n${APP_NAME} can use your existing FFmpeg install, or download a copy for you (Help › Check for FFmpeg updates…)."
+    StrCpy $InstalledVerLabel "(unknown)"
   ${Else}
-    StrCpy $WelcomeMsg "${APP_NAME} $InstalledVersion is installed. This will upgrade it in place to ${APP_VERSION}. Your settings and presets are kept.$\r$\n$\r$\n${APP_NAME} can use your existing FFmpeg install, or download a copy for you (Help › Check for FFmpeg updates…)."
+    StrCpy $InstalledVerLabel "$InstalledVersion"
   ${EndIf}
+  StrCpy $UpgradeBanner "Updating existing installation: ${APP_NAME} v$InstalledVerLabel → v${APP_VERSION}"
 FunctionEnd
 
 Function WelcomeShow
+  ; Welcome title/text are a 195u column beside the wizard bitmap; long banner
+  ; and path wrap. The Ready to Install page repeats them at full inner width.
+  ; Segoe UI (falls back to the default UI font) includes the → glyph; Tahoma often does not.
+  CreateFont $R0 "Segoe UI" 12 700
+  CreateFont $R1 "Segoe UI" 10 400
+  SendMessage $mui.WelcomePage.Title ${WM_SETFONT} $R0 0
+  SendMessage $mui.WelcomePage.Text ${WM_SETFONT} $R1 0
   ${If} $Upgrade == 1
-  ${AndIf} $WelcomeMsg != ""
-    ${NSD_SetText} $mui.WelcomePage.Text "$WelcomeMsg"
+    ${NSD_SetText} $mui.WelcomePage.Title "$UpgradeBanner"
+    ${NSD_SetText} $mui.WelcomePage.Text "Installed in:$\r$\n$INSTDIR$\r$\n$\r$\nThe install folder cannot be changed. Your settings and presets are kept.$\r$\n$\r$\n${APP_NAME} can use your existing FFmpeg install, or download a copy for you (Help › Check for FFmpeg updates…)."
+  ${Else}
+    ${NSD_SetText} $mui.WelcomePage.Title "New installation"
   ${EndIf}
 FunctionEnd
 
@@ -244,6 +258,64 @@ Function DirectoryPagePre
   ${If} $Upgrade == 1
     Abort
   ${EndIf}
+FunctionEnd
+
+Function DirectoryPageShow
+  !insertmacro MUI_HEADER_TEXT "New installation" "Choose the folder for ${APP_NAME}."
+FunctionEnd
+
+Function ReadyPage
+  ${If} $Upgrade == 1
+    !insertmacro MUI_HEADER_TEXT "Ready to Install" "The existing folder will be updated."
+  ${Else}
+    !insertmacro MUI_HEADER_TEXT "Ready to Install" "Click Install to begin."
+  ${EndIf}
+  nsDialogs::Create 1018
+  Pop $0
+  CreateFont $R0 "Segoe UI" 11 700
+  CreateFont $R1 "Segoe UI" 10 400
+  ${If} $Upgrade == 1
+    ${NSD_CreateLabel} 0 0u 100% 28u "$UpgradeBanner"
+    Pop $1
+    SendMessage $1 ${WM_SETFONT} $R0 1
+    ${NSD_CreateLabel} 0 32u 100% 12u "Installed in:"
+    Pop $1
+    SendMessage $1 ${WM_SETFONT} $R1 1
+    ${NSD_CreateLabel} 0 46u 100% 28u "$INSTDIR"
+    Pop $1
+    SendMessage $1 ${WM_SETFONT} $R1 1
+    ${NSD_CreateLabel} 0 80u 100% 28u "The install folder cannot be changed. Your settings and presets are kept. Click Install to continue."
+    Pop $1
+    SendMessage $1 ${WM_SETFONT} $R1 1
+  ${Else}
+    ${NSD_CreateLabel} 0 0u 100% 16u "New installation"
+    Pop $1
+    SendMessage $1 ${WM_SETFONT} $R0 1
+    ${NSD_CreateLabel} 0 24u 100% 12u "Install to:"
+    Pop $1
+    SendMessage $1 ${WM_SETFONT} $R1 1
+    ${NSD_CreateLabel} 0 38u 100% 28u "$INSTDIR"
+    Pop $1
+    SendMessage $1 ${WM_SETFONT} $R1 1
+    ${NSD_CreateLabel} 0 72u 100% 16u "Click Install to continue."
+    Pop $1
+    SendMessage $1 ${WM_SETFONT} $R1 1
+  ${EndIf}
+  nsDialogs::Show
+FunctionEnd
+
+Function FinishShow
+  ${If} $Upgrade == 1
+    StrCpy $FinishMsg "Updated to v${APP_VERSION} in $INSTDIR"
+  ${Else}
+    StrCpy $FinishMsg "Installed v${APP_VERSION} to $INSTDIR"
+  ${EndIf}
+  CreateFont $R0 "Segoe UI" 12 700
+  CreateFont $R1 "Segoe UI" 10 400
+  SendMessage $mui.FinishPage.Title ${WM_SETFONT} $R0 0
+  SendMessage $mui.FinishPage.Text ${WM_SETFONT} $R1 0
+  ${NSD_SetText} $mui.FinishPage.Title "$FinishMsg"
+  ${NSD_SetText} $mui.FinishPage.Text "$FinishMsg"
 FunctionEnd
 
 Function PathIsLocked
@@ -457,7 +529,9 @@ Function .onInit
   StrCpy $WantDesktop 0
   StrCpy $Upgrade 0
   StrCpy $InstalledVersion ""
-  StrCpy $WelcomeMsg ""
+  StrCpy $InstalledVerLabel ""
+  StrCpy $UpgradeBanner ""
+  StrCpy $FinishMsg ""
   ${GetParameters} $R0
   ClearErrors
   ${GetOptions} $R0 "/ALLUSERS" $R1
@@ -470,10 +544,9 @@ Function .onInit
     StrCpy $WantDesktop 1
   ${EndIf}
   ; Elevate after DetectExistingInstall so an all-users upgrade can request rights.
-  ; /D=... on the command line sets $INSTDIR before .onInit; do not override it.
-  ${If} $INSTDIR == ""
-    Call DetectExistingInstall
-  ${EndIf}
+  ; Always look up the existing install. On an upgrade, force INSTDIR to that
+  ; folder even if /D= was passed. A fresh install still honours /D=.
+  Call DetectExistingInstall
   ${If} $AllUsers == 1
     Call IsAdmin
     Pop $0
@@ -490,7 +563,7 @@ Function .onInit
     Call DefaultDir
   ${EndIf}
   ${If} $Upgrade == 1
-    Call SetUpgradeWelcome
+    Call SetUpgradeTexts
   ${EndIf}
   ${If} $WantDesktop == 1
     SectionGetFlags ${SecDesktop} $0

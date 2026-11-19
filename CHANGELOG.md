@@ -6,6 +6,8 @@ This edition is a separate app next to the stable build, with its own exe and da
 
 ## Unreleased
 
+- The installer welcome and Ready to Install pages show when they are updating an existing copy: a banner "Updating existing installation: Encode FFS (Codecs) v<old> → v<new>" and a read-only "Installed in:" path (the folder cannot be changed). A first-time setup is titled "New installation" and keeps the usual "Install to:" folder page with Browse. The last page says "Updated to v<new> in <path>" or "Installed v<new> to <path>". If the previous version is not recorded, the banner shows v(unknown).
+
 - Folder-based presets (Remux, Batch re-encode, Custom in folder mode) start with empty folder fields, including after File › New. A Recent drop-down lists the Settings default folder first, then folders you used recently. File › Settings › Remember recent folders is 4 by default (0 = none, maximum 20). Picking a folder or running a job remembers it; the Settings default folders are not changed. Other presets still use the Settings output folder on New.
 
 - The Encoding Finished window is wide enough for a typical file name such as `2025-04-25 17-01-45.mp4` to stay on one line, with the size and time underneath and the Go to file buttons aligned. Scroll, Open folder and Close are unchanged.
