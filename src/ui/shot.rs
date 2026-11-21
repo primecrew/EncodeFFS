@@ -211,6 +211,26 @@ fn show_crf(ctx: &egui::Context) {
         });
 }
 
+
+fn show_about(ctx: &egui::Context) {
+    common::fit(
+        egui::Window::new("About")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]),
+        ctx,
+        false,
+    )
+    .show(ctx, |ui| {
+        ui.set_min_width(520.0);
+        ui.heading(ffenc::about_heading());
+        ui.label("A front end for FFmpeg.");
+        ui.label("GUI port of the FFmpeg processing PowerShell script v22.0.");
+        ui.label(format!("Build: {} {}", std::env::consts::OS, std::env::consts::ARCH));
+        ui.label("Licensed under GPL v3");
+    });
+}
+
 impl eframe::App for ShotApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         theme::begin_frame(ctx, &Appearance::default());
@@ -242,6 +262,7 @@ impl eframe::App for ShotApp {
                 });
             }
             "crf-popup" => show_crf(ctx),
+            "about" => show_about(ctx),
             other => {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.label(format!("unknown screenshot kind: {other}"));

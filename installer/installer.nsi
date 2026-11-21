@@ -3,6 +3,7 @@
 ; stable edition (master) and the experimental one side by side (different APP_ID / folders).
 ;
 ; - Per-user install by default (no administrator rights): %LOCALAPPDATA%\Programs\<APP_DIRNAME>
+;   (fresh installs only; an upgrade keeps the existing InstallLocation, e.g. an older "FFmpeg Encoder" folder)
 ; - Optional "for everyone" (Program Files; asks for administrator rights)
 ; - Start Menu shortcut under <PUBLISHER>\<APP_NAME> (default on), desktop shortcut (optional)
 ; - On upgrade, leftover Start Menu / desktop shortcuts from earlier names are removed
@@ -39,6 +40,10 @@ Target amd64-unicode
 !ifndef PUBLISHER
   !error "Build with scripts/build-release.sh (PUBLISHER is required)"
 !endif
+; Footer (BrandingText) and Start Menu group. Change this one define if the wording changes.
+!ifndef BRAND_TEXT
+  !define BRAND_TEXT "PrimeCrew Software"
+!endif
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
@@ -51,7 +56,7 @@ Name "${APP_NAME}"
 OutFile "${OUTFILE}"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
-BrandingText "${APP_NAME} ${APP_VERSION}"
+BrandingText "${BRAND_TEXT}"
 ShowInstDetails show
 ShowUninstDetails show
 
@@ -61,7 +66,7 @@ VIAddVersionKey "CompanyName" "${PUBLISHER}"
 VIAddVersionKey "FileDescription" "${APP_NAME} setup"
 VIAddVersionKey "FileVersion" "${APP_VERSION}"
 VIAddVersionKey "ProductVersion" "${APP_VERSION}"
-VIAddVersionKey "LegalCopyright" "${PUBLISHER}"
+VIAddVersionKey "LegalCopyright" "Copyright (C) 2026 ${PUBLISHER}"
 
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_ID}"
 
@@ -508,10 +513,10 @@ SectionEnd
 Section "Start Menu shortcut" SecStart
   !insertmacro SetMode
   ; Group this app with other PrimeCrew Software titles (Adobe-style brand folder)
-  CreateDirectory "$SMPROGRAMS\${PUBLISHER}"
-  CreateShortcut "$SMPROGRAMS\${PUBLISHER}\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}" "" "$INSTDIR\${APP_EXE}" 0
+  CreateDirectory "$SMPROGRAMS\${BRAND_TEXT}"
+  CreateShortcut "$SMPROGRAMS\${BRAND_TEXT}\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}" "" "$INSTDIR\${APP_EXE}" 0
   ; In-place upgrade: drop leftover shortcuts from earlier names so they are not duplicated.
-  Delete "$SMPROGRAMS\${PUBLISHER}\${PREV_BRAND_APP_NAME}.lnk"
+  Delete "$SMPROGRAMS\${BRAND_TEXT}\${PREV_BRAND_APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${PREV_BRAND_APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${PREV_APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${APP_NAME}.lnk"
@@ -574,7 +579,7 @@ FunctionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecApp} "The program. You can use your existing FFmpeg, or download a copy in the app."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecStart} "A shortcut in the Start Menu, under ${PUBLISHER}."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecStart} "A shortcut in the Start Menu, under ${BRAND_TEXT}."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} "A shortcut on the desktop."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
@@ -592,9 +597,9 @@ FunctionEnd
 Section "un.${APP_NAME}" UnSecApp
   SectionIn RO
   !insertmacro SetMode
-  Delete "$SMPROGRAMS\${PUBLISHER}\${APP_NAME}.lnk"
-  Delete "$SMPROGRAMS\${PUBLISHER}\${PREV_BRAND_APP_NAME}.lnk"
-  RMDir "$SMPROGRAMS\${PUBLISHER}" ; only if empty: other PrimeCrew apps keep the folder
+  Delete "$SMPROGRAMS\${BRAND_TEXT}\${APP_NAME}.lnk"
+  Delete "$SMPROGRAMS\${BRAND_TEXT}\${PREV_BRAND_APP_NAME}.lnk"
+  RMDir "$SMPROGRAMS\${BRAND_TEXT}" ; only if empty: other PrimeCrew apps keep the folder
   Delete "$SMPROGRAMS\${APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${PREV_BRAND_APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${PREV_APP_NAME}.lnk"
