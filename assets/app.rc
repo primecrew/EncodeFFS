@@ -13,6 +13,7 @@ BEGIN
       VALUE "FileDescription", "Encode FFS (Codecs)"
       VALUE "ProductName", "Encode FFS (Codecs)"
       VALUE "CompanyName", "PrimeCrew Software"
+      VALUE "LegalCopyright", "Copyright (C) 2026 PrimeCrew Software"
       VALUE "FileVersion", "0.5.1"
       VALUE "ProductVersion", "0.5.1"
       VALUE "OriginalFilename", "Encode FFS (Codecs).exe"

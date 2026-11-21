@@ -8,8 +8,10 @@ cd "$(dirname "$0")/.."
 # ---- edition identity (codecs edition, branch `codecs`; portable zip only by default)
 APP_NAME="Encode FFS (Codecs)"
 APP_ID="FFmpegEncoderCodecs"                  # Add/Remove Programs key (only if INSTALLER=1)
-APP_DIRNAME="FFmpeg Encoder (Codecs)"        # install folder name
-FILE_STEM="FFmpegEncoder-Codecs"              # zip / setup / marker names (crate bin stays FFmpegEncoder-Codecs)
+APP_DIRNAME="Encode FFS (Codecs)"           # fresh-install folder; upgrades keep the existing InstallLocation
+ARTIFACT_STEM="EncodeFFS-Codecs"             # zip / setup names (no spaces): EncodeFFS-Codecs-v<version>-...
+MARKER="FFmpegEncoder-Codecs.installed"      # keep the old marker so existing installs are still recognised
+FILE_STEM="FFmpegEncoder-Codecs"             # crate bin / portable settings prefix (unchanged)
 DATA_PUBLISHER="PrimeCrew Software"
 DATA_DIR="Encode FFS (Codecs)"              # leaf under %APPDATA%/%LOCALAPPDATA%\$DATA_PUBLISHER
 LEGACY_DATA_DIR="FFmpegEncoder-Codecs"       # pre-rebrand data folder
@@ -47,7 +49,7 @@ rm -f "$OUT_DIR/$OLD_APP_EXE"
 cp "$BIN" "$OUT_DIR/$APP_EXE"
 
 # ---- portable zip (exe + docs; settings are created next to the exe on first start)
-ZIP="$OUT_DIR/$FILE_STEM-$VERSION-win64.zip"
+ZIP="$OUT_DIR/$ARTIFACT_STEM-v$VERSION-win64.zip"
 rm -f "$ZIP"
 python3 - "$ZIP" "$OUT_DIR/$APP_EXE" "$APP_EXE" <<'PY'
 import sys, zipfile
@@ -61,17 +63,17 @@ PY
 
 # ---- installer (off by default for the codecs edition)
 if [ "$INSTALLER" != 1 ]; then
-  ( cd "$OUT_DIR" && sha256sum "$(basename "$ZIP")" > "$FILE_STEM-$VERSION-SHA256SUMS.txt" )
+  ( cd "$OUT_DIR" && sha256sum "$(basename "$ZIP")" > "$ARTIFACT_STEM-v$VERSION-SHA256SUMS.txt" )
   ls -la "$OUT_DIR"
   exit 0
 fi
 command -v makensis >/dev/null || { echo "makensis not found (apt install nsis)" >&2; exit 1; }
-SETUP="$OUT_DIR/$FILE_STEM-$VERSION-setup.exe"
+SETUP="$OUT_DIR/$ARTIFACT_STEM-v$VERSION-setup.exe"
 makensis -V2 -INPUTCHARSET UTF8 \
   -DAPP_NAME="$APP_NAME" -DAPP_ID="$APP_ID" -DAPP_DIRNAME="$APP_DIRNAME" -DAPP_EXE="$APP_EXE" -DOLD_APP_EXE="$OLD_APP_EXE" \
   -DAPP_VERSION="$VERSION" -DVERSION4="$VERSION4" -DPUBLISHER="$PUBLISHER" -DPREV_APP_NAME="$PREV_APP_NAME" -DPREV_BRAND_APP_NAME="$PREV_BRAND_APP_NAME" -DDATA_PUBLISHER="$DATA_PUBLISHER" -DDATA_DIR="$DATA_DIR" -DLEGACY_DATA_DIR="$LEGACY_DATA_DIR" \
-  -DMARKER="$FILE_STEM.installed" -DICON="$PWD/assets/app.ico" -DEXE_PATH="$PWD/$OUT_DIR/$APP_EXE" -DSRC_DIR="$PWD" \
+  -DMARKER="$MARKER" -DICON="$PWD/assets/app.ico" -DEXE_PATH="$PWD/$OUT_DIR/$APP_EXE" -DSRC_DIR="$PWD" \
   -DOUTFILE="$PWD/$SETUP" installer/installer.nsi
 
-( cd "$OUT_DIR" && sha256sum "$(basename "$ZIP")" "$(basename "$SETUP")" > "$FILE_STEM-$VERSION-SHA256SUMS.txt" )
+( cd "$OUT_DIR" && sha256sum "$(basename "$ZIP")" "$(basename "$SETUP")" > "$ARTIFACT_STEM-v$VERSION-SHA256SUMS.txt" )
 ls -la "$OUT_DIR"

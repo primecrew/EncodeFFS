@@ -142,10 +142,12 @@ Detailed implementation notes. The user-facing history is in [CHANGELOG.md](CHAN
   - Tests: `finished::tests` (tracker, quoting, fallback, formatting), `settings::tests::finished_popup_setting_and_old_bold_field`,
     `tests/overwrite_guard.rs` checks `final_output` is the keep-both name.
 - **Installer** (ported from the experimental edition, stable names): `installer/installer.nsi` +
-  `scripts/build-release.sh` → `dist/FFmpegEncoder-<v>-setup.exe` and the portable zip. App id / uninstall key
-  `FFmpegEncoder` (experimental: `FFmpegEncoderExperimental`), folder `FFmpeg Encoder`, per-user default, optional
+  `scripts/build-release.sh` → `dist-codecs/EncodeFFS-Codecs-v<v>-win64.zip` (installer only with `INSTALLER=1`:
+  `EncodeFFS-Codecs-v<v>-setup.exe`). App id / uninstall key `FFmpegEncoderCodecs`, fresh-install folder
+  `Encode FFS (Codecs)` (an upgrade stays in the existing folder, often the older `FFmpeg Encoder (Codecs)` path),
+  per-user default, optional
   per-machine, Start Menu + optional desktop shortcut, keeps settings unless ticked, no FFmpeg bundled.
-  `settings::INSTALLED_MARKER` (`FFmpegEncoder.installed`) → settings in `%APPDATA%\FFmpegEncoder`;
+  `settings::INSTALLED_MARKER` (`FFmpegEncoder-Codecs.installed`) → settings in `%APPDATA%\PrimeCrew Software\Encode FFS (Codecs)`;
   test `settings::tests::portable_vs_installed_settings_location`.
 - **Bold text removed** (Settings › Appearance and View menu): `appearance.bold` is gone; old settings files
   that still have it load fine (ignored, not written back). Fonts: Segoe UI regular only.

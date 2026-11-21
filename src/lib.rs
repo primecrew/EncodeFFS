@@ -26,6 +26,14 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const APP_NAME: &str = "Encode FFS";
 /// Visible publisher / developer name (About box, installer, version info).
 pub const PUBLISHER: &str = "PrimeCrew Software";
+/// Short copyright line for the About box and the Windows version resource.
+pub const COPYRIGHT: &str = "Copyright (C) 2026 PrimeCrew Software";
+
+/// About-box heading, e.g. "Encode FFS (Codecs) v0.5.5-codecs.3 by PrimeCrew Software, (C) 2026".
+pub fn about_heading() -> String {
+    format!("{APP_NAME} ({EDITION}) v{APP_VERSION} by {PUBLISHER}, (C) 2026")
+}
+
 
 // ---- Edition identity (codecs branch). A separate app next to the stable one: own exe name,
 // data folders and portable file names, so it never writes the stable version's settings,

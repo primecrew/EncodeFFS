@@ -2,6 +2,7 @@
 name = "ffmpeg-encoder"
 version = "0.5.5-codecs.3"
 edition = "2021"
+authors = ["PrimeCrew Software"]
 description = "Windows GUI for common FFmpeg encoding jobs"
 license = "GPL-3.0-or-later"
 build = "build.rs"

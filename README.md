@@ -6,7 +6,7 @@ This is the **Codecs** edition (`Encode FFS (Codecs).exe`, version 0.5.5-codecs.
 
 **Requirements:** Windows 10 or 11 (64-bit). You need `ffmpeg.exe` and `ffprobe.exe` — use a copy you already have (for example `C:\ffmpeg\bin`), or let the app download a build for you. No extra runtime. HEVC and AV1 need an FFmpeg build that includes `libx265` and `libsvtav1`.
 
-**Install:** run the installer (`FFmpegEncoder-Codecs-<version>-setup.exe`) or unzip the portable package and run `Encode FFS (Codecs).exe` from any folder (for example `C:\Apps\FFmpegEncoder-Codecs\`). Portable settings stay in `FFmpegEncoder-Codecs.settings.json` next to the exe (the name is not taken from the exe) when that folder is writable; otherwise they go in `%APPDATA%\PrimeCrew Software\Encode FFS (Codecs)`.
+**Install:** run the installer (`EncodeFFS-Codecs-v<version>-setup.exe`) or unzip the portable package and run `Encode FFS (Codecs).exe` from any folder (for example `C:\Apps\EncodeFFS-Codecs\`). Portable settings stay in `FFmpegEncoder-Codecs.settings.json` next to the exe (the name is not taken from the exe) when that folder is writable; otherwise they go in `%APPDATA%\PrimeCrew Software\Encode FFS (Codecs)`.
 
 **Editions** (separate branches and exes; not mixed together):
 
@@ -429,10 +429,10 @@ the exact FFmpeg command. It is kept across restarts in `logs\job-history.log` n
 - Turn it off in File › Settings › When encoding finishes › **Show Encoding Finished popup** (on by default).
 
 ## Portable or installed (0.5.3)
-- **Portable zip** (`FFmpegEncoder-Codecs-<version>-win64.zip`): unzip anywhere and run `Encode FFS (Codecs).exe`; settings stay in `FFmpegEncoder-Codecs.settings.json` next to the exe
+- **Portable zip** (`EncodeFFS-Codecs-v<version>-win64.zip`): unzip anywhere and run `Encode FFS (Codecs).exe`; settings stay in `FFmpegEncoder-Codecs.settings.json` next to the exe
   (or in `%APPDATA%\PrimeCrew Software\Encode FFS (Codecs)` if that folder isn't writable).
-- **Installer** (`FFmpegEncoder-Codecs-<version>-setup.exe`, NSIS, 64-bit):
-  - **Just for me** by default (no administrator rights, `%LOCALAPPDATA%\Programs\FFmpeg Encoder (Codecs)`), or
+- **Installer** (`EncodeFFS-Codecs-v<version>-setup.exe`, NSIS, 64-bit):
+  - **Just for me** by default (no administrator rights, `%LOCALAPPDATA%\Programs\Encode FFS (Codecs)`), or
     **For everyone** (Program Files; asks for permission).
   - A Start Menu shortcut at **PrimeCrew Software\Encode FFS (Codecs)** (the stable app shares that brand folder),
     with a desktop shortcut optional. An upgrade from an older install removes leftover Start Menu shortcuts
@@ -440,7 +440,7 @@ the exact FFmpeg command. It is kept across restarts in `logs\job-history.log` n
     root and on the desktop) so they are not left next to the new one. An Add/Remove Programs entry uses
     display name **Encode FFS (Codecs)** and publisher **PrimeCrew Software**; the install key stays `FFmpegEncoderCodecs` so
     an existing install upgrades in place (same folder). The program file is `Encode FFS (Codecs).exe`; an upgrade removes a leftover `FFmpegEncoder-Codecs.exe` from the install folder and repoints the shortcuts. A newer setup looks up that key (current-user first, then all-users), uses the recorded folder if `Encode FFS (Codecs).exe` or a leftover `FFmpegEncoder-Codecs.exe` is still there, keeps the same just-for-me or for-everyone mode, skips the who/where pages, and shows a banner on the welcome and Ready to Install pages (for example “Updating existing installation: Encode FFS (Codecs) v0.5.5-codecs.2 → v0.5.5-codecs.3”) with a read-only “Installed in:” path. If DisplayVersion is missing, the banner uses v(unknown). A fresh install is titled “New installation” and has the usual folder page, labelled “Install to:”. The last page says “Updated to v<new> in <path>” or “Installed v<new> to <path>”. The same version or an older setup can reinstall the same way. A command-line /D= path is ignored when an existing install is found, so the folder does not change. If the app is running, setup asks you to close it before replacing the file. Settings, presets and leftover portable files are not removed. It installs side by side with the stable edition
-    (different id, folder and data folders). The install folder stays `%LOCALAPPDATA%\Programs\FFmpeg Encoder (Codecs)`.
+    (different id, folder and data folders). A new install goes in `%LOCALAPPDATA%\Programs\Encode FFS (Codecs)`. An upgrade of an existing copy stays in its current folder (often the older `FFmpeg Encoder (Codecs)` folder); the Add/Remove Programs key stays `FFmpegEncoderCodecs`.
     Uninstall removes the Start Menu shortcut and the **PrimeCrew Software** folder if it is then empty.
   - An installed copy keeps its settings in `%APPDATA%\PrimeCrew Software\Encode FFS (Codecs)`. A marker file `FFmpegEncoder-Codecs.installed`
     next to the exe tells the app it was installed. On first run, if that new folder has no settings and a previous
