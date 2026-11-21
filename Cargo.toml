@@ -1,6 +1,6 @@
 [package]
 name = "ffmpeg-encoder"
-version = "0.6.0-rc.6"
+version = "0.6.0-rc.7"
 edition = "2021"
 authors = ["PrimeCrew Software"]
 description = "Windows GUI for common FFmpeg encoding jobs"

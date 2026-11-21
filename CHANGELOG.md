@@ -6,6 +6,8 @@ Create Slideshow is part of this stable build (the old **Slideshow** branch is a
 
 ## Unreleased
 
+## 0.6.0-rc.7
+
 - A first-time install goes in `%LOCALAPPDATA%\Programs\Encode FFS` (or Program Files\Encode FFS when installing for everyone). An upgrade of an existing copy stays in its current folder and still uses the Add/Remove Programs key `FFmpegEncoder`. The portable zip and installer are now named `EncodeFFS-v<version>-win64.zip` and `EncodeFFS-v<version>-setup.exe`. The setup footer is "PrimeCrew Software". The About box shows "Encode FFS v<version> by PrimeCrew Software, (C) 2026", and the same copyright line is at the top of LICENSE (above the official GPL v3 text) and in the exe's file properties.
 
 - The installer welcome and Ready to Install pages show when they are updating an existing copy: a banner "Updating existing installation: Encode FFS v<old> → v<new>" and a read-only "Installed in:" path (the folder cannot be changed). A first-time setup is titled "New installation" and keeps the usual "Install to:" folder page with Browse. The last page says "Updated to v<new> in <path>" or "Installed v<new> to <path>". If the previous version is not recorded, the banner shows v(unknown).
