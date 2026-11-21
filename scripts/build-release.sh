@@ -30,6 +30,11 @@ CARGO_EXE="$FILE_STEM.exe"
 APP_EXE="Encode FFS.exe"
 OLD_APP_EXE="FFmpegEncoder.exe"
 
+case "$OUT_DIR" in
+  /*) ;;
+  *) OUT_DIR="$PWD/$OUT_DIR" ;;
+esac
+
 echo "== $APP_NAME $VERSION ($VERSION4)"
 grep -q "pub const DATA_DIR_NAME: &str = \"$DATA_DIR\"" src/lib.rs || { echo "DATA_DIR differs from src/lib.rs" >&2; exit 1; }
 grep -q "pub const LEGACY_DATA_DIR_NAME: &str = \"$LEGACY_DATA_DIR\"" src/lib.rs || { echo "LEGACY_DATA_DIR differs from src/lib.rs" >&2; exit 1; }
@@ -72,8 +77,8 @@ SETUP="$OUT_DIR/$ARTIFACT_STEM-v$VERSION-setup.exe"
 makensis -V2 -INPUTCHARSET UTF8 \
   -DAPP_NAME="$APP_NAME" -DAPP_ID="$APP_ID" -DAPP_DIRNAME="$APP_DIRNAME" -DAPP_EXE="$APP_EXE" -DOLD_APP_EXE="$OLD_APP_EXE" \
   -DAPP_VERSION="$VERSION" -DVERSION4="$VERSION4" -DPUBLISHER="$PUBLISHER" -DPREV_APP_NAME="$PREV_APP_NAME" -DPREV_BRAND_APP_NAME="$PREV_BRAND_APP_NAME" -DDATA_PUBLISHER="$DATA_PUBLISHER" -DDATA_DIR="$DATA_DIR" -DLEGACY_DATA_DIR="$LEGACY_DATA_DIR" \
-  -DMARKER="$MARKER" -DICON="$PWD/assets/app.ico" -DEXE_PATH="$PWD/$OUT_DIR/$APP_EXE" -DSRC_DIR="$PWD" \
-  -DOUTFILE="$PWD/$SETUP" installer/installer.nsi
+  -DMARKER="$MARKER" -DICON="$PWD/assets/app.ico" -DEXE_PATH="$OUT_DIR/$APP_EXE" -DSRC_DIR="$PWD" \
+  -DOUTFILE="$SETUP" installer/installer.nsi
 
 ( cd "$OUT_DIR" && sha256sum "$(basename "$ZIP")" "$(basename "$SETUP")" > "$ARTIFACT_STEM-v$VERSION-SHA256SUMS.txt" )
 ls -la "$OUT_DIR"
