@@ -4,7 +4,12 @@ User-facing history for **Encode FFS** (stable edition, `master`, `Encode FFS.ex
 
 Create Slideshow is part of this stable build (the old **Slideshow** branch is archived as `archive/slideshow`). The **Codecs** edition (optional HEVC / AV1 video and AC3 audio, H.264 + AAC remaining the default) is now also merged into this stable app. The `codecs` branch is kept for history and is tagged `archive/codecs`. The retired **Experimental UI** branch (`ui-experimental`) remains separate.
 
-## Unreleased
+## 1.1.0-rc.1
+
+- **Crop** on every preset that re-encodes video (Re-encode and the archive presets, Batch re-encode, Join with the Re-encode method, Custom pipeline when video is encoded, Frameserving, Add Watermark). Off by default. Tick **Crop** and enter Top / Right / Bottom / Left in pixels; four preview pictures (20, 40, 60 and 80 % into the video) show the crop outline, with the source size and the result size. With several files, a drop-down picks which file to preview, and every file is checked. An odd value or odd result shows a red warning with a **Round to even** button; a crop that removes the whole picture stops the run; a result that is not a multiple of 8 is only a note. The crop is the first step, before deinterlace and resize.
+- **Add Watermark** preset: add videos (files, a folder or drag and drop), pick an image (PNG, JPG, WebP, BMP, GIF, TIFF — PNG transparency is kept) and place it on the picture from the middle of the video. Drag it to move, drag a corner to resize (shape locked by default, untick "Keep the image's shape" to stretch), set opacity 0–100 %, type X / Y / W / H, or use the corner and center buttons with a margin. The position and size are stored as a share of the picture, so they suit every file. The output is as long as the video; audio is copied by default and all the usual video and audio options are there. Optional crop runs first.
+- **Add watermark** check box (off by default) on the same re-encode presets as Crop, with **Set up watermark…** to open the same placement window. Ticking it the first time opens the window. With Crop on, the watermark is placed on the cropped picture. Join puts the watermark on the joined video.
+- About text is now "A dedicated front end for FFmpeg by Tolwyn" (the old PowerShell-script line is gone). The heading and the GPL v3 line are unchanged.
 
 ## 1.0.0
 

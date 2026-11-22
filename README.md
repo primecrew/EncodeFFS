@@ -1,6 +1,6 @@
 # Encode FFS
 
-**Encode FFS** is a Windows desktop front end for FFmpeg, from **PrimeCrew Software**. Use it for everyday FFmpeg jobs: re-encode or batch-re-encode video, join/stitch clips, remux to MKV, MP4, MOV, WebM or TS, work with audio and subtitles, add chapters, make a video from a still image, run a custom pipeline, feed an AviSynth frameserver script, or **create a slideshow** from still images (H.264/AAC MP4 by default, with optional audio and crossfades). Optional **HEVC / AV1** video and **AC3** audio sit on top of the usual H.264/AAC defaults. Pick a preset, choose files, preview the exact ffmpeg command, and run the job in a queue.
+**Encode FFS** is a Windows desktop front end for FFmpeg, from **PrimeCrew Software**. Use it for everyday FFmpeg jobs: re-encode or batch-re-encode video, join/stitch clips, remux to MKV, MP4, MOV, WebM or TS, work with audio and subtitles, add chapters, crop the picture, add a watermark (its own **Add Watermark** preset, or a check box on the re-encode presets), make a video from a still image, run a custom pipeline, feed an AviSynth frameserver script, or **create a slideshow** from still images (H.264/AAC MP4 by default, with optional audio and crossfades). Optional **HEVC / AV1** video and **AC3** audio sit on top of the usual H.264/AAC defaults. Pick a preset, choose files, preview the exact ffmpeg command, and run the job in a queue.
 
 This is the **stable** edition (`Encode FFS.exe`). Create Slideshow is included as a built-in preset. Optional HEVC, AV1 and AC3 from the former Codecs edition are included too; H.264 + AAC remains the default. The old standalone Slideshow and Codecs editions are not separate apps any more.
 
@@ -314,6 +314,19 @@ Re-encode, Custom pipeline (single file and folder batch) and Batch re-encode ca
 - **Trim**, **chapters** (chapter creator, auto-create when missing, or remove the source's), **container** (same as input, mp4, mkv, mov, m4v, m4a, mka),
   **name suffix**, **faststart**, and free-form **extra input options** (before `-i`) and **extra output options**
   (before the output file; quotes group values with spaces).
+
+## Crop and watermark
+- **Crop** (off by default) is on every preset that re-encodes video: Re-encode (and the archive presets), Batch
+  re-encode, Join (Re-encode method), Custom pipeline (when video is encoded), Frameserving and Add Watermark. Enter
+  Top / Right / Bottom / Left in pixels. Four previews (20, 40, 60, 80 % into the video) show the outline, with source
+  and result size. Odd values warn (with **Round to even**), a crop that removes the whole picture stops the run, and a
+  result that is not a multiple of 8 is only a note. With several files, every file is checked. The crop runs first.
+- **Add watermark** (off by default) sits next to it; **Set up watermark…** opens the placement window: drag to move,
+  corner handles to resize (shape locked unless you untick it), opacity 0–100 %, X / Y / W / H boxes, corner and center
+  buttons with a margin. Position and size are a share of the picture, so one setting suits files of any size. Any
+  image FFmpeg reads works; PNG transparency is kept. With Crop on, the watermark goes on the cropped picture.
+- **Add Watermark** preset: the same placement window on its own screen, for files, a folder or dropped files, with
+  the usual video options and audio copied by default. The output is as long as the video.
 
 ## Create Slideshow
 **Create Slideshow** turns a set of still images into an MP4 (H.264/AAC by default; the same codec pickers as Re-encode are available).

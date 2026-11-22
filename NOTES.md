@@ -5,6 +5,20 @@ The Codecs edition (HEVC/AV1/AC3, hover help, one-click conflict fixes, PC.709 F
 
 Detailed implementation notes. The user-facing history is in [CHANGELOG.md](CHANGELOG.md).
 
+## 1.1.0-rc.1 — Crop and watermark
+
+- `cmd::picture`: `PictureSettings { crop, watermark }` (saved with the preset, all fractions/pixels) resolves per file
+  to `PictureOps` (pixel crop + overlay). Crop is the first filter. Odd rule: Top/Left must be even; Right/Bottom are
+  flagged only when that source side is even (an odd source needs one odd value to end up even).
+- With a watermark the video filter becomes one `-filter_complex`:
+  `[N:v]scale=W:H|-1,format=rgba[,colorchannelmixer=aa=O][wm];[0:v]PRE[base];[base][wm]overlay=x:y:format=auto:eof_action=repeat[,POST][vout]`
+  (PRE = crop, deinterlace; POST = resize, range conversion, fps). The image is the last input (chapter inputs keep
+  their index); no `-loop`, `eof_action=repeat` holds the single frame so the output is as long as the video.
+  Mapping is `-map [vout] -map 0:a? -map 0:s? -map 0:d? -map 0:t?` (a negative `-map -0:v` also drops `[vout]`).
+- Join (re-encode): per-file crop before the scale/pad; the overlay goes after `concat`. Copy method ignores both with a warning.
+- `ffmpeg::framegrab`: one PNG frame through the app's resolved FFmpeg; `ui::picture::Grabber` caches async grabs.
+- Off = unchanged: `tests/h264_unchanged.rs` checks disabled settings holding values; `tests/picture_ffmpeg.rs` runs a real crop + 50 % watermark encode and checks size, length, audio copy and blended pixels.
+
 ## 0.6.0-rc.3 — Visible exe name Encode FFS.exe
 - Official Windows artifacts rename the Cargo bin after the build: `FFmpegEncoder.exe` → `Encode FFS.exe`.
   The crate, repo, zip and setup filenames, `FILE_STEM`, portable settings (`FFmpegEncoder.settings.json`)
