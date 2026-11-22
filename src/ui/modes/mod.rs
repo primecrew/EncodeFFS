@@ -23,6 +23,7 @@ pub mod still;
 pub mod slideshow;
 pub mod subs;
 pub mod tracks;
+pub mod watermark;
 
 /// What a mode can see while drawing / building.
 pub struct Ctx<'a> {
@@ -172,6 +173,7 @@ pub fn all_modes() -> Vec<Box<dyn Mode>> {
         Box::new(subs::SubsMode::default()),
         Box::new(remux::RemuxMode::default()),
         Box::new(join::JoinMode::default()),
+        Box::new(watermark::WatermarkMode::default()),
         Box::new(frameserve::FrameserveMode::default()),
         Box::new(custom::CustomMode::default()),
     ]

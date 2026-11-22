@@ -19,7 +19,7 @@ pub fn run(kind: &str, out: &Path) -> eframe::Result<()> {
     let out = out.to_path_buf();
     let viewport = egui::ViewportBuilder::default()
         .with_title("Encode FFS")
-        .with_inner_size([1100.0, 700.0])
+        .with_inner_size(if matches!(kind.as_str(), "crop" | "crop-warn" | "watermark" | "reencode-wm") { [1100.0, 900.0] } else { [1100.0, 700.0] })
         .with_min_inner_size([800.0, 500.0]);
     let options = eframe::NativeOptions { viewport, centered: true, ..Default::default() };
     eframe::run_native(
@@ -27,7 +27,8 @@ pub fn run(kind: &str, out: &Path) -> eframe::Result<()> {
         options,
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx, &Appearance::default());
-            Ok(Box::new(ShotApp { kind, out, frames: 0, requested: false, saved: false }))
+            let live = Live::new(&kind);
+            Ok(Box::new(ShotApp { kind, out, frames: 0, requested: false, saved: false, live, started: std::time::Instant::now() }))
         }),
     )
 }
@@ -38,6 +39,86 @@ struct ShotApp {
     frames: u32,
     requested: bool,
     saved: bool,
+    live: Option<Live>,
+    started: std::time::Instant,
+}
+
+/// Real widgets fed with real media (FFENC_SHOT_VIDEO / FFENC_SHOT_IMAGE, FFmpeg from PATH),
+/// for the 1.1 crop / watermark screenshots.
+struct Live {
+    settings: ffenc::settings::Settings,
+    ff: Option<ffenc::ffmpeg::locate::FfPaths>,
+    mode: Option<Box<dyn super::modes::Mode>>,
+    pic: ffenc::cmd::picture::PictureSettings,
+    rt: super::picture::PictureRt,
+    srcs: Vec<super::picture::PicSource>,
+}
+
+impl Live {
+    fn new(kind: &str) -> Option<Live> {
+        if !matches!(kind, "crop" | "crop-warn" | "watermark" | "reencode-wm") {
+            return None;
+        }
+        use ffenc::cmd::picture::{CropSettings, PictureSettings, WatermarkSettings};
+        let find = |n: &str| std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).map(|d| d.join(n)).find(|p| p.is_file());
+        let ff = match (find("ffmpeg"), find("ffprobe")) {
+            (Some(ffmpeg), Some(ffprobe)) => Some(ffenc::ffmpeg::locate::FfPaths { bin_dir: ffmpeg.parent().unwrap().to_path_buf(), ffmpeg, ffprobe, source: ffenc::ffmpeg::locate::FfSource::SystemPath }),
+            _ => None,
+        };
+        let video = PathBuf::from(std::env::var("FFENC_SHOT_VIDEO").unwrap_or_default());
+        let image = std::env::var("FFENC_SHOT_IMAGE").unwrap_or_default();
+        let srcs: Vec<super::picture::PicSource> = ff
+            .as_ref()
+            .and_then(|f| ffenc::ffmpeg::probe::probe(&f.ffprobe, &video).ok())
+            .and_then(|i| super::picture::PicSource::from_info(&video, &i))
+            .into_iter()
+            .collect();
+        let crop = match kind {
+            "crop" | "watermark" => CropSettings { enabled: true, top: 140, right: 0, bottom: 140, left: 0 },
+            "crop-warn" => CropSettings { enabled: true, top: 141, right: 0, bottom: 140, left: 0 },
+            _ => CropSettings::default(),
+        };
+        let watermark = WatermarkSettings { enabled: true, image: image.clone(), x: 0.7375, y: 0.785, w: 0.25, opacity_pct: 70, ..Default::default() };
+        let pic = PictureSettings { crop, watermark };
+        let settings = ffenc::settings::Settings::default();
+        let mode = (kind == "reencode-wm").then(|| {
+            let mut m = super::modes::new_mode("reencode").unwrap();
+            let v = serde_json::json!({
+                "input": video.to_string_lossy(),
+                "out_dir": video.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+                "picture": { "watermark": { "enabled": true, "image": image, "opacity_pct": 70 } }
+            });
+            m.load(&v, &settings);
+            m
+        });
+        Some(Live { settings, ff, mode, pic, rt: Default::default(), srcs })
+    }
+
+    fn show(&mut self, ctx: &egui::Context, kind: &str) {
+        let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
+        let cx = super::modes::Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: None, encoders: None, ff: self.ff.as_ref(), managed_encoders: None, switch_to_managed: None };
+        egui::CentralPanel::default().show(ctx, |ui| {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).vertical_scroll_offset(if kind == "reencode-wm" { 0.0 } else { 0.0 }).show(ui, |ui| match kind {
+                "crop" | "crop-warn" => {
+                    ui.heading("Re-encode video");
+                    super::picture::crop_section(ui, &cx, "shot", &mut self.pic.crop, &self.srcs, &mut self.rt);
+                }
+                "watermark" => {
+                    ui.heading("Add Watermark");
+                    common::section(ui, "2. Watermark");
+                    super::picture::watermark_editor(ui, &cx, "shot", &mut self.pic, &self.srcs, &mut self.rt);
+                }
+                "reencode-wm" => {
+                    if let Some(m) = self.mode.as_mut() {
+                        ui.heading(m.title());
+                        m.ui(ui, &cx);
+                    }
+                }
+                _ => {}
+            });
+        });
+        ctx.request_repaint();
+    }
 }
 
 fn sample_items() -> Vec<Finished> {
@@ -262,6 +343,10 @@ impl eframe::App for ShotApp {
             }
             "crf-popup" => show_crf(ctx),
             "about" => show_about(ctx),
+            k if self.live.is_some() => {
+                let k = k.to_string();
+                self.live.as_mut().unwrap().show(ctx, &k);
+            }
             other => {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.label(format!("unknown screenshot kind: {other}"));
@@ -269,7 +354,8 @@ impl eframe::App for ShotApp {
             }
         }
         self.frames += 1;
-        if self.frames >= 4 && !self.requested {
+        let wait = if self.live.is_some() { std::time::Duration::from_secs(5) } else { std::time::Duration::ZERO };
+        if self.frames >= 4 && self.started.elapsed() >= wait && !self.requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
             self.requested = true;
         }
@@ -281,7 +367,7 @@ impl eframe::App for ShotApp {
                 }
             }
         }
-        if self.frames > 120 && !self.saved {
+        if self.frames > 120 && self.started.elapsed() > wait + std::time::Duration::from_secs(10) && !self.saved {
             // fallback: give up
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }

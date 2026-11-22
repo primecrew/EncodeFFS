@@ -85,6 +85,7 @@ pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
     ("builtin-subs", "subs", "Copy subtitle tracks", "Copy subtitle tracks from one file into another."),
     ("builtin-remux", "remux", "Remux", "Stream-copy into MKV, MP4, MOV, WebM or TS (never overwrites)."),
     ("builtin-join", "join", "Join / stitch files", "Concatenate several videos into one – lossless when they match, or re-encoded – with a chapter per file."),
+    ("builtin-watermark", "watermark", "Add Watermark", "Put an image (logo, name) on one or more videos: drag it into place, resize it, set the opacity. Full video and audio choices; audio is copied as-is by default."),
     ("builtin-frameserve", "frameserve", "Frameserver (AviSynth script)", "Encode straight from your editor through DebugMode FrameServer: pick the signpost .avi, the app writes the AviSynth script (ConvertToYUV420 by default) and encodes it with H.264 + AAC by default (or HEVC / AV1 and AC3 / copy)."),
     ("builtin-custom", "custom", "Custom pipeline", "Build your own: video / audio / subtitle actions, trim, chapters, container, extra ffmpeg args."),
     ("builtin-addchapters", "custom", "Add chapters (no re-encode)", "Copy every stream and add chapters (every 5 min, your own list, or imported) – no quality loss."),
