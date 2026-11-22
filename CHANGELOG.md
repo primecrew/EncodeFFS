@@ -6,6 +6,10 @@ Create Slideshow is part of this stable build (the old **Slideshow** branch is a
 
 ## Unreleased
 
+## 1.0.0
+
+- First stable release.
+
 - LICENSE is the official GPL v3 text again (so GitHub can detect it). A short COPYRIGHT file next to it has the PrimeCrew Software copyright line; the portable zip and installer include that file.
 
 ## 0.6.0-rc.7

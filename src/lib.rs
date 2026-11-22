@@ -29,7 +29,7 @@ pub const PUBLISHER: &str = "PrimeCrew Software";
 /// Short copyright line for the About box and the Windows version resource.
 pub const COPYRIGHT: &str = "Copyright (C) 2026 PrimeCrew Software";
 
-/// About-box heading, e.g. "Encode FFS v0.6.0-rc.7 by PrimeCrew Software, (C) 2026".
+/// About-box heading, e.g. "Encode FFS v1.0.0 by PrimeCrew Software, (C) 2026".
 pub fn about_heading() -> String {
     format!("{APP_NAME} v{APP_VERSION} by {PUBLISHER}, (C) 2026")
 }
@@ -65,7 +65,7 @@ pub fn legacy_data_dir_rel() -> std::path::PathBuf {
     std::path::PathBuf::from(LEGACY_DATA_DIR_NAME)
 }
 
-/// Window title, e.g. "Encode FFS 0.6.0-rc.7".
+/// Window title, e.g. "Encode FFS 1.0.0".
 pub fn full_title() -> String {
     format!("{APP_NAME} {APP_VERSION}")
 }
