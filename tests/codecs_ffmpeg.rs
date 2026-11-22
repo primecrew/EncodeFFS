@@ -31,6 +31,7 @@ fn params(input: &Path, output: &Path, video: VideoEncode, audio: AudioEncode) -
         faststart: true,
         subtitle_streams: vec![],
         has_attachments: false,
+        picture: Default::default(),
     }
 }
 

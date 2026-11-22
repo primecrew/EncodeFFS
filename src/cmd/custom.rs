@@ -127,6 +127,10 @@ pub struct CustomParams {
     pub audio_count: usize,
     pub subtitle_streams: Vec<StreamRef>,
     pub has_attachments: bool,
+    /// Crop / watermark for this file (only with video encode).
+    pub picture: super::picture::PictureOps,
+    /// Warnings found while resolving crop / watermark for this file.
+    pub picture_warnings: Vec<String>,
 }
 
 impl CustomParams {
@@ -262,27 +266,52 @@ pub fn build(pr: &CustomParams) -> Result<BuiltCommand, String> {
     } else {
         None
     };
+    let encodes_video = video_out && pr.video == VideoAction::X264;
+    let overlay = pr.picture.overlay.as_ref().filter(|_| encodes_video);
+    if let Some(ov) = overlay {
+        a.extend(super::picture::image_input_args(ov));
+    }
+    let wm_input = next;
     if trimmed {
         if let Some(od) = pr.output_duration() {
             a.push_all(["-t".to_string(), fmt_num(od)]);
         }
     }
+    if encodes_video {
+        warnings.extend(pr.picture_warnings.iter().cloned());
+    }
 
     // ---- video ("V" = real video, not cover art)
     if video_out {
-        a.push_all(["-map", "0:V?"]);
+        if overlay.is_some() {
+            a.push_all(["-map", "[vout]"]);
+        } else {
+            a.push_all(["-map", "0:V?"]);
+        }
         match pr.video {
             VideoAction::X264 => {
-                let filter = join_filters(&[
-                    pr.deinterlace.then(|| DEINTERLACE_FILTER.to_string()),
-                    pr.resize.map(|(w, h)| format!("scale={w}:{h}")),
-                    pr.range_convert.then(|| super::codecs::range_filter(&pr.video_encode)),
-                ]);
+                let crop = pr.picture.crop_filter();
+                let deint = pr.deinterlace.then(|| DEINTERLACE_FILTER.to_string());
+                let resize = pr.resize.map(|(w, h)| format!("scale={w}:{h}"));
+                let range = pr.range_convert.then(|| super::codecs::range_filter(&pr.video_encode));
                 warnings.extend(super::codecs::check_video(&pr.video_encode, &pr.output)?);
-                a.extend(super::codecs::video_args(&pr.video_encode, filter.as_deref(), pr.range_convert, &pr.output));
+                if let Some(ov) = overlay {
+                    let pre = join_filters(&[crop, deint]);
+                    let post = with_output_fps(join_filters(&[resize, range]).as_deref(), &pr.video_encode);
+                    a.push("-filter_complex".into());
+                    a.push(super::picture::overlay_graph("0:V:0", pre.as_deref(), ov, wm_input, post.as_deref(), "vout"));
+                    let v = VideoEncode { output_fps: String::new(), ..pr.video_encode.clone() };
+                    a.extend(super::codecs::video_args(&v, None, pr.range_convert, &pr.output));
+                } else {
+                    let filter = join_filters(&[crop, deint, resize, range]);
+                    a.extend(super::codecs::video_args(&pr.video_encode, filter.as_deref(), pr.range_convert, &pr.output));
+                }
             }
             _ => {
                 a.push_all(["-c:v", "copy"]);
+                if pr.picture.crop.is_some() || pr.picture.overlay.is_some() {
+                    warnings.push("Video is copied: crop / watermark are ignored.".into());
+                }
                 if pr.deinterlace || pr.resize.is_some() || pr.range_convert {
                     warnings.push("Video is copied: deinterlace / resize / range conversion are ignored.".into());
                 }
@@ -437,6 +466,11 @@ pub struct CustomOptions {
     pub faststart: bool,
     pub input_args: String,
     pub output_args: String,
+    /// Crop / watermark (1.1), used when video is encoded. Off by default.
+    pub picture: super::picture::PictureSettings,
+    /// Watermark image size in pixels, when known (not saved).
+    #[serde(skip)]
+    pub wm_image_size: Option<(u32, u32)>,
 }
 
 impl Default for CustomOptions {
@@ -466,6 +500,8 @@ impl Default for CustomOptions {
             faststart: false,
             input_args: String::new(),
             output_args: String::new(),
+            picture: Default::default(),
+            wm_image_size: None,
         }
     }
 }
@@ -498,8 +534,15 @@ impl CustomOptions {
     pub fn params(&self, input: &Path, output: &Path, info: &MediaInfo, audio_file: Option<PathBuf>, sub_file: Option<PathBuf>) -> Result<CustomParams, String> {
         let video = info.video();
         let duration_s = info.duration().or_else(|| info.any_duration());
+        let size = video.and_then(|v| Some((v.width?, v.height?)));
+        let (picture, picture_warnings) = if self.video == VideoAction::X264 && self.picture.any() {
+            let (w, h) = size.ok_or("Crop / watermark need the input's video size (ffprobe found none).")?;
+            self.picture.resolve(w, h, self.wm_image_size)?
+        } else {
+            Default::default()
+        };
         let resize = if self.resize && self.video == VideoAction::X264 {
-            match video.and_then(|v| Some((v.width?, v.height?))) {
+            match size.map(|(w, h)| picture.cropped_size(w, h)) {
                 Some((w, h)) => Some(resize_dims(w, h, self.resize_height)?),
                 None => return Err("Resize needs the input's video dimensions (ffprobe found none).".into()),
             }
@@ -541,6 +584,8 @@ impl CustomOptions {
             audio_count: info.audio_count(),
             subtitle_streams: info.subtitle_refs(),
             has_attachments: info.has_attachments(),
+            picture,
+            picture_warnings,
         })
     }
 }
@@ -727,5 +772,23 @@ mod tests {
         assert!(!off.faststart);
         let on: CustomOptions = serde_json::from_value(serde_json::json!({ "faststart": true })).unwrap();
         assert!(on.faststart);
+    }
+
+    #[test]
+    fn crop_and_watermark_with_video_encode() {
+        use crate::cmd::picture::{CropPx, OverlayPx};
+        let mut pr = base();
+        pr.video = VideoAction::X264;
+        pr.audio = AudioAction::Copy;
+        let off = build(&pr).unwrap();
+        pr.picture.crop = Some(CropPx { w: 1900, h: 1060, x: 10, y: 10 });
+        let j = build(&pr).unwrap().args.join(" ");
+        assert!(j.contains("-map 0:V? -c:v libx264 -crf 22 -preset slow -pix_fmt yuv420p -vf crop=1900:1060:10:10"), "{j}");
+        pr.picture.overlay = Some(OverlayPx { image: "/w.png".into(), w: 100, h: Some(50), x: 5, y: 6, opacity: 1.0 });
+        let j = build(&pr).unwrap().args.join(" ");
+        assert!(j.starts_with("-y -i /in/a b.mkv -i /w.png -map [vout] -filter_complex [1:v]scale=100:50,format=rgba[wm];[0:V:0]crop=1900:1060:10:10[base];[base][wm]overlay=x=5:y=6:format=auto:eof_action=repeat[vout] -c:v libx264"), "{j}");
+        assert!(j.contains("-map 0:a? -c:a copy"), "{j}");
+        pr.picture = Default::default();
+        assert_eq!(build(&pr).unwrap(), off);
     }
 }

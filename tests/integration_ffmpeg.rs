@@ -162,6 +162,7 @@ fn all_modes_end_to_end() {
         faststart: false,
         subtitle_streams: vec![],
         has_attachments: false,
+        picture: Default::default(),
     };
     let st = run(&env, vec![spec("m1 full", reencode::build(&pr).unwrap(), &pr.output, Some(out_dur))], None);
     assert_ok(&st, "mode 1 full");
@@ -200,6 +201,7 @@ fn all_modes_end_to_end() {
             faststart: true,
             subtitle_streams: vec![],
             has_attachments: false,
+            picture: Default::default(),
         };
         let st = run(&env, vec![spec(name, reencode::build(&pr).unwrap(), &pr.output, Some(5.0))], None);
         assert_ok(&st, name);
@@ -224,6 +226,7 @@ fn all_modes_end_to_end() {
         faststart: false,
         subtitle_streams: vec![],
         has_attachments: false,
+        picture: Default::default(),
     };
     assert_ok(&run(&env, vec![spec("deint", reencode::build(&pr).unwrap(), &pr.output, Some(il.duration_s))], None), "deinterlace");
     let j = probe_json(&env, &pr.output);
@@ -314,7 +317,7 @@ fn all_modes_end_to_end() {
             let p = bdir.join(f);
             let i = info(&env, &p);
             let v = i.video_summary().unwrap();
-            batch::BatchInput { path: p, duration_s: v.duration_s, field_order: v.field_order, subtitle_streams: i.subtitle_refs(), has_attachments: i.has_attachments(), has_chapters: i.has_chapters() }
+            batch::BatchInput { path: p, duration_s: v.duration_s, field_order: v.field_order, subtitle_streams: i.subtitle_refs(), has_attachments: i.has_attachments(), has_chapters: i.has_chapters(), width: v.width, height: v.height }
         })
         .collect();
     let bs = batch::BatchSettings {
@@ -428,6 +431,7 @@ fn all_modes_end_to_end() {
         faststart: false,
         subtitle_streams: vec![],
         has_attachments: false,
+        picture: Default::default(),
     };
     let ids = env.queue.enqueue(&env.ffmpeg, vec![spec("cancel", reencode::build(&long).unwrap(), &long.output, Some(6.0))], None, true);
     std::thread::sleep(Duration::from_millis(1500));

@@ -164,6 +164,10 @@ pub struct JoinParams {
     pub list_file: PathBuf,
     /// Temp chapter file (when `chapters_per_file`).
     pub chapter_file: PathBuf,
+    /// Crop (each file) and watermark (the joined picture), re-encode method only.
+    pub picture: super::picture::PictureSettings,
+    /// Watermark image size in pixels, when known.
+    pub wm_image_size: Option<(u32, u32)>,
 }
 
 impl JoinParams {
@@ -224,6 +228,11 @@ pub fn build(pr: &JoinParams) -> Result<BuiltCommand, String> {
         a.push(p(&pr.chapter_file));
         cmd.side_files.push((pr.chapter_file.clone(), chapters::ffmetadata(&list)));
     }
+    let picture_on = pr.method == JoinMethod::Reencode && pr.picture.any();
+    let wm_input = chapter_input + pr.chapters_per_file as usize;
+    if pr.method == JoinMethod::Copy && pr.picture.any() {
+        cmd.warnings.push("Lossless join copies the video, so crop / watermark are ignored. Choose the re-encode method to use them.".into());
+    }
     match pr.method {
         JoinMethod::Copy => {
             a.push_all(["-map", "0:v?", "-map", "0:a?"]);
@@ -241,7 +250,24 @@ pub fn build(pr: &JoinParams) -> Result<BuiltCommand, String> {
             let has_a = pr.inputs.iter().any(|f| f.audio.is_some());
             let fv = pr.inputs.iter().find_map(|f| f.video.clone());
             let fa = pr.inputs.iter().find_map(|f| f.audio.clone());
-            let (w, h) = fv.as_ref().map(|v| (v.width / 2 * 2, v.height / 2 * 2)).unwrap_or((0, 0));
+            // crop each file first (one crop for all, checked against each file's size)
+            let mut crops = vec![];
+            for f in &pr.inputs {
+                let c = match (&f.video, picture_on) {
+                    (Some(v), true) => pr.picture.crop.resolve(v.width, v.height).map_err(|e| format!("{}: {e}", f.name()))?,
+                    _ => None,
+                };
+                if let (Some(v), true) = (&f.video, picture_on && pr.picture.crop.active()) {
+                    for i in pr.picture.crop.check(v.width, v.height) {
+                        if i.severity == super::picture::Severity::Warn {
+                            cmd.warnings.push(format!("{}: Crop: {}", f.name(), i.text));
+                        }
+                    }
+                }
+                crops.push(c);
+            }
+            let first_size = pr.inputs.iter().zip(&crops).find_map(|(f, c)| f.video.as_ref().map(|v| c.map(|c| (c.w, c.h)).unwrap_or((v.width, v.height))));
+            let (w, h) = first_size.map(|(w, h)| (w / 2 * 2, h / 2 * 2)).unwrap_or((0, 0));
             if has_v && (w == 0 || h == 0) {
                 return Err("The first video has no usable resolution.".into());
             }
@@ -261,7 +287,8 @@ pub fn build(pr: &JoinParams) -> Result<BuiltCommand, String> {
                 let d = fmt_num(f.duration_s);
                 if has_v {
                     if f.video.is_some() {
-                        g.push(format!("[{i}:v:0]scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format={vfmt}[v{i}]"));
+                        let crop = crops[i].map(|c| format!("{},", c.filter())).unwrap_or_default();
+                        g.push(format!("[{i}:v:0]{crop}scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format={vfmt}[v{i}]"));
                     } else {
                         g.push(format!("color=c=black:s={w}x{h}:r={fps}:d={d},format={vfmt},setsar=1[v{i}]"));
                     }
@@ -285,10 +312,22 @@ pub fn build(pr: &JoinParams) -> Result<BuiltCommand, String> {
                     amap = "[aout]".into();
                 }
             }
+            let mut vmap = "[vc]";
+            if has_v && picture_on {
+                let (ov, wm_warn) = pr.picture.watermark.resolve(w, h, pr.wm_image_size)?;
+                cmd.warnings.extend(wm_warn);
+                if let Some(ov) = ov {
+                    // the image is the last input; the watermark goes on the joined picture
+                    a.extend(super::picture::image_input_args(&ov));
+                    g.push(ov.image_chain(wm_input));
+                    g.push(format!("[vc][wm]{},format={vfmt}[vout]", ov.overlay_filter()));
+                    vmap = "[vout]";
+                }
+            }
             a.push("-filter_complex".into());
             a.push(g.join(";"));
             if has_v {
-                a.push_all(["-map", "[vc]"]);
+                a.push_all(["-map", vmap]);
                 cmd.warnings.extend(super::codecs::check_video(&pr.video, &pr.output)?);
                 // the output rate is already in the graph above
                 a.extend(super::codecs::video_args(&VideoEncode { output_fps: String::new(), ..pr.video.clone() }, None, false, &pr.output));
@@ -345,6 +384,8 @@ mod tests {
             faststart: true,
             list_file: PathBuf::from("/tmp/ffenc_concat_1.txt"),
             chapter_file: PathBuf::from("/tmp/ffenc_chapters_1.ffmeta"),
+            picture: Default::default(),
+            wm_image_size: None,
         }
     }
 
@@ -441,5 +482,34 @@ anullsrc=r=44100:cl=stereo,atrim=duration=4[a1];\
         // Copy path stays silent about extra tracks (it keeps them)
         let cpy = build(&params(pr.inputs.clone(), JoinMethod::Copy, false, "/o/j.mkv")).unwrap();
         assert!(cpy.warnings.iter().all(|x| !x.contains("Only the first track")), "{:?}", cpy.warnings);
+    }
+
+    #[test]
+    fn reencode_join_crops_each_file_and_watermarks_the_result() {
+        use crate::cmd::picture::{CropSettings, PictureSettings, WatermarkSettings};
+        let mut pr = params(vec![inp("a.mp4", 10.0, 1920, 30.0, 48000, true), inp("b.mp4", 5.0, 1280, 30.0, 48000, true)], JoinMethod::Reencode, true, "/o/j.mp4");
+        let off = build(&pr).unwrap();
+        pr.picture = PictureSettings {
+            crop: CropSettings { enabled: true, top: 140, bottom: 140, ..Default::default() },
+            watermark: WatermarkSettings { enabled: true, image: "/l.png".into(), x: 0.0, y: 0.0, w: 0.1, opacity_pct: 40, ..Default::default() },
+        };
+        let b = build(&pr).unwrap();
+        let s = b.args.join(" ");
+        assert!(s.contains("-i /v/b.mp4 -f ffmetadata -i /tmp/ffenc_chapters_1.ffmeta -i /l.png -filter_complex"), "{s}");
+        let g = &b.args[b.args.iter().position(|x| x == "-filter_complex").unwrap() + 1];
+        assert!(g.starts_with("[0:v:0]crop=1920:800:0:140,scale=1920:800:"), "{g}");
+        assert!(g.contains("[1:v:0]crop=1280:440:0:140,scale=1920:800:"), "{g}");
+        assert!(g.contains(";[3:v]scale=192:-1,format=rgba,colorchannelmixer=aa=0.4[wm];[vc][wm]overlay=x=0:y=0:format=auto:eof_action=repeat,format=yuv420p[vout]"), "{g}");
+        assert!(s.contains("-map [vout]"), "{s}");
+        assert!(s.contains("-map_chapters 2"), "{s}");
+        // off = unchanged; lossless join ignores it with a warning
+        pr.picture = PictureSettings::default();
+        assert_eq!(build(&pr).unwrap(), off);
+        let mut c = params(vec![inp("a.mp4", 10.0, 1920, 30.0, 48000, true), inp("b.mp4", 5.0, 1920, 30.0, 48000, true)], JoinMethod::Copy, false, "/o/j.mp4");
+        let off = build(&c).unwrap();
+        c.picture.watermark = WatermarkSettings { enabled: true, image: "/l.png".into(), ..Default::default() };
+        let b = build(&c).unwrap();
+        assert_eq!(b.args, off.args);
+        assert!(b.warnings.iter().any(|w| w.contains("ignored")));
     }
 }

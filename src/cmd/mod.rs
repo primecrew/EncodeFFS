@@ -23,6 +23,7 @@ pub mod join;       // join / stitch files
 pub mod tracks;     // audio & subtitles tool (0.4)
 pub mod frameserve; // AviSynth frameserving (0.5)
 pub mod slideshow;  // Create Slideshow (slideshow branch)
+pub mod picture;    // crop + watermark (1.1)
 
 use std::path::PathBuf;
 

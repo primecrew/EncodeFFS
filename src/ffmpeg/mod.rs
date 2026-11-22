@@ -7,6 +7,7 @@ pub mod progress;
 pub mod runner;
 pub mod version;
 pub mod avisynth;
+pub mod framegrab;
 
 use std::path::Path;
 use std::process::Command;

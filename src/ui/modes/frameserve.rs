@@ -73,6 +73,8 @@ struct State {
     auto_chapters_if_none: bool,
     #[serde(default = "ffenc::cmd::common::missing_faststart")]
     faststart: bool,
+    /// Crop / watermark (1.1).
+    picture: ffenc::cmd::picture::PictureSettings,
     /// Session-only: “Keep my setting” hides a warning until the combo changes.
     #[serde(skip)]
     dismissed: Vec<ConflictKind>,
@@ -113,6 +115,7 @@ impl State {
             manual: vec![],
             auto_chapters_if_none: false,
             faststart: false,
+            picture: Default::default(),
             dismissed: vec![],
         }
     }
@@ -232,6 +235,7 @@ pub struct FrameserveMode {
     show_help: bool,
     show_color_help: bool,
     saved_note: Option<String>,
+    pic: crate::ui::picture::PictureRt,
 }
 
 fn ffmpeg_of(ffprobe: &Path) -> PathBuf {
@@ -449,6 +453,19 @@ impl Mode for FrameserveMode {
         }
         ui.separator();
 
+        // crop / watermark previews: the signpost (a picture appears once the editor is serving)
+        let pic_srcs: Vec<crate::ui::picture::PicSource> = self
+            .tested
+            .as_ref()
+            .and_then(|(_, r)| r.as_ref().ok())
+            .or(self.probe.info())
+            .and_then(|i| crate::ui::picture::PicSource::from_info(Path::new(self.st.signpost.trim()), i))
+            .map(|mut p| {
+                p.duration = self.duration().unwrap_or(p.duration);
+                p
+            })
+            .into_iter()
+            .collect();
         let st = &mut self.st;
         if st.out_name.trim().is_empty() && !st.signpost.trim().is_empty() {
             st.regen_name();
@@ -680,7 +697,13 @@ impl Mode for FrameserveMode {
             crate::ui::common::row_label_tip(ui, "Encoder format", "The pixel format written by the encoder. It follows the colour format and the 10-bit option (not only 4:2:0), so a 10-bit script is not forced back to 8-bit.");
             hint(ui, format!("{} (follows the colour format and the 10-bit option)", st.color.pix_fmt(conflicts::script_bit_depth(&st.video))));
             ui.end_row();
+            crate::ui::picture::watermark_row(ui, &mut st.picture.watermark, &mut self.pic);
         });
+        crate::ui::picture::crop_section(ui, cx, "fs", &mut st.picture.crop, &pic_srcs, &mut self.pic);
+        crate::ui::picture::watermark_window(cx, "fs", &mut st.picture, &pic_srcs, &mut self.pic);
+        if st.picture.any() && pic_srcs.is_empty() {
+            hint(ui, "Crop and watermark need the picture size: use “Test the script”.");
+        }
         if st.audio_mode != AudioMode::None {
             section(ui, "Audio");
             egui::Grid::new("fs_a").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
@@ -752,15 +775,20 @@ impl Mode for FrameserveMode {
             return Err("The output must be a different file from the signpost and the script.".into());
         }
         let dur = self.duration();
+        let (w, h) = match (&self.tested, self.probe.info()) {
+            (Some((_, Ok(i))), _) | (_, Some(i)) => i.video().map(|v| (v.width.unwrap_or(0), v.height.unwrap_or(0))).unwrap_or((0, 0)),
+            _ => (0, 0),
+        };
+        if st.picture.any() && (w == 0 || h == 0) {
+            return Err("Crop / watermark need the picture size: use “Test the script” first.".into());
+        }
+        let (picture, pic_warnings) = crate::ui::picture::resolve_for(&st.picture, &self.pic, w, h)?;
         let resize = if st.resize {
-            let (w, h) = match (&self.tested, self.probe.info()) {
-                (Some((_, Ok(i))), _) | (_, Some(i)) => i.video().map(|v| (v.width.unwrap_or(0), v.height.unwrap_or(0))).unwrap_or((0, 0)),
-                _ => (0, 0),
-            };
             if w == 0 || h == 0 {
                 return Err("Resize needs the picture size: use “Test the script” first.".into());
             }
-            Some(resize_dims(w, h, st.resize_height)?)
+            let (cw, ch) = picture.cropped_size(w, h);
+            Some(resize_dims(cw, ch, st.resize_height)?)
         } else {
             None
         };
@@ -794,8 +822,10 @@ impl Mode for FrameserveMode {
             range_convert,
             chapters,
             faststart: st.faststart,
+            picture,
         };
         let mut cmd = fs::build(&pr)?;
+        cmd.warnings.extend(pic_warnings);
         for msg in fs::script_warnings(&st.options()) {
             if !cmd.warnings.iter().any(|w| w == &msg) {
                 cmd.warnings.push(msg);
@@ -842,6 +872,7 @@ impl Mode for FrameserveMode {
         self.st.migrate_bit_depth();
         self.probe = ProbeSlot::default();
         self.tested = None;
+        self.pic = Default::default();
     }
 
     fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {
@@ -947,6 +978,7 @@ mod tests {
             range_convert: m.st.range_convert,
             chapters: None,
             faststart: m.st.faststart,
+            picture: Default::default(),
         };
         let b = fs::build(&pr).unwrap();
         assert_eq!(

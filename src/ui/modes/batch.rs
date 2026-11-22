@@ -34,6 +34,7 @@ pub struct BatchMode {
     rows: Vec<Row>,
     scanned_dir: String,
     scan: Option<Bg<Result<Vec<(PathBuf, Result<MediaInfo, String>)>, String>>>,
+    pic: crate::ui::picture::PictureRt,
 }
 
 /// Supported video files in a folder, sorted by name (script: Get-VideoFilesInFolder).
@@ -174,6 +175,7 @@ impl Mode for BatchMode {
 
         let without = self.rows.iter().filter(|r| r.include && r.info.as_ref().map(|i| !i.has_chapters()).unwrap_or(false)).count();
         let probed_range = self.probed_color_range();
+        let pic_srcs: Vec<crate::ui::picture::PicSource> = self.rows.iter().filter(|r| r.include).filter_map(|r| r.info.as_ref().ok().and_then(|i| crate::ui::picture::PicSource::from_info(&r.path, i))).collect();
         let bs = &mut self.st.bs;
         let any_interlaced = self.rows.iter().any(|r| r.include && r.info.as_ref().ok().and_then(|i| i.video_summary().ok()).map(|v| v.interlaced).unwrap_or(false));
         section(ui, "Shared settings");
@@ -221,7 +223,10 @@ impl Mode for BatchMode {
                     }
                 });
                 ui.end_row();
+                crate::ui::picture::watermark_row(ui, &mut bs.picture.watermark, &mut self.pic);
             });
+            crate::ui::picture::crop_section(ui, cx, "m7", &mut bs.picture.crop, &pic_srcs, &mut self.pic);
+            crate::ui::picture::watermark_window(cx, "m7", &mut bs.picture, &pic_srcs, &mut self.pic);
         } else if any_interlaced {
             warn(ui, "Interlaced video detected, but video passthrough is selected, so no deinterlacing will be applied.");
         }
@@ -263,9 +268,14 @@ impl Mode for BatchMode {
                 subtitle_streams: info.subtitle_refs(),
                 has_attachments: info.has_attachments(),
                 has_chapters: info.has_chapters(),
+                width: v.width,
+                height: v.height,
             });
         }
-        let jobs = batch::plan(&inputs, &self.st.bs, &out_dir)?;
+        crate::ui::picture::check_image(&self.st.bs.picture)?;
+        let mut bs = self.st.bs.clone();
+        bs.wm_image_size = self.pic.image_size(&bs.picture.watermark);
+        let jobs = batch::plan(&inputs, &bs, &out_dir)?;
         let n = jobs.len();
         let specs = jobs
             .into_iter()
@@ -299,6 +309,7 @@ impl Mode for BatchMode {
         self.st = restore(v, State { bs, ..Default::default() });
         self.rows.clear();
         self.scanned_dir.clear();
+        self.pic = Default::default();
     }
 
     fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {

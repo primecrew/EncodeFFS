@@ -368,6 +368,8 @@ pub struct EncodeParams {
     pub range_convert: bool,
     pub chapters: Option<(PathBuf, String)>,
     pub faststart: bool,
+    /// Crop / watermark (default = none, the historic command).
+    pub picture: super::picture::PictureOps,
 }
 
 /// `-y -i script.avs [-f ffmetadata -i CH] -map 0:v:0 [-map 0:a:0?] <x264> [<aac>] [-map_chapters 1] [faststart] OUT`
@@ -390,7 +392,14 @@ pub fn build(pr: &EncodeParams) -> Result<BuiltCommand, String> {
         a.push(p(path));
         side_files.push((path.clone(), text.clone()));
     }
-    a.push_all(["-map", "0:v:0"]);
+    let overlay = pr.picture.overlay.as_ref();
+    let wm_input = 1 + pr.chapters.is_some() as usize;
+    if let Some(ov) = overlay {
+        a.extend(super::picture::image_input_args(ov));
+        a.push_all(["-map", "[vout]"]);
+    } else {
+        a.push_all(["-map", "0:v:0"]);
+    }
     if pr.has_audio {
         a.push_all(["-map", "0:a:0?"]);
     }
@@ -400,7 +409,7 @@ pub fn build(pr: &EncodeParams) -> Result<BuiltCommand, String> {
     warnings.extend(encode_choice_warnings(pr));
     let squeezed = pr.range_convert;
     let squeeze = squeezed.then(|| super::codecs::range_filter_pix(&pr.video, &pr.pix_fmt));
-    let filter = join_filters(&[resize, squeeze]);
+    let crop = pr.picture.crop_filter();
     // Historic Rec709 path: bt709_tags + video_args colour tags (tv / bt709), no extra filter.
     // PC matrices get their own tags (pc, or tv after a squeeze). Rec601 / Rec2020 are tagged
     // to match the script; they never take the historic bt709_tags shortcut.
@@ -419,7 +428,15 @@ pub fn build(pr: &EncodeParams) -> Result<BuiltCommand, String> {
     // That override is applied after video_args so a 10-bit codec is not later forced back to 8-bit,
     // and an 8-bit script is not later forced up to 10-bit.
     warnings.extend(super::codecs::check_video(&pr.video, &pr.output)?);
-    let mut x = super::codecs::video_args(&pr.video, filter.as_deref(), classic_bt709, &pr.output);
+    let mut x = if let Some(ov) = overlay {
+        let post = with_output_fps(join_filters(&[resize, squeeze]).as_deref(), &pr.video);
+        a.push("-filter_complex".into());
+        a.push(super::picture::overlay_graph("0:v:0", crop.as_deref(), ov, wm_input, post.as_deref(), "vout"));
+        super::codecs::video_args(&VideoEncode { output_fps: String::new(), ..pr.video.clone() }, None, classic_bt709, &pr.output)
+    } else {
+        let filter = join_filters(&[crop, resize, squeeze]);
+        super::codecs::video_args(&pr.video, filter.as_deref(), classic_bt709, &pr.output)
+    };
     if !extra_tags.is_empty() {
         x.extend(extra_tags);
     }
@@ -586,6 +603,7 @@ mod tests {
             range_convert: false,
             chapters: None,
             faststart: true,
+            picture: Default::default(),
         }
     }
 
@@ -783,5 +801,23 @@ mod tests {
         assert!(explain_error("x.avs: Unknown error occurred").contains("AviSynth+"));
         assert!(explain_error("Unknown input format: 'avisynth'").contains("demuxer"));
         assert!(explain_error("Script error: There is no function named 'ConvertToYUV420'.").contains("AviSynth+"));
+    }
+
+    #[test]
+    fn crop_and_watermark_in_frameserve() {
+        use crate::cmd::picture::{CropPx, OverlayPx};
+        let mut pr = enc();
+        let off = build(&pr).unwrap();
+        pr.picture.crop = Some(CropPx { w: 1280, h: 536, x: 0, y: 92 });
+        let j = build(&pr).unwrap().args.join(" ");
+        assert!(j.contains("-vf crop=1280:536:0:92"), "{j}");
+        pr.picture.overlay = Some(OverlayPx { image: "/w.png".into(), w: 100, h: None, x: 5, y: 6, opacity: 0.25 });
+        let b = build(&pr).unwrap();
+        let j = b.args.join(" ");
+        assert!(j.contains("-i /w.png -map [vout]"), "{j}");
+        assert!(j.contains("-filter_complex [2:v]scale=100:-1,format=rgba,colorchannelmixer=aa=0.25[wm];[0:v:0]crop=1280:536:0:92[base];[base][wm]overlay=x=5:y=6:format=auto:eof_action=repeat[vout]") || j.contains("-filter_complex [1:v]scale=100:-1"), "{j}");
+        assert!(!j.contains("-vf"), "{j}");
+        pr.picture = Default::default();
+        assert_eq!(build(&pr).unwrap(), off);
     }
 }

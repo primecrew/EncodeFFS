@@ -45,6 +45,8 @@ struct State {
     video: VideoEncode,
     audio: AudioEncode,
     faststart: bool,
+    /// Crop / watermark (1.1).
+    picture: ffenc::cmd::picture::PictureSettings,
 }
 
 fn sfx() -> String {
@@ -88,6 +90,7 @@ impl State {
             video: default_video(s),
             audio: default_audio(s),
             faststart: false,
+            picture: Default::default(),
         }
     }
 }
@@ -103,6 +106,7 @@ pub struct ReencodeMode {
     st: State,
     probe: ProbeSlot,
     creator: ChapterCreator,
+    pic: crate::ui::picture::PictureRt,
 }
 
 impl Mode for ReencodeMode {
@@ -127,6 +131,7 @@ impl Mode for ReencodeMode {
             }
         }
         let summary = self.probe.info().and_then(|i| i.video_summary().ok());
+        let pic_srcs: Vec<crate::ui::picture::PicSource> = self.probe.info().and_then(|i| crate::ui::picture::PicSource::from_info(std::path::Path::new(st.input.trim()), i)).into_iter().collect();
         egui::Grid::new("m1").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             if path_row(ui, "Input video", &mut st.input, Pick::File("Video", VIDEO_EXTS), &cx.settings.input_folder) {
                 st.regen_name();
@@ -216,9 +221,14 @@ impl Mode for ReencodeMode {
                     }
                 });
                 ui.end_row();
+                crate::ui::picture::watermark_row(ui, &mut st.picture.watermark, &mut self.pic);
             });
+            crate::ui::picture::crop_section(ui, cx, "m1", &mut st.picture.crop, &pic_srcs, &mut self.pic);
         } else if summary.as_ref().map(|s| s.interlaced).unwrap_or(false) {
             warn(ui, "Input is interlaced, but video passthrough is selected, so no deinterlacing will be applied.");
+        }
+        if st.passthrough.encodes_video() {
+            crate::ui::picture::watermark_window(cx, "m1", &mut st.picture, &pic_srcs, &mut self.pic);
         }
 
         if st.passthrough.encodes_audio() {
@@ -263,7 +273,9 @@ impl Mode for ReencodeMode {
         }
         let duration = if st.override_duration { st.duration } else { v.duration_s };
         let out_dur = duration - st.trim_start - st.trim_end;
-        let resize = if st.resize && st.passthrough.encodes_video() { Some(resize_dims(v.width, v.height, st.resize_height)?) } else { None };
+        let (picture, pic_warnings) = if st.passthrough.encodes_video() { crate::ui::picture::resolve_for(&st.picture, &self.pic, v.width, v.height)? } else { Default::default() };
+        let (cw, ch) = picture.cropped_size(v.width, v.height);
+        let resize = if st.resize && st.passthrough.encodes_video() { Some(resize_dims(cw, ch, st.resize_height)?) } else { None };
         let mode = if st.chapter_mode == ChapterMode::Off && st.auto_chapters_if_none && !info.has_chapters() { ChapterMode::Auto } else { st.chapter_mode };
         if mode != ChapterMode::Off && out_dur <= 0.0 {
             return Err("Trim duration exceeds video duration".into());
@@ -288,8 +300,10 @@ impl Mode for ReencodeMode {
             faststart: st.faststart,
             subtitle_streams: info.subtitle_refs(),
             has_attachments: info.has_attachments(),
+            picture,
         };
         let mut cmd = reencode::build(&pr)?;
+        cmd.warnings.extend(pic_warnings);
         if mode != st.chapter_mode {
             cmd.warnings.push("The input has no chapters: creating them automatically.".into());
         }
@@ -325,6 +339,7 @@ impl Mode for ReencodeMode {
     fn load(&mut self, v: &serde_json::Value, s: &Settings) {
         self.st = restore(v, State::from_settings(s));
         self.probe = ProbeSlot::default();
+        self.pic = Default::default();
     }
 
     fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {

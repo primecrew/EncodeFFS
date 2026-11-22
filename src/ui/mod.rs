@@ -10,6 +10,7 @@ pub mod layout;
 pub mod managed_loc;
 pub mod modes;
 pub mod option_tips;
+pub mod picture;
 pub mod presets;
 pub mod source;
 pub mod updater;

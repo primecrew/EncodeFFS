@@ -98,6 +98,8 @@ fn join_three_clips_both_methods() {
             faststart: true,
             list_file: join::temp_list_path(),
             chapter_file: ffenc::cmd::chapters::temp_chapter_path(),
+            picture: Default::default(),
+            wm_image_size: None,
         };
         let cmd = join::build(&pr).unwrap();
         if method == JoinMethod::Reencode {

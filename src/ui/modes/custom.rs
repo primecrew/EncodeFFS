@@ -48,6 +48,7 @@ pub struct CustomMode {
     rows: Vec<Row>,
     scanned: String,
     scan: Option<Bg<Result<Vec<(PathBuf, Result<MediaInfo, String>)>, String>>>,
+    pic: crate::ui::picture::PictureRt,
 }
 
 fn input_exts() -> Vec<&'static str> {
@@ -87,7 +88,9 @@ impl CustomMode {
     }
 
     fn job(&self, input: &Path, info: &MediaInfo, output: PathBuf, audio_file: Option<PathBuf>, sub_file: Option<PathBuf>) -> Result<JobSpec, String> {
-        let pr = self.st.o.params(input, &output, info, audio_file, sub_file)?;
+        let mut o = self.st.o.clone();
+        o.wm_image_size = self.pic.image_size(&o.picture.watermark);
+        let pr = o.params(input, &output, info, audio_file, sub_file)?;
         let cmd = custom::build(&pr)?;
         let dur = pr.output_duration();
         Ok(JobSpec::new(format!("Custom: {}", input.file_name().unwrap_or_default().to_string_lossy()), cmd, output.clone(), log_path_for(&output), dur))
@@ -122,6 +125,11 @@ impl Mode for CustomMode {
         if !batch {
             self.probe.update(cx.egui, cx.ffprobe, &self.st.input);
         }
+        let pic_srcs: Vec<crate::ui::picture::PicSource> = if batch {
+            self.rows.iter().filter(|r| r.include).filter_map(|r| r.info.as_ref().ok().and_then(|i| crate::ui::picture::PicSource::from_info(&r.path, i))).collect()
+        } else {
+            self.probe.info().and_then(|i| crate::ui::picture::PicSource::from_info(Path::new(self.st.input.trim()), i)).into_iter().collect()
+        };
         let mut rescan = false;
         let st = &mut self.st;
         section(ui, "Input & output");
@@ -239,8 +247,13 @@ impl Mode for CustomMode {
                 crate::ui::common::row_label_tip(ui, "Deinterlace", option_tips::DEINTERLACE);
                 ui.checkbox(&mut o.deinterlace, "bwdif double-rate, only when ffprobe reports interlaced video");
                 ui.end_row();
+                crate::ui::picture::watermark_row(ui, &mut o.picture.watermark, &mut self.pic);
             }
         });
+        if o.video == VideoAction::X264 {
+            crate::ui::picture::crop_section(ui, cx, "cu", &mut o.picture.crop, &pic_srcs, &mut self.pic);
+            crate::ui::picture::watermark_window(cx, "cu", &mut o.picture, &pic_srcs, &mut self.pic);
+        }
 
         section(ui, "Audio");
         egui::Grid::new("cu_a").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
@@ -367,6 +380,9 @@ impl Mode for CustomMode {
         if st.out_dir.trim().is_empty() {
             return Err("Choose an output folder.".into());
         }
+        if st.o.video == VideoAction::X264 {
+            crate::ui::picture::check_image(&st.o.picture)?;
+        }
         if !st.o.batch {
             let input = check_input(&st.input, &input_exts(), "input file")?;
             let info = self.probe.require("Input file")?;
@@ -489,6 +505,7 @@ impl Mode for CustomMode {
         self.rows.clear();
         self.scanned.clear();
         self.scan = None;
+        self.pic = Default::default();
     }
 
     fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {

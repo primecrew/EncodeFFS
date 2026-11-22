@@ -86,6 +86,7 @@ fn thirty_to_five_keeps_duration_and_audio() {
             faststart: true,
             subtitle_streams: vec![],
             has_attachments: false,
+            picture: Default::default(),
         };
         let cmd = reencode::build(&pr).unwrap();
         assert_eq!(cmd.args.iter().any(|a| a.contains("fps=")), !fps.is_empty());

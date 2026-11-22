@@ -18,6 +18,9 @@ pub struct BatchInput {
     pub subtitle_streams: Vec<StreamRef>,
     pub has_attachments: bool,
     pub has_chapters: bool,
+    /// Picture size (needed for crop / watermark; 0 = unknown).
+    pub width: u32,
+    pub height: u32,
 }
 
 impl BatchInput {
@@ -44,6 +47,11 @@ pub struct BatchSettings {
     /// Generate chapters every `chapter_interval_min` for files that have none.
     pub auto_chapters_if_none: bool,
     pub chapter_interval_min: f64,
+    /// Crop / watermark (1.1). Off by default.
+    pub picture: super::picture::PictureSettings,
+    /// Watermark image size in pixels, when known (not saved).
+    #[serde(skip)]
+    pub wm_image_size: Option<(u32, u32)>,
 }
 impl Default for BatchSettings {
     fn default() -> Self {
@@ -60,6 +68,8 @@ impl Default for BatchSettings {
             faststart: false,
             auto_chapters_if_none: false,
             chapter_interval_min: 5.0,
+            picture: Default::default(),
+            wm_image_size: None,
         }
     }
 }
@@ -97,6 +107,11 @@ pub fn plan(inputs: &[BatchInput], s: &BatchSettings, out_dir: &Path) -> Result<
         } else {
             None
         };
+        let (picture, pic_warnings) = if s.passthrough.encodes_video() && s.picture.any() {
+            s.picture.resolve(inp.width, inp.height, s.wm_image_size).map_err(|e| format!("{}: {e}", inp.path.display()))?
+        } else {
+            Default::default()
+        };
         let pr = ReencodeParams {
             input: inp.path.clone(),
             output: output.clone(),
@@ -113,8 +128,11 @@ pub fn plan(inputs: &[BatchInput], s: &BatchSettings, out_dir: &Path) -> Result<
             faststart: s.faststart,
             subtitle_streams: inp.subtitle_streams.clone(),
             has_attachments: inp.has_attachments,
+            picture,
         };
-        let cmd = reencode::build(&pr).map_err(|e| format!("{}: {}", inp.path.display(), e))?;
+        let mut cmd = reencode::build(&pr).map_err(|e| format!("{}: {}", inp.path.display(), e))?;
+        let name = inp.path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        cmd.warnings.extend(pic_warnings.into_iter().map(|w| format!("{name}: {w}")));
         jobs.push(BatchJob {
             input: inp.path.clone(),
             log_file: out_dir.join(format!("ffmpeg_error_{}.log", safe_name(&stem(&inp.path)))),
@@ -190,5 +208,27 @@ mod tests {
         let s = BatchSettings { deinterlace: false, ..Default::default() };
         let jobs = plan(&inputs(), &s, Path::new("/out")).unwrap();
         assert!(!jobs[1].cmd.args.iter().any(|a| a.contains("bwdif")));
+    }
+
+    #[test]
+    fn crop_is_resolved_per_file_size() {
+        let mut s = BatchSettings::default();
+        s.picture.crop = crate::cmd::picture::CropSettings { enabled: true, top: 140, bottom: 140, ..Default::default() };
+        let inputs = vec![
+            BatchInput { path: "/in/a.mkv".into(), duration_s: 60.0, width: 1920, height: 1080, ..Default::default() },
+            BatchInput { path: "/in/b.mkv".into(), duration_s: 60.0, width: 1280, height: 720, ..Default::default() },
+        ];
+        let jobs = plan(&inputs, &s, Path::new("/out")).unwrap();
+        assert!(jobs[0].cmd.args.contains(&"crop=1920:800:0:140".to_string()));
+        assert!(jobs[1].cmd.args.contains(&"crop=1280:440:0:140".to_string()));
+        // a file the crop would wipe out is an error naming the file
+        let small = vec![BatchInput { path: "/in/tiny.mkv".into(), duration_s: 60.0, width: 320, height: 240, ..Default::default() }];
+        let e = plan(&small, &s, Path::new("/out")).unwrap_err();
+        assert!(e.contains("tiny.mkv") && e.contains("whole height"), "{e}");
+        // off = old command
+        let off = plan(&inputs, &BatchSettings::default(), Path::new("/out")).unwrap();
+        let mut s2 = BatchSettings::default();
+        s2.picture.crop.top = 140; // values kept but box unticked
+        assert_eq!(plan(&inputs, &s2, Path::new("/out")).unwrap(), off);
     }
 }

@@ -47,6 +47,7 @@ fn enc(script_path: PathBuf, text: String, output: PathBuf) -> EncodeParams {
         range_convert: false,
         chapters: None,
         faststart: true,
+        picture: Default::default(),
     }
 }
 

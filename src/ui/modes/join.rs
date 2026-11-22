@@ -33,6 +33,8 @@ struct State {
     faststart: bool,
     video: VideoEncode,
     audio: AudioEncode,
+    /// Crop (each file) / watermark (re-encode join only, 1.1).
+    picture: ffenc::cmd::picture::PictureSettings,
 }
 
 impl Default for State {
@@ -49,6 +51,7 @@ impl Default for State {
             faststart: false,
             video: VideoEncode::default(),
             audio: AudioEncode::default(),
+            picture: Default::default(),
         }
     }
 }
@@ -62,6 +65,7 @@ enum Probe {
 pub struct JoinMode {
     st: State,
     probes: HashMap<PathBuf, Probe>,
+    pic: crate::ui::picture::PictureRt,
 }
 
 /// Move `v[from]` so it ends up just before the item currently at `before`
@@ -330,7 +334,19 @@ impl Mode for JoinMode {
                 warn(ui, "Some files have more than one audio track. Only the first track of each file will be in the joined file.");
             }
             section(ui, &format!("Video ({})", self.st.video.codec.encoder()));
-            egui::Grid::new("joinv").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| crate::ui::codecs_ui::video_codec_ui(ui, "join", &mut self.st.video, None, &cx.ff_status()));
+            let pic_srcs: Vec<crate::ui::picture::PicSource> = ready
+                .iter()
+                .filter_map(|f| f.video.as_ref().map(|v| crate::ui::picture::PicSource { path: f.path.clone(), width: v.width, height: v.height, duration: f.duration_s }))
+                .collect();
+            egui::Grid::new("joinv").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                crate::ui::codecs_ui::video_codec_ui(ui, "join", &mut self.st.video, None, &cx.ff_status());
+                crate::ui::picture::watermark_row(ui, &mut self.st.picture.watermark, &mut self.pic);
+            });
+            if self.st.picture.watermark.enabled {
+                hint(ui, "The watermark is placed on the joined picture (the first file's size, after cropping).");
+            }
+            crate::ui::picture::crop_section(ui, cx, "join", &mut self.st.picture.crop, &pic_srcs, &mut self.pic);
+            crate::ui::picture::watermark_window(cx, "join", &mut self.st.picture, &pic_srcs[..pic_srcs.len().min(1)], &mut self.pic);
             section(ui, "Audio");
             egui::Grid::new("joina").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| crate::ui::codecs_ui::audio_codec_ui(ui, "joina", &mut self.st.audio, false, &cx.ff_status()));
         }
@@ -391,7 +407,12 @@ impl Mode for JoinMode {
             faststart: self.st.faststart,
             list_file: join::temp_list_path(),
             chapter_file: ffenc::cmd::chapters::temp_chapter_path(),
+            picture: if self.st.method == JoinMethod::Reencode { self.st.picture.clone() } else { Default::default() },
+            wm_image_size: self.pic.image_size(&self.st.picture.watermark),
         };
+        if self.st.method == JoinMethod::Reencode {
+            crate::ui::picture::check_image(&self.st.picture)?;
+        }
         let cmd = join::build(&pr)?;
         Ok(Plan {
             jobs: vec![JobSpec::new(format!("Join {} files -> {name}", pr.inputs.len()), cmd, output.clone(), log_path_for(&output), Some(pr.output_duration()))],
@@ -411,6 +432,7 @@ impl Mode for JoinMode {
     fn load(&mut self, v: &serde_json::Value, s: &Settings) {
         self.st = restore(v, State { out_dir: s.output_folder.clone(), video: default_video(s), audio: default_audio(s), ..Default::default() });
         self.probes.clear();
+        self.pic = Default::default();
     }
 
     fn conflict_warnings(&self) -> Vec<ffenc::cmd::conflicts::Conflict> {

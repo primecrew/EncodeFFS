@@ -26,6 +26,7 @@ fn re(out: &str) -> ReencodeParams {
         faststart: false,
         subtitle_streams: vec![],
         has_attachments: false,
+        picture: Default::default(),
     }
 }
 
@@ -72,6 +73,8 @@ fn cases() -> Vec<(&'static str, String)> {
         faststart: true,
         list_file: "/tmp/l.txt".into(),
         chapter_file: "/tmp/c.ffmeta".into(),
+        picture: Default::default(),
+        wm_image_size: None,
     };
     v.push(("join_reencode", j(&join::build(&jp).unwrap().args)));
     v
@@ -89,3 +92,26 @@ fn h264_commands_are_unchanged() {
 }
 
 const GOLDEN: &str = include_str!("h264_golden.txt");
+
+/// 1.1: crop / watermark switched off (even with values filled in) build the golden commands.
+#[test]
+fn crop_and_watermark_off_keep_the_golden_commands() {
+    use ffenc::cmd::picture::{CropSettings, PictureSettings, WatermarkSettings};
+    let off = PictureSettings {
+        crop: CropSettings { enabled: false, top: 141, right: 3, bottom: 140, left: 9 },
+        watermark: WatermarkSettings { enabled: false, image: "/img/logo.png".into(), ..Default::default() },
+    };
+    let want: Vec<&str> = GOLDEN.lines().filter(|l| l.starts_with("batch_default: ")).collect();
+    let inputs = vec![
+        BatchInput { path: "/in/x.mkv".into(), duration_s: 50.0, field_order: Some("tt".into()), width: 1920, height: 1080, ..Default::default() },
+        BatchInput { path: "/in/y z.mp4".into(), duration_s: 60.0, width: 1280, height: 720, ..Default::default() },
+    ];
+    let s = BatchSettings { picture: off.clone(), ..Default::default() };
+    let got: Vec<String> = batch::plan(&inputs, &s, Path::new("/out")).unwrap().into_iter().map(|j| format!("batch_default: {}", j.cmd.args.join(" | "))).collect();
+    assert_eq!(got, want);
+    // the single-file re-encode with the resolved (empty) ops
+    let mut p = re("/out/a.mkv");
+    p.picture = off.resolve(1920, 1080, None).unwrap().0;
+    let line = format!("reencode_default_mkv: {}", reencode::build(&p).unwrap().args.join(" | "));
+    assert!(GOLDEN.lines().any(|l| l == line), "{line}");
+}
