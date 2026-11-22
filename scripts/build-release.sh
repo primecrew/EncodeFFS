@@ -64,6 +64,7 @@ with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as f:
     f.write("README.md", "README.md")
     f.write("NOTES.md", "NOTES.md")
     f.write("LICENSE", "LICENSE")
+    f.write("COPYRIGHT", "COPYRIGHT")
 PY
 
 # ---- installer (off by default for the codecs edition)

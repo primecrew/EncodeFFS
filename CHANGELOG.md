@@ -6,6 +6,8 @@ This edition is a separate app next to the stable build, with its own exe and da
 
 ## Unreleased
 
+- LICENSE is the official GPL v3 text again (so GitHub can detect it). A short COPYRIGHT file next to it has the PrimeCrew Software copyright line; the portable zip and installer include that file.
+
 - A first-time install goes in `%LOCALAPPDATA%\Programs\Encode FFS (Codecs)` (or Program Files\Encode FFS (Codecs) when installing for everyone). An upgrade of an existing copy stays in its current folder and still uses the Add/Remove Programs key `FFmpegEncoderCodecs`. The portable zip and installer are now named `EncodeFFS-Codecs-v<version>-win64.zip` and `EncodeFFS-Codecs-v<version>-setup.exe`. The setup footer is "PrimeCrew Software". The About box shows "Encode FFS (Codecs) v<version> by PrimeCrew Software, (C) 2026", and the same copyright line is at the top of LICENSE (above the official GPL v3 text) and in the exe's file properties.
 
 - The installer welcome and Ready to Install pages show when they are updating an existing copy: a banner "Updating existing installation: Encode FFS (Codecs) v<old> → v<new>" and a read-only "Installed in:" path (the folder cannot be changed). A first-time setup is titled "New installation" and keeps the usual "Install to:" folder page with Browse. The last page says "Updated to v<new> in <path>" or "Installed v<new> to <path>". If the previous version is not recorded, the banner shows v(unknown).
