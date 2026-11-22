@@ -29,6 +29,9 @@ pub const PUBLISHER: &str = "PrimeCrew Software";
 /// Short copyright line for the About box and the Windows version resource.
 pub const COPYRIGHT: &str = "Copyright (C) 2026 PrimeCrew Software";
 
+/// About-box line under the heading (1.1).
+pub const ABOUT_TAGLINE: &str = "A dedicated front end for FFmpeg by Tolwyn";
+
 /// About-box heading, e.g. "Encode FFS v1.0.0 by PrimeCrew Software, (C) 2026".
 pub fn about_heading() -> String {
     format!("{APP_NAME} v{APP_VERSION} by {PUBLISHER}, (C) 2026")

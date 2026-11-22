@@ -1638,8 +1638,7 @@ if ui.button("About").clicked() {
             let mut open = true;
             common::fit(egui::Window::new("About").open(&mut open).collapsible(false).resizable(true).default_width(560.0), ctx, true).remember("about", true).show(ctx, |ui| {
                 ui.heading(ffenc::about_heading());
-                ui.label("A front end for FFmpeg.");
-                ui.label("GUI port of the FFmpeg processing PowerShell script v22.0.");
+                ui.label(ffenc::ABOUT_TAGLINE);
                 ui.label(format!("Build: {} {}", std::env::consts::OS, std::env::consts::ARCH));
                 ui.label("Licensed under GPL v3");
                 ui.separator();

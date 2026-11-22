@@ -224,8 +224,7 @@ fn show_about(ctx: &egui::Context) {
     .show(ctx, |ui| {
         ui.set_min_width(520.0);
         ui.heading(ffenc::about_heading());
-        ui.label("A front end for FFmpeg.");
-        ui.label("GUI port of the FFmpeg processing PowerShell script v22.0.");
+        ui.label(ffenc::ABOUT_TAGLINE);
         ui.label(format!("Build: {} {}", std::env::consts::OS, std::env::consts::ARCH));
         ui.label("Licensed under GPL v3");
     });
