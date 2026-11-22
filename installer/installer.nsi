@@ -470,6 +470,7 @@ Section "${APP_NAME} (required)" SecApp
   File "/oname=README.md" "${SRC_DIR}\README.md"
   File "/oname=NOTES.md" "${SRC_DIR}\NOTES.md"
   File "/oname=LICENSE" "${SRC_DIR}\LICENSE"
+  File "/oname=COPYRIGHT" "${SRC_DIR}\COPYRIGHT"
   ; tells the app it is installed: settings go to %APPDATA%, not next to the exe
   FileOpen $0 "$INSTDIR\${MARKER}" w
   FileWrite $0 "Installed by setup. Settings and presets are kept in %APPDATA%\${DATA_PUBLISHER}\${DATA_DIR}.$\r$\n"
@@ -613,6 +614,7 @@ Section "un.${APP_NAME}" UnSecApp
   Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\NOTES.md"
   Delete "$INSTDIR\LICENSE"
+  Delete "$INSTDIR\COPYRIGHT"
   Delete "$INSTDIR\${MARKER}"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR" ; only if empty: files you put there (e.g. splash.png) stay

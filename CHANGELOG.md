@@ -6,6 +6,8 @@ Create Slideshow is part of this stable build (the old **Slideshow** branch is a
 
 ## Unreleased
 
+- LICENSE is the official GPL v3 text again (so GitHub can detect it). A short COPYRIGHT file next to it has the PrimeCrew Software copyright line; the portable zip and installer include that file.
+
 ## 0.6.0-rc.7
 
 - A first-time install goes in `%LOCALAPPDATA%\Programs\Encode FFS` (or Program Files\Encode FFS when installing for everyone). An upgrade of an existing copy stays in its current folder and still uses the Add/Remove Programs key `FFmpegEncoder`. The portable zip and installer are now named `EncodeFFS-v<version>-win64.zip` and `EncodeFFS-v<version>-setup.exe`. The setup footer is "PrimeCrew Software". The About box shows "Encode FFS v<version> by PrimeCrew Software, (C) 2026", and the same copyright line is at the top of LICENSE (above the official GPL v3 text) and in the exe's file properties.
