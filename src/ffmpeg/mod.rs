@@ -8,6 +8,7 @@ pub mod runner;
 pub mod version;
 pub mod avisynth;
 pub mod framegrab;
+pub mod hwdetect;
 
 use std::path::Path;
 use std::process::Command;

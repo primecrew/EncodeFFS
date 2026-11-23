@@ -374,6 +374,9 @@ pub struct Settings {
     pub audio_codec: AudioCodec,
     /// AC3 default bitrate (kbps).
     pub ac3_bitrate_k: u32,
+    /// GPU encoding (1.1): "Use my GPU" (off by default) and the test results per FFmpeg.
+    #[serde(deserialize_with = "lenient_default")]
+    pub hw: crate::cmd::hwenc::HwSettings,
     /// Legacy (0.1.x): last-used values per mode; migrated into presets on first start of 0.2.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, serde_json::Value>,
@@ -423,6 +426,7 @@ impl Default for Settings {
             film_grain_denoise: false,
             audio_codec: AudioCodec::Aac,
             ac3_bitrate_k: 448,
+            hw: Default::default(),
             modes: BTreeMap::new(),
             last_mode: String::new(),
         }
@@ -923,6 +927,22 @@ mod tests {
         assert_eq!(trimmed.recent_folders, ["A", "B"]);
         let none = Settings::from_json(r#"{"recent_folder_limit": 0, "recent_folders": ["A"]}"#).unwrap();
         assert!(none.recent_folders.is_empty());
+    }
+
+    #[test]
+    fn gpu_encoding_setting_is_off_for_old_files_and_round_trips() {
+        let old = Settings::from_json(r#"{"crf": 20}"#).unwrap();
+        assert!(!old.hw.use_gpu && old.hw.detect.is_empty() && !old.hw.nudge_done);
+        assert!(!Settings::default().hw.use_gpu, "off by default");
+        // a damaged "hw" value falls back to the defaults instead of losing the whole file
+        let bad = Settings::from_json(r#"{"crf": 21, "hw": {"use_gpu": "yes"}}"#).unwrap();
+        assert_eq!(bad.crf, 21);
+        assert!(!bad.hw.use_gpu);
+        let mut s = Settings::default();
+        s.hw.use_gpu = true;
+        s.hw.nudge_done = true;
+        let back = Settings::from_json(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(back.hw, s.hw);
     }
 
     #[test]
