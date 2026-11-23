@@ -444,6 +444,49 @@ pub fn download_prompt(short: &str) -> String {
     format!("Your FFmpeg doesn't support {short}. Download the current FFmpeg build?")
 }
 
+/// Added to a codec's name in the picker when the FFmpeg in use doesn't have its encoder.
+/// The codec stays selectable; the app's own copy can do the encode instead.
+pub const NOT_IN_YOUR_FFMPEG: &str = " (not in your FFmpeg)";
+
+/// Picker label for a video codec. `enc` = the in-use FFmpeg's encoders (None = not known yet).
+pub fn video_choice_label(c: VideoCodec, enc: Option<&Encoders>) -> String {
+    if enc.is_some_and(|e| !e.video(c)) {
+        format!("{}{NOT_IN_YOUR_FFMPEG}", c.label())
+    } else {
+        c.label().to_string()
+    }
+}
+
+/// Picker label for an audio codec (only AC3 can be missing).
+pub fn audio_choice_label(c: AudioCodec, enc: Option<&Encoders>) -> String {
+    if enc.is_some_and(|e| !e.audio(c)) {
+        format!("{}{NOT_IN_YOUR_FFMPEG}", c.label())
+    } else {
+        c.label().to_string()
+    }
+}
+
+/// Every video codec, always selectable, with its picker label.
+pub fn video_choices(enc: Option<&Encoders>) -> Vec<(VideoCodec, String)> {
+    VideoCodec::ALL.iter().map(|&c| (c, video_choice_label(c, enc))).collect()
+}
+
+/// Button under the picker when the chosen codec needs the app's own copy and it isn't downloaded.
+pub fn use_own_copy_button(short: &str) -> String {
+    format!("Use the app's own FFmpeg for {short}")
+}
+
+/// Short warning that replaces the “Using:” line when the chosen codec is not in the user's FFmpeg,
+/// and whether to offer [`use_own_copy_button`] (only when the app's copy must be downloaded first).
+/// None = show the normal “Using:” line (or, for Unavailable, the existing missing-encoder warning).
+pub fn missing_codec_line(rt: &EncoderRuntime) -> Option<(String, bool)> {
+    match rt {
+        EncoderRuntime::UseManaged { short } => Some((format!("Your FFmpeg doesn't have {short}. This encode uses the app's own FFmpeg."), false)),
+        EncoderRuntime::NeedDownload { short } => Some((format!("Your FFmpeg doesn't have {short}."), true)),
+        EncoderRuntime::Current | EncoderRuntime::Unavailable { .. } => None,
+    }
+}
+
 /// Note on the form when this encode will use the app-managed copy.
 pub fn use_managed_note(short: &str) -> String {
     format!("Your FFmpeg doesn't have {short}. This encode will use the app-managed FFmpeg. Your FFmpeg is left as it is.")
@@ -556,6 +599,62 @@ pub fn encoder_runtime(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn missing_codecs_stay_selectable_with_a_label() {
+        let none = Encoders::default();
+        let all = Encoders { libx265: true, libsvtav1: true, ac3: true };
+        // unknown encoders (not probed yet): plain labels
+        for (c, l) in video_choices(None) {
+            assert_eq!(l, c.label());
+        }
+        // all three are always offered, missing ones are marked, H.264 never is
+        let ch = video_choices(Some(&none));
+        assert_eq!(ch.iter().map(|(c, _)| *c).collect::<Vec<_>>(), VideoCodec::ALL.to_vec());
+        assert_eq!(ch[0].1, VideoCodec::H264.label());
+        assert_eq!(ch[1].1, "HEVC / H.265 (libx265) (not in your FFmpeg)");
+        assert_eq!(ch[2].1, "AV1 (SVT-AV1) (not in your FFmpeg)");
+        let only_hevc = Encoders { libx265: true, ..Default::default() };
+        assert_eq!(video_choice_label(VideoCodec::Hevc, Some(&only_hevc)), VideoCodec::Hevc.label());
+        assert!(video_choice_label(VideoCodec::Av1, Some(&only_hevc)).ends_with(NOT_IN_YOUR_FFMPEG));
+        for (c, l) in video_choices(Some(&all)) {
+            assert_eq!(l, c.label());
+        }
+        // audio: only AC3 can be missing
+        assert_eq!(audio_choice_label(AudioCodec::Aac, Some(&none)), AudioCodec::Aac.label());
+        assert_eq!(audio_choice_label(AudioCodec::Copy, Some(&none)), AudioCodec::Copy.label());
+        assert!(audio_choice_label(AudioCodec::Ac3, Some(&none)).ends_with(NOT_IN_YOUR_FFMPEG));
+        assert_eq!(audio_choice_label(AudioCodec::Ac3, Some(&all)), AudioCodec::Ac3.label());
+    }
+
+    #[test]
+    fn missing_codec_line_and_button() {
+        assert_eq!(missing_codec_line(&EncoderRuntime::Current), None);
+        assert_eq!(missing_codec_line(&EncoderRuntime::Unavailable { short: "AV1" }), None);
+        let (t, b) = missing_codec_line(&EncoderRuntime::NeedDownload { short: "AV1" }).unwrap();
+        assert_eq!(t, "Your FFmpeg doesn't have AV1.");
+        assert!(b);
+        let (t, b) = missing_codec_line(&EncoderRuntime::UseManaged { short: "HEVC" }).unwrap();
+        assert!(t.contains("app's own FFmpeg"), "{t}");
+        assert!(!b);
+        assert_eq!(use_own_copy_button("AV1"), "Use the app's own FFmpeg for AV1");
+    }
+
+    #[test]
+    fn choosing_a_missing_codec_picks_the_existing_fallback() {
+        // the user's own folder (not the app-managed copy) without AV1
+        let own = crate::ffmpeg::locate::FfPaths {
+            bin_dir: PathBuf::from("C:/ffmpeg/bin"),
+            ffmpeg: PathBuf::from("C:/ffmpeg/bin/ffmpeg.exe"),
+            ffprobe: PathBuf::from("C:/ffmpeg/bin/ffprobe.exe"),
+            source: crate::ffmpeg::locate::FfSource::Configured,
+        };
+        let mine = Encoders { libx265: true, ..Default::default() };
+        let managed = Encoders { libx265: true, libsvtav1: true, ac3: true };
+        assert_eq!(encoder_runtime(&["libsvtav1"], Some(&own), Some(&mine), None, false), EncoderRuntime::NeedDownload { short: "AV1" });
+        assert_eq!(encoder_runtime(&["libsvtav1"], Some(&own), Some(&mine), Some(&managed), true), EncoderRuntime::UseManaged { short: "AV1" });
+        assert_eq!(encoder_runtime(&["libx264"], Some(&own), Some(&mine), None, false), EncoderRuntime::Current);
+    }
 
     fn v(codec: VideoCodec) -> VideoEncode {
         VideoEncode { codec, crf: codec.default_crf(false), ..Default::default() }

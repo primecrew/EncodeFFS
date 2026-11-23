@@ -8,6 +8,11 @@ pub const CRF: &str = "Quality of the compressed picture: a lower number means b
 
 pub const VIDEO_CODEC: &str = "How the picture is compressed. H.264 is the default and plays almost everywhere; HEVC (H.265) and AV1 can make smaller files but need a player that supports them.";
 
+/// The (?) next to the “Using:” line under the Video codec list.
+pub const ENCODER_CHOICE: &str = "Each codec runs with your FFmpeg. If your FFmpeg doesn't have it, the codec is marked \"(not in your FFmpeg)\" and the app's own FFmpeg copy does that encode instead. Your FFmpeg folder is never changed.\n\n\
+To change which FFmpeg the app uses: File › Settings… › Folders › FFmpeg bin folder, or Help › Locate FFmpeg folder….\n\
+Where the app's own copy is kept: File › Settings… › App-managed FFmpeg location.";
+
 pub const AUDIO_CODEC: &str = "How the sound is compressed: AAC is the default and plays everywhere; AC3 (Dolby Digital) suits TVs and home cinema and keeps up to 5.1 channels. Keep original copies the source audio without changing it.";
 
 pub const TEN_BIT: &str = "Records colour with 10 bits per channel instead of 8, which can smooth gradients and reduce banding. It is on by default for HEVC and AV1 (H.264 stays 8-bit); turn it off if you need to play the file on older TVs or phones.";

@@ -40,6 +40,8 @@ pub struct Ctx<'a> {
     pub managed_encoders: Option<ffenc::cmd::codecs::Encoders>,
     /// Set when the user clicks “Switch to the app-managed FFmpeg”.
     pub switch_to_managed: Option<&'a Cell<bool>>,
+    /// Set to a codec's short name when the user asks to download the app's own FFmpeg for it.
+    pub get_managed: Option<&'a Cell<Option<&'static str>>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -49,6 +51,7 @@ impl<'a> Ctx<'a> {
             encoders: self.encoders,
             managed_encoders: self.managed_encoders,
             switch_to_managed: self.switch_to_managed,
+            get_managed: self.get_managed,
             source_height: None,
         }
     }

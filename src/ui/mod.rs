@@ -276,6 +276,8 @@ pub struct App {
     managed_task: Option<Bg<Result<FfmpegCheck, String>>>,
     /// Set during a frame when the user clicks “Switch to the app-managed FFmpeg”.
     switch_to_managed: Cell<bool>,
+    /// Set when the user clicks “Use the app's own FFmpeg for <codec>” (download the app-managed copy).
+    get_managed: Cell<Option<&'static str>>,
     preview: Option<Preview>,
     conflict_dlg: Option<ConflictDlg>,
     error: Option<String>,
@@ -472,6 +474,7 @@ impl App {
             managed_encoders: None,
             managed_task: None,
             switch_to_managed: Cell::new(false),
+            get_managed: Cell::new(None),
             preview: None,
             conflict_dlg: None,
             error: None,
@@ -732,7 +735,7 @@ impl App {
                 self.pre.list.extend(new);
                 if n > 0 {
                     let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-                    let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed) };
+                    let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed), get_managed: Some(&self.get_managed) };
                     self.pre.select(first, &cx);
                 }
                 self.save_presets();
@@ -891,7 +894,7 @@ impl App {
                 _ => {}
             }
         }
-        let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed) };
+        let cx = Ctx { settings: &self.settings, ffprobe: Some(&ff.ffprobe), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed), get_managed: Some(&self.get_managed) };
         match self.pre.editor(idx, &self.settings).mode.build(&cx) {
             Ok(plan) => {
                 self.remember_used_folders();
@@ -960,10 +963,10 @@ impl App {
     fn menu(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("File", |ui| {
+                crate::ui::common::one_line_menu(ui);
                 if ui.button("Settings…").clicked() {
                     self.settings_edit = Some(self.settings.clone());
                     ui.close_menu();
-                crate::ui::common::one_line_menu(ui);
                 }
                 if ui.add(egui::Button::new("New").shortcut_text(ctx.format_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::N))))
                     .on_hover_text("Start a new job with the selected preset: clears the files and option edits on the form. Folder-based presets (Remux, Batch re-encode, Custom in folder mode) start with empty folder fields; the Recent list and Settings folders are not changed. Other presets still use the Settings output folder. Running and queued jobs, presets and Settings are not changed.")
@@ -987,10 +990,10 @@ impl App {
                 }
             });
             ui.menu_button("Presets", |ui| {
+                crate::ui::common::one_line_menu(ui);
                 let modified = self.pre.modified(&self.pre.cur().id.clone());
                 let builtin = self.pre.is_builtin(self.pre.current);
                 if ui.button("New preset…").clicked() {
-                crate::ui::common::one_line_menu(ui);
                     self.pre.dialog = Some(Dialog::New { name: String::new(), from: presets::NewFrom::Copy(self.pre.cur().id.clone()) });
                     ui.close_menu();
                 }
@@ -1059,10 +1062,10 @@ impl App {
                 }
             });
             ui.menu_button("View", |ui| {
+                crate::ui::common::one_line_menu(ui);
                 if ui.checkbox(&mut self.settings.show_source_panel, "Source info panel (ffprobe)").clicked() {
                     self.save_settings();
                     ui.close_menu();
-                crate::ui::common::one_line_menu(ui);
                 }
                 if self.settings.show_source_panel && source_panel_too_narrow(ctx) {
                     hint(ui, "(hidden while the window is too narrow for it at this text size)");
@@ -1094,10 +1097,10 @@ impl App {
                 }
             });
             ui.menu_button("Help", |ui| {
+                crate::ui::common::one_line_menu(ui);
                 if ui.button("Keyboard shortcuts & accessibility   (F1)").clicked() {
                     self.show_help = true;
                     ui.close_menu();
-                crate::ui::common::one_line_menu(ui);
                 }
                 ui.separator();
                 if ui.button("Locate FFmpeg folder…").clicked() {
@@ -1665,7 +1668,7 @@ if ui.button("About").clicked() {
         let act = self.pre.dialogs(ctx);
         if !matches!(act, Action::None) {
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed) };
+            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed), get_managed: Some(&self.get_managed) };
             let r = self.pre.apply(act, &cx);
             if let Err(e) = r {
                 self.error = Some(e);
@@ -1794,7 +1797,7 @@ if ui.button("About").clicked() {
     /// Files from a drop or Ctrl+O into the selected preset.
     fn route_paths(&mut self, ctx: &egui::Context, dropped: Vec<PathBuf>) {
         let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-        let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed) };
+        let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed), get_managed: Some(&self.get_managed) };
         let idx = self.pre.current;
         let ed = self.pre.editor(idx, &self.settings);
         let paths = if ed.mode.wants_folders() { dropped.clone() } else { ffenc::util::expand_dropped(&dropped) };
@@ -1976,6 +1979,7 @@ if ui.button("About").clicked() {
                         encoders: enc,
                         managed_encoders: self.managed_encoders,
                         switch_to_managed: Some(&self.switch_to_managed),
+                        get_managed: None,
                         source_height: None,
                     };
                     crate::ui::codecs_ui::video_codec_ui_ex(ui, "set", &mut v, None, None, false, &ff);
@@ -2271,7 +2275,7 @@ impl eframe::App for App {
         let presets_panel = egui::SidePanel::left(layout::panel_id("presets")).resizable(true).default_width(presets_w).width_range(150.0..=(screen.x * 0.45).max(200.0)).show(ctx, |ui| {
             ui.add_space(4.0);
             let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed) };
+            let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed), get_managed: Some(&self.get_managed) };
             match self.pre.sidebar(ui, &cx) {
                 None => {}
                 Some(SideEvent::Selected) => self.save_settings(),
@@ -2367,7 +2371,7 @@ impl eframe::App for App {
             }
             egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                 let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-                let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed) };
+                let cx = Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.has_xfade) , encoders: self.ff_check.as_ref().and_then(|r| r.as_ref().ok()).map(|c| c.encoders), ff: self.ff.as_ref(), managed_encoders: self.managed_encoders, switch_to_managed: Some(&self.switch_to_managed), get_managed: Some(&self.get_managed) };
                 let folders_before = crate::ui::presets::used_folders(&*self.pre.editor(idx, &self.settings).mode);
                 self.pre.editor(idx, &self.settings).mode.ui(ui, &cx);
                 let folders_after = crate::ui::presets::used_folders(&*self.pre.editor(idx, &self.settings).mode);
@@ -2452,6 +2456,12 @@ impl eframe::App for App {
         // keep progress bars moving while jobs run
         if self.queue.is_busy() || self.updater.busy() {
             ctx.request_repaint_after(Duration::from_millis(250));
+        }
+        if let Some(short) = self.get_managed.take() {
+            // same download prompt as at Run, without a job: it installs only into the app-managed folder
+            if self.fallback_prompt.is_none() {
+                self.fallback_prompt = Some(FallbackPrompt::ask(short.to_string(), modes::Plan::default(), Vec::new(), None, self.settings.when_exists));
+            }
         }
         if self.switch_to_managed.get() {
             self.switch_to_managed.set(false);

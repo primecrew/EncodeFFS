@@ -32,13 +32,15 @@ pub struct FfCodecStatus<'a> {
     pub encoders: Option<Encoders>,
     pub managed_encoders: Option<Encoders>,
     pub switch_to_managed: Option<&'a Cell<bool>>,
+    /// Set to the codec's short name by “Use the app's own FFmpeg for <codec>” (opens the download prompt).
+    pub get_managed: Option<&'a Cell<Option<&'static str>>>,
     /// Height of the current source, when known (for the CRF (?) suggestion).
     pub source_height: Option<u32>,
 }
 
 impl FfCodecStatus<'_> {
     pub fn none() -> Self {
-        Self { paths: None, encoders: None, managed_encoders: None, switch_to_managed: None, source_height: None }
+        Self { paths: None, encoders: None, managed_encoders: None, switch_to_managed: None, get_managed: None, source_height: None }
     }
 
     pub fn with_height(mut self, height: Option<u32>) -> Self {
@@ -74,30 +76,51 @@ impl FfCodecStatus<'_> {
         codecs::encoder_runtime(needed, self.paths, self.encoders.as_ref(), self.managed_encoders.as_ref(), self.managed_installed())
     }
 
-    fn disabled_tip(&self, encoder: &str) -> String {
+    /// Hover on a codec the FFmpeg in use doesn't have (it stays selectable).
+    fn missing_tip(&self, encoder: &str) -> String {
         let note = self.missing(encoder);
         if self.offer_switch(encoder) {
             format!("{note}\n\nThe app-managed FFmpeg has this encoder. Click “Switch to the app-managed FFmpeg” to use it (your own FFmpeg is left as it is).")
         } else {
-            note
+            format!("{note}\n\nYou can still choose it: the app's own FFmpeg copy does this encode. Your FFmpeg is left as it is.")
         }
     }
 }
 
+/// “Using: …” line with the (?) next to it. When the chosen codec is not in the user's FFmpeg the
+/// line becomes a short warning, plus “Use the app's own FFmpeg for <codec>” when that copy still
+/// has to be downloaded (the existing download prompt; only the app-managed folder is written).
 fn using_line_ui(ui: &mut Ui, ff: &FfCodecStatus<'_>, runtime: &EncoderRuntime) {
-    if let EncoderRuntime::UseManaged { short } = runtime {
-        let r = ui.label(RichText::new("Using: app-managed FFmpeg"));
-        r.on_hover_text(codecs::use_managed_note(short));
+    if let Some((note, offer)) = codecs::missing_codec_line(runtime) {
+        ui.horizontal_wrapped(|ui| {
+            warn(ui, &note);
+            encoder_help(ui);
+        });
+        if offer {
+            if let (Some(short), Some(cell)) = (runtime.short(), ff.get_managed) {
+                let r = ui.button(codecs::use_own_copy_button(short)).on_hover_text(
+                    "Download the current FFmpeg build into the app-managed folder and use it for this codec. Your own FFmpeg folder is not changed.",
+                );
+                if r.clicked() {
+                    cell.set(Some(short));
+                }
+            } else {
+                hint(ui, codecs::need_download_note(runtime.short().unwrap_or("")));
+            }
+        }
         return;
     }
-    if let Some(p) = ff.paths {
-        let (line, hover) = p.using_line(32);
-        // Normal body size and full-strength colour (not small/weak) so it stays readable.
-        let r = ui.label(RichText::new(line));
-        if let Some(h) = hover {
-            r.on_hover_text(h);
+    ui.horizontal_wrapped(|ui| {
+        if let Some(p) = ff.paths {
+            let (line, hover) = p.using_line(32);
+            // Normal body size and full-strength colour (not small/weak) so it stays readable.
+            let r = ui.label(RichText::new(line));
+            if let Some(h) = hover {
+                r.on_hover_text(h);
+            }
         }
-    }
+        encoder_help(ui);
+    });
 }
 
 
@@ -164,6 +187,13 @@ fn av1_speed_ui(ui: &mut Ui, id: &str, preset: &mut u32) {
     ui.data_mut(|d| d.insert_temp(custom_id, custom_open));
 }
 
+/// Small "(?)" after the Video codec list; hover (or keyboard focus) shows how to change the encoder.
+pub fn encoder_help(ui: &mut Ui) -> egui::Response {
+    let r = ui.add(egui::Label::new(RichText::new("(?)").strong()).sense(egui::Sense::click()));
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "How to change the encoder"));
+    crate::ui::common::hover_tip(r, option_tips::ENCODER_CHOICE)
+}
+
 /// Video rows inside a 2-column Grid.
 pub fn video_codec_ui(ui: &mut Ui, id: &str, v: &mut VideoEncode, src_pix_fmt: Option<&str>, ff: &FfCodecStatus<'_>) {
     video_codec_ui_ex(ui, id, v, src_pix_fmt, None, true, ff);
@@ -175,11 +205,14 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, src_pix_fmt
     ui.vertical(|ui| {
         let before = v.codec;
         let enc = ff.encoders.as_ref();
-        egui::ComboBox::from_id_salt(format!("{id}_codec")).width(300.0).selected_text(v.codec.label()).show_ui(ui, |ui| {
-            for c in VideoCodec::ALL {
-                let ok = enc.is_none_or(|e| e.video(c));
-                let r = ui.add_enabled(ok, egui::SelectableLabel::new(v.codec == c, c.label()));
-                let r = r.on_disabled_hover_text(ff.disabled_tip(c.encoder()));
+        // codecs the FFmpeg in use lacks stay selectable, marked “(not in your FFmpeg)”
+        egui::ComboBox::from_id_salt(format!("{id}_codec")).width(360.0).selected_text(codecs::video_choice_label(v.codec, enc)).show_ui(ui, |ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            for (c, label) in codecs::video_choices(enc) {
+                let mut r = ui.add(egui::SelectableLabel::new(v.codec == c, label));
+                if enc.is_some_and(|e| !e.video(c)) {
+                    r = r.on_hover_text(ff.missing_tip(c.encoder()));
+                }
                 if r.clicked() {
                     v.codec = c;
                 }
@@ -198,12 +231,8 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, src_pix_fmt
                 v.preset = "slow".into();
             }
         }
-        if enc.is_some_and(|e| !e.video(v.codec)) {
-            match ff.runtime(&[v.codec.encoder()]) {
-                EncoderRuntime::UseManaged { short } => hint(ui, codecs::use_managed_note(short)),
-                EncoderRuntime::NeedDownload { short } => hint(ui, codecs::need_download_note(short)),
-                _ => warn(ui, ff.missing(v.codec.encoder())),
-            }
+        if enc.is_some_and(|e| !e.video(v.codec)) && matches!(ff.runtime(&[v.codec.encoder()]), EncoderRuntime::Unavailable { .. }) {
+            warn(ui, ff.missing(v.codec.encoder()));
         }
         // One-line note for the selected codec; the full comparison is in the hover.
         let note = v.codec.compat_note();
@@ -299,13 +328,16 @@ pub fn audio_codec_ui_ex(ui: &mut Ui, id: &str, a: &mut AudioEncode, allow_copy:
     crate::ui::common::row_label_tip(ui, "Audio codec", option_tips::AUDIO_CODEC);
     ui.vertical(|ui| {
         let enc = ff.encoders.as_ref();
-        egui::ComboBox::from_id_salt(format!("{id}_acodec")).width(300.0).selected_text(a.codec.label()).show_ui(ui, |ui| {
+        egui::ComboBox::from_id_salt(format!("{id}_acodec")).width(300.0).selected_text(codecs::audio_choice_label(a.codec, enc)).show_ui(ui, |ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
             for c in AudioCodec::ALL {
                 if c == AudioCodec::Copy && !allow_copy {
                     continue;
                 }
-                let ok = enc.is_none_or(|e| e.audio(c));
-                let r = ui.add_enabled(ok, egui::SelectableLabel::new(a.codec == c, c.label())).on_disabled_hover_text(ff.disabled_tip("ac3"));
+                let mut r = ui.add(egui::SelectableLabel::new(a.codec == c, codecs::audio_choice_label(c, enc)));
+                if enc.is_some_and(|e| !e.audio(c)) {
+                    r = r.on_hover_text(ff.missing_tip("ac3"));
+                }
                 if r.clicked() {
                     a.codec = c;
                 }
@@ -316,10 +348,9 @@ pub fn audio_codec_ui_ex(ui: &mut Ui, id: &str, a: &mut AudioEncode, allow_copy:
         }
         if a.codec == AudioCodec::Ac3 {
             match ff.runtime(&["ac3"]) {
-                EncoderRuntime::UseManaged { short } => hint(ui, codecs::use_managed_note(short)),
-                EncoderRuntime::NeedDownload { short } => hint(ui, codecs::need_download_note(short)),
                 EncoderRuntime::Unavailable { .. } => warn(ui, ff.missing("ac3")),
                 EncoderRuntime::Current => {}
+                rt => using_line_ui(ui, ff, &rt),
             }
         }
         if !allow_copy && a.codec == AudioCodec::Copy {

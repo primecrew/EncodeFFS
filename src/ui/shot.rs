@@ -19,7 +19,7 @@ pub fn run(kind: &str, out: &Path) -> eframe::Result<()> {
     let out = out.to_path_buf();
     let viewport = egui::ViewportBuilder::default()
         .with_title("Encode FFS")
-        .with_inner_size(if matches!(kind.as_str(), "crop" | "crop-warn" | "watermark" | "reencode-wm") { [1100.0, 900.0] } else { [1100.0, 700.0] })
+        .with_inner_size(if matches!(kind.as_str(), "crop" | "crop-warn" | "watermark" | "reencode-wm" | "codec-missing") { [1100.0, 900.0] } else { [1100.0, 700.0] })
         .with_min_inner_size([800.0, 500.0]);
     let options = eframe::NativeOptions { viewport, centered: true, ..Default::default() };
     eframe::run_native(
@@ -61,7 +61,7 @@ struct Live {
 
 impl Live {
     fn new(kind: &str) -> Option<Live> {
-        if !matches!(kind, "crop" | "crop-warn" | "watermark" | "reencode-wm") {
+        if !matches!(kind, "crop" | "crop-warn" | "watermark" | "reencode-wm" | "codec-missing") {
             return None;
         }
         use ffenc::cmd::picture::{CropSettings, PictureSettings, WatermarkSettings};
@@ -86,13 +86,22 @@ impl Live {
         let watermark = WatermarkSettings { enabled: true, image: image.clone(), x: 0.7375, y: 0.785, w: 0.25, opacity_pct: 70, ..Default::default() };
         let pic = PictureSettings { crop, watermark };
         let settings = ffenc::settings::Settings::default();
-        let mode = (kind == "reencode-wm").then(|| {
+        let mode = matches!(kind, "reencode-wm" | "codec-missing").then(|| {
             let mut m = super::modes::new_mode("reencode").unwrap();
-            let v = serde_json::json!({
-                "input": video.to_string_lossy(),
-                "out_dir": video.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
-                "picture": { "watermark": { "enabled": true, "image": image, "opacity_pct": 70 } }
-            });
+            let v = if kind == "codec-missing" {
+                // AV1 chosen while the FFmpeg in use has no AV1 encoder
+                serde_json::json!({
+                    "input": video.to_string_lossy(),
+                    "out_dir": video.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+                    "video": { "codec": "Av1", "crf": 35 }
+                })
+            } else {
+                serde_json::json!({
+                    "input": video.to_string_lossy(),
+                    "out_dir": video.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+                    "picture": { "watermark": { "enabled": true, "image": image, "opacity_pct": 70 } }
+                })
+            };
             m.load(&v, &settings);
             m
         });
@@ -104,7 +113,9 @@ impl Live {
 
     fn show(&mut self, ctx: &egui::Context, kind: &str) {
         let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
-        let cx = super::modes::Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: None, encoders: None, ff: self.ff.as_ref(), managed_encoders: None, switch_to_managed: None };
+        let get = std::cell::Cell::new(None);
+        let no_av1 = (kind == "codec-missing").then_some(ffenc::cmd::codecs::Encoders { libx265: true, libsvtav1: false, ac3: true });
+        let cx = super::modes::Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: None, encoders: no_av1, ff: self.ff.as_ref(), managed_encoders: None, switch_to_managed: None, get_managed: Some(&get) };
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).vertical_scroll_offset(if kind == "reencode-wm" { 0.0 } else { 0.0 }).show(ui, |ui| match kind {
                 "crop" | "crop-warn" => {
@@ -116,7 +127,7 @@ impl Live {
                     common::section(ui, "2. Watermark");
                     super::picture::watermark_editor(ui, &cx, "shot", &mut self.pic, &self.srcs, &mut self.rt);
                 }
-                "reencode-wm" => {
+                "reencode-wm" | "codec-missing" => {
                     if let Some(m) = self.mode.as_mut() {
                         ui.heading(m.title());
                         m.ui(ui, &cx);
