@@ -614,7 +614,7 @@ pub fn watermark_editor(ui: &mut Ui, cx: &Ctx, id: &str, pic: &mut PictureSettin
             }
         });
         ui.end_row();
-        row_label_tip(ui, "Size", "Width and height in pixels. With “Keep the image's shape” on, changing one changes the other.");
+        row_label_tip(ui, "Size", "Width and height in pixels. With “Maintain Aspect Ratio” on, changing one changes the other.");
         ui.horizontal(|ui| {
             ui.label("Width");
             let wc = ui.add(egui::DragValue::new(&mut w).range(1.0..=fwf * 2.0).speed(1.0).suffix(" px")).changed();
@@ -632,7 +632,7 @@ pub fn watermark_editor(ui: &mut Ui, cx: &Ctx, id: &str, pic: &mut PictureSettin
                     wm.h = h / fhf;
                 }
             }
-            let r = ui.checkbox(&mut wm.lock_aspect, "Keep the image's shape");
+            let r = ui.checkbox(&mut wm.lock_aspect, "Maintain Aspect Ratio");
             if r.changed() && !wm.lock_aspect {
                 wm.h = hpx / fhf; // start from the shape it has now
             }

@@ -323,7 +323,7 @@ Re-encode, Custom pipeline (single file and folder batch) and Batch re-encode ca
   labelled for example "2 of 4 (40 %)". With several files, a drop-down picks the file to preview. Odd values warn (with **Round to even**), a crop that removes the whole picture stops the run, and a
   result that is not a multiple of 8 is only a note. With several files, every file is checked. The crop runs first.
 - **Add watermark** (off by default) sits next to it; **Set up watermark…** opens the placement window: drag to move,
-  corner handles to resize (shape locked unless you untick it), opacity 0–100 %, X / Y / W / H boxes, corner and center
+  corner handles to resize (shape locked unless you untick **Maintain Aspect Ratio**), opacity 0–100 %, X / Y / W / H boxes, corner and center
   buttons with a margin. Position and size are a share of the picture, so one setting suits files of any size. Any
   image FFmpeg reads works; PNG transparency is kept. With Crop on, the watermark goes on the cropped picture.
 - **Add Watermark** preset: the same placement window on its own screen, for files, a folder or dropped files, with
