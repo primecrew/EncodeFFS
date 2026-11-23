@@ -281,7 +281,7 @@ impl Mode for BatchMode {
             .into_iter()
             .map(|j| JobSpec::new(format!("Batch: {}", j.input.file_name().unwrap_or_default().to_string_lossy()), j.cmd, j.output, j.log_file, Some(j.out_duration)))
             .collect();
-        Ok(Plan { jobs: specs, group: Some(("Batch re-encode".into(), false, 0)), notes: vec![format!("Prepared {n} batch encoding job(s).")] })
+        Ok(Plan { jobs: specs, group: Some(("Batch re-encode".into(), false, 0)), notes: vec![format!("Prepared {n} batch encoding job(s).")], cpu_only: false })
     }
 
     fn wants_folders(&self) -> bool {

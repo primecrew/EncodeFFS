@@ -6,6 +6,7 @@ pub mod common;
 pub mod fallback;
 pub mod shot;
 pub mod finished;
+pub mod hw;
 pub mod layout;
 pub mod managed_loc;
 pub mod modes;
@@ -60,6 +61,8 @@ struct Preview {
     copied: Option<(Option<usize>, std::time::Instant)>,
     /// Put keyboard focus on Run when the popup opens (Enter/Space runs, Esc cancels).
     focus_run: bool,
+    /// GPU encoding (1.1): the test results for `program` when "Use my GPU" is on.
+    gpu: Option<ffenc::cmd::hwenc::HwSettings>,
 }
 
 /// The full command of one job as it will run, for the given terminal, followed by the
@@ -106,9 +109,16 @@ impl Preview {
             if ch == Choice::Overwrite && !c.can_overwrite() { Choice::KeepBoth } else { ch }
         }).collect();
         let focus_keep = policy == WhenExists::Ask && !conflicts.is_empty();
-        let mut p = Preview { plan, program, ids, tgt_job, targets, conflicts, choices, policy, jobs: vec![], outcomes: vec![], focus_keep, copied: None, focus_run: !focus_keep };
+        let mut p = Preview { plan, program, ids, tgt_job, targets, conflicts, choices, policy, jobs: vec![], outcomes: vec![], focus_keep, copied: None, focus_run: !focus_keep, gpu: None };
         p.recompute();
         p
+    }
+
+    /// Use the GPU encoder where "Use my GPU" is on and the test encode passed (1.1).
+    fn with_gpu(mut self, hw: &ffenc::cmd::hwenc::HwSettings) -> Self {
+        self.gpu = hw.use_gpu.then(|| hw.clone());
+        self.recompute();
+        self
     }
 
     /// Apply the choices: final names, -n/-y, temp files.
@@ -127,6 +137,15 @@ impl Preview {
                         Err(_) => {}
                     },
                 },
+            }
+        }
+        if let (Some(hw), false) = (&self.gpu, self.plan.cpu_only) {
+            let program = self.program.to_string_lossy();
+            for j in &mut jobs {
+                if let Some(g) = ffenc::cmd::hwenc::apply(&j.args, hw, &program) {
+                    j.warnings.push(format!("Video: {} GPU ({}). If the GPU fails, this file is encoded again on the CPU.", g.vendor.name(), g.encoder));
+                    j.cpu_fallback = Some(std::mem::replace(&mut j.args, g.args));
+                }
             }
         }
         self.jobs = jobs;
@@ -309,6 +328,8 @@ pub struct App {
     layout: layout::LayoutRt,
     /// One-time offer to copy leftover portable settings into an installed copy.
     import_dlg: Option<ImportDlg>,
+    /// GPU encoder detection and the one-time nudge (1.1).
+    hw_ui: hw::HwUi,
 }
 
 /// Open a file or folder with the OS (Explorer on Windows).
@@ -506,6 +527,7 @@ impl App {
             pending_run: None,
             layout,
             import_dlg: None,
+            hw_ui: hw::HwUi::default(),
         };
         app.refresh_ffmpeg(&cc.egui_ctx);
         let offer_portable = settings::installed_settings_missing(&locate::exe_dir(), &settings::roaming_dir())
@@ -954,7 +976,7 @@ impl App {
         if ffenc::cmd::conflicts::any_fixable(&items) {
             self.conflict_dlg = Some(ConflictDlg { items, plan, program, focus_run_as_set: true });
         } else {
-            self.preview = Some(Preview::new(plan, program, self.settings.when_exists));
+            self.preview = Some(Preview::new(plan, program, self.settings.when_exists).with_gpu(&self.settings.hw));
         }
     }
 
@@ -1350,7 +1372,7 @@ if ui.button("About").clicked() {
                     self.pre.editor(idx, &self.settings).mode.apply_conflict_fix(k);
                     self.preview_origin = None;
                 } else if run_as_set {
-                    self.preview = Some(Preview::new(dlg.plan, dlg.program, self.settings.when_exists));
+                    self.preview = Some(Preview::new(dlg.plan, dlg.program, self.settings.when_exists).with_gpu(&self.settings.hw));
                 } else if close {
                     self.preview_origin = None;
                 } else {
@@ -1920,6 +1942,7 @@ if ui.button("About").clicked() {
         let mut err = None;
         let mut reset_layout = false;
         let mut mloc_out = None;
+        let mut hw_recheck = false;
         common::fit(egui::Window::new("Settings").collapsible(false).resizable(true).default_width(640.0), ctx, false).remember("settings", true).show(ctx, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible).max_height((ctx.screen_rect().height() - 150.0).max(120.0)).show(ui, |ui| {
                 common::section(ui, "Appearance");
@@ -1960,6 +1983,12 @@ if ui.button("About").clicked() {
                     None
                 };
                 mloc_out = self.mloc.settings_ui(ui, blocked);
+                common::section(ui, "Encoding hardware");
+                {
+                    let managed = locate::bin_dir_ok(&locate::managed_bin()).then(FallbackPrompt::managed_program);
+                    let in_use = self.ff.as_ref().map(|f| f.ffmpeg.clone());
+                    hw_recheck = hw::section_ui(ui, &mut ed.hw.use_gpu, &self.settings.hw, in_use.as_deref(), managed.as_deref(), self.hw_ui.busy());
+                }
                 common::section(ui, "Encoding defaults (used by built-in presets that are not customised, and by new blank presets)");
                 egui::Grid::new("set_e").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                     let mut v = ffenc::cmd::common::VideoEncode {
@@ -1981,6 +2010,7 @@ if ui.button("About").clicked() {
                         switch_to_managed: Some(&self.switch_to_managed),
                         get_managed: None,
                         source_height: None,
+                        gpu: None,
                     };
                     crate::ui::codecs_ui::video_codec_ui_ex(ui, "set", &mut v, None, None, false, &ff);
                     ed.crf = v.crf;
@@ -2129,6 +2159,9 @@ if ui.button("About").clicked() {
             ed.appearance = self.settings.appearance.clone();
             // so is the app-managed FFmpeg location ("Reset to script defaults" keeps it)
             ed.managed_ffmpeg_dir = self.settings.managed_ffmpeg_dir.clone();
+            // detection results and the nudge flag live on self.settings (they arrive in the background)
+            ed.hw.detect = self.settings.hw.detect.clone();
+            ed.hw.nudge_done = self.settings.hw.nudge_done;
             ed.sanitize_recent_folders();
             self.settings = ed;
             self.pre.rebase(&self.settings);
@@ -2146,6 +2179,64 @@ if ui.button("About").clicked() {
         }
         if let Some(o) = mloc_out {
             self.apply_managed_location(ctx, o);
+        }
+        if hw_recheck {
+            let progs = self.hw_programs();
+            self.hw_ui.start(ctx, progs);
+        }
+    }
+
+    /// FFmpeg executables to check for GPU encoders: the one in use, plus the app-managed copy
+    /// when it is installed and different.
+    fn hw_programs(&self) -> Vec<PathBuf> {
+        let mut v: Vec<PathBuf> = self.ff.iter().map(|f| f.ffmpeg.clone()).collect();
+        if locate::bin_dir_ok(&locate::managed_bin()) {
+            let m = FallbackPrompt::managed_program();
+            if !v.contains(&m) {
+                v.push(m);
+            }
+        }
+        v
+    }
+
+    /// GPU detection (1.1): first run / new FFmpeg, results, and the one-time nudge.
+    fn hw_frame(&mut self, ctx: &egui::Context) {
+        if self.ff.is_some() && self.ff_task.is_none() {
+            let progs = self.hw_programs();
+            self.hw_ui.auto(ctx, &self.settings.hw, &progs);
+        }
+        if self.hw_ui.poll(&mut self.settings.hw) {
+            if let Some(f) = &self.ff {
+                if let Some(d) = self.settings.hw.for_program(&f.ffmpeg.to_string_lossy()) {
+                    self.queue.log(format!("Encoding hardware: {}", ffenc::cmd::hwenc::summary(Some(d))));
+                }
+            }
+            self.save_settings();
+        }
+        if !self.hw_ui.nudge {
+            return;
+        }
+        let det = self.ff.as_ref().and_then(|f| self.settings.hw.for_program(&f.ffmpeg.to_string_lossy())).filter(|d| d.vendor().is_some()).cloned();
+        let Some(det) = det.or_else(|| self.settings.hw.detect.iter().find(|d| d.vendor().is_some()).cloned()) else {
+            self.hw_ui.nudge = false;
+            return;
+        };
+        let mut answer = None;
+        common::fit(egui::Window::new("Encoding hardware").collapsible(false).resizable(false).default_width(520.0).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]), ctx, true).show(ctx, |ui| {
+            answer = hw::nudge_ui(ui, &det);
+        });
+        if let Some(on) = answer {
+            self.hw_ui.nudge = false;
+            self.settings.hw.nudge_done = true;
+            if on {
+                self.settings.hw.use_gpu = true;
+                self.queue.log("GPU encoding is on (File › Settings… › Encoding hardware).");
+            }
+            if let Some(ed) = self.settings_edit.as_mut() {
+                ed.hw.nudge_done = true;
+                ed.hw.use_gpu = self.settings.hw.use_gpu;
+            }
+            self.save_settings();
         }
     }
 
@@ -2232,6 +2323,7 @@ impl eframe::App for App {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
         self.poll_background();
+        self.hw_frame(ctx);
 
         self.appearance_frame(ctx);
 
@@ -2576,6 +2668,47 @@ mod tests {
         let p = Preview::new(plan, prog.into(), WhenExists::Overwrite);
         assert_eq!(p.choices, vec![Choice::KeepBoth]);
         assert_eq!(file_name(p.jobs[0].output.as_ref().unwrap()), "in (2).mkv");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// 1.1: GPU encoding in the run preview: off = untouched; on = GPU encoder with the CPU command
+    /// kept for the runtime fallback; Custom (cpu_only) and other FFmpeg builds are never switched.
+    #[test]
+    fn preview_uses_the_gpu_only_when_on() {
+        use ffenc::cmd::codecs::VideoCodec;
+        use ffenc::cmd::hwenc::{HwDetect, HwSettings, HwTest, HwVendor};
+        let d = std::env::temp_dir().join(format!("ffenc_gpu_{}", ffenc::util::unique_id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let out = d.join("out.mkv");
+        let args: Vec<String> = ["-y", "-i", "in.mkv", "-c:v", "libx264", "-crf", "20", "-preset", "slow", "-pix_fmt", "yuv420p", "-c:a", "copy"].iter().map(|s| s.to_string()).chain([out.to_string_lossy().into_owned()]).collect();
+        let job = JobSpec::new("j", ffenc::cmd::BuiltCommand { args, ..Default::default() }, out.clone(), d.join("l.log"), None);
+        let prog = Path::new("ffmpeg.exe");
+        let tests = VideoCodec::ALL.iter().map(|&codec| HwTest { codec, vendor: HwVendor::Nvidia, ok: true, ok_10bit: true, error: String::new() }).collect();
+        let mut hw = HwSettings { detect: vec![HwDetect { program: "ffmpeg.exe".into(), tests, gpu_name: None, checked: 1 }], ..Default::default() };
+        let plan = Plan { jobs: vec![job], ..Default::default() };
+        let off = Preview::new(plan.clone(), prog.into(), WhenExists::Ask).with_gpu(&hw);
+        let plain = Preview::new(plan.clone(), prog.into(), WhenExists::Ask);
+        assert_eq!(off.jobs[0].args.len(), plain.jobs[0].args.len());
+        assert!(off.jobs[0].args.contains(&"libx264".to_string()) && off.jobs[0].cpu_fallback.is_none());
+        hw.use_gpu = true;
+        let on = Preview::new(plan.clone(), prog.into(), WhenExists::Ask).with_gpu(&hw);
+        let j = &on.jobs[0];
+        assert!(j.args.windows(2).any(|w| w[0] == "-c:v" && w[1] == "h264_nvenc"), "{:?}", j.args);
+        assert!(j.args.windows(2).any(|w| w[0] == "-cq" && w[1] == "21"));
+        assert!(!j.args.contains(&"-crf".to_string()));
+        let fb = j.cpu_fallback.as_ref().unwrap();
+        assert!(fb.contains(&"libx264".to_string()));
+        // the fallback writes the same (temporary) output as the GPU command
+        assert_eq!(fb.last(), j.args.last());
+        assert!(j.warnings.iter().any(|w| w.contains("NVIDIA GPU (h264_nvenc)")));
+        assert!(job_command(Shell::PowerShell, prog, j).contains("h264_nvenc"));
+        // Custom
+        let custom = Plan { cpu_only: true, ..plan.clone() };
+        let c = Preview::new(custom, prog.into(), WhenExists::Ask).with_gpu(&hw);
+        assert!(c.jobs[0].cpu_fallback.is_none() && c.jobs[0].args.contains(&"libx264".to_string()));
+        // another FFmpeg (e.g. the app-managed copy, not tested)
+        let other = Preview::new(plan, "other/ffmpeg.exe".into(), WhenExists::Ask).with_gpu(&hw);
+        assert!(other.jobs[0].cpu_fallback.is_none());
         std::fs::remove_dir_all(&d).unwrap();
     }
 

@@ -958,7 +958,7 @@ impl Mode for TracksMode {
         if jobs.is_empty() {
             return Err(format!("Nothing to do. {}", notes.join(" ")));
         }
-        Ok(Plan { jobs, group: None, notes })
+        Ok(Plan { jobs, group: None, notes, cpu_only: false })
     }
 
     fn on_drop(&mut self, paths: &[PathBuf], cx: &Ctx) {

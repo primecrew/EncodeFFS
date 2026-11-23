@@ -115,3 +115,25 @@ fn crop_and_watermark_off_keep_the_golden_commands() {
     let line = format!("reencode_default_mkv: {}", reencode::build(&p).unwrap().args.join(" | "));
     assert!(GOLDEN.lines().any(|l| l == line), "{line}");
 }
+
+/// 1.1: GPU encoding off (the default) leaves every golden command as it is, even when a
+/// working NVIDIA encoder was detected. On, the same commands do switch (sanity check).
+#[test]
+fn gpu_encoding_off_keeps_the_golden_commands() {
+    use ffenc::cmd::codecs::VideoCodec;
+    use ffenc::cmd::hwenc::{self, HwDetect, HwSettings, HwTest, HwVendor};
+    let prog = "/ff/bin/ffmpeg";
+    let tests = VideoCodec::ALL.iter().map(|&codec| HwTest { codec, vendor: HwVendor::Nvidia, ok: true, ok_10bit: true, error: String::new() }).collect();
+    let mut hw = HwSettings { detect: vec![HwDetect { program: prog.into(), tests, gpu_name: None, checked: 1 }], ..Default::default() };
+    assert!(!HwSettings::default().use_gpu, "off by default");
+    let golden: Vec<Vec<String>> = cases().into_iter().map(|(_, s)| s.split(" | ").map(str::to_string).collect()).collect();
+    for args in &golden {
+        assert!(hwenc::apply(args, &HwSettings::default(), prog).is_none());
+        assert!(hwenc::apply(args, &hw, prog).is_none(), "off must not touch {args:?}");
+    }
+    hw.use_gpu = true;
+    let switched = golden.iter().filter(|a| hwenc::apply(a, &hw, prog).is_some()).count();
+    assert!(switched > 0);
+    // another FFmpeg (not tested) is never switched
+    assert!(golden.iter().all(|a| hwenc::apply(a, &hw, "/other/ffmpeg").is_none()));
+}

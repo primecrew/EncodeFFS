@@ -36,11 +36,13 @@ pub struct FfCodecStatus<'a> {
     pub get_managed: Option<&'a Cell<Option<&'static str>>>,
     /// Height of the current source, when known (for the CRF (?) suggestion).
     pub source_height: Option<u32>,
+    /// GPU encoding setting (1.1), for the “GPU: …” note. None = never (Custom, Settings defaults).
+    pub gpu: Option<&'a ffenc::cmd::hwenc::HwSettings>,
 }
 
 impl FfCodecStatus<'_> {
     pub fn none() -> Self {
-        Self { paths: None, encoders: None, managed_encoders: None, switch_to_managed: None, get_managed: None, source_height: None }
+        Self { paths: None, encoders: None, managed_encoders: None, switch_to_managed: None, get_managed: None, source_height: None, gpu: None }
     }
 
     pub fn with_height(mut self, height: Option<u32>) -> Self {
@@ -84,6 +86,28 @@ impl FfCodecStatus<'_> {
         } else {
             format!("{note}\n\nYou can still choose it: the app's own FFmpeg copy does this encode. Your FFmpeg is left as it is.")
         }
+    }
+}
+
+/// “GPU: NVIDIA (hevc_nvenc)” under the Using line when GPU encoding is on and the test encode
+/// passed for the FFmpeg that will run (1.1).
+fn gpu_line_ui(ui: &mut Ui, ff: &FfCodecStatus<'_>, v: &VideoEncode, runtime: &EncoderRuntime) {
+    let Some(hw) = ff.gpu.filter(|h| h.use_gpu) else { return };
+    let program = match runtime {
+        EncoderRuntime::Current => ff.paths.map(|p| p.ffmpeg.clone()),
+        EncoderRuntime::UseManaged { .. } => Some(crate::ui::fallback::FallbackPrompt::managed_program()),
+        _ => None,
+    };
+    let Some(det) = program.and_then(|p| hw.active_for(&p.to_string_lossy()).cloned()) else { return };
+    let ten_bit = v.ten_bit && v.codec != VideoCodec::H264;
+    if let Some(vendor) = det.pick(v.codec, ten_bit) {
+        let enc = ffenc::cmd::hwenc::encoder_name(v.codec, vendor);
+        ui.label(RichText::new(format!("GPU: {} ({enc}). Faster, slightly bigger files.", vendor.name())).strong()).on_hover_text(
+            "GPU encoding is on (File › Settings… › Encoding hardware). The CRF value is converted to the GPU's quality setting; \
+             the CPU preset and tune options are not used. If the GPU fails, the file is encoded again on the CPU.",
+        );
+    } else if ten_bit && det.pick(v.codec, false).is_some() {
+        ui.label(format!("10-bit {} uses the CPU: the GPU's 10-bit test encode failed.", v.codec.short()));
     }
 }
 
@@ -220,6 +244,7 @@ pub fn video_codec_ui_ex(ui: &mut Ui, id: &str, v: &mut VideoEncode, src_pix_fmt
         });
         let runtime = ff.runtime(&codecs::needed_encoders(Some(v), None));
         using_line_ui(ui, ff, &runtime);
+        gpu_line_ui(ui, ff, v, &runtime);
         if ff.offer_switch_video() {
             switch_button_ui(ui, ff);
         }

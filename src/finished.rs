@@ -127,7 +127,7 @@ mod tests {
     fn job(id: u64, status: JobStatus, out: Option<&str>) -> Job {
         Job {
             id,
-            spec: JobSpec { label: format!("j{id}"), args: vec![], output: None, log_file: None, duration_s: None, side_files: vec![], keep_side_files: false, post: crate::ffmpeg::runner::PostAction::None, warnings: vec![] },
+            spec: JobSpec { label: format!("j{id}"), args: vec![], output: None, log_file: None, duration_s: None, side_files: vec![], keep_side_files: false, post: crate::ffmpeg::runner::PostAction::None, warnings: vec![], cpu_fallback: None },
             program: PathBuf::new(),
             status,
             progress: None,

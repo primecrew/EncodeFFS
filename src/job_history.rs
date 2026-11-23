@@ -104,7 +104,7 @@ mod tests {
     fn job(id: u64, status: JobStatus) -> Job {
         Job {
             id,
-            spec: JobSpec { label: format!("Re-encode {id}.mp4"), args: vec!["-i".into(), "in.mp4".into(), "out.mkv".into()], output: Some(PathBuf::from("out.mkv")), log_file: None, duration_s: None, side_files: vec![], keep_side_files: false, post: PostAction::None, warnings: vec![] },
+            spec: JobSpec { label: format!("Re-encode {id}.mp4"), args: vec!["-i".into(), "in.mp4".into(), "out.mkv".into()], output: Some(PathBuf::from("out.mkv")), log_file: None, duration_s: None, side_files: vec![], keep_side_files: false, post: PostAction::None, warnings: vec![], cpu_fallback: None },
             program: PathBuf::from("ffmpeg"),
             status,
             progress: None,

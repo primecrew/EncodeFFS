@@ -53,6 +53,7 @@ impl<'a> Ctx<'a> {
             switch_to_managed: self.switch_to_managed,
             get_managed: self.get_managed,
             source_height: None,
+            gpu: Some(&self.settings.hw),
         }
     }
 }
@@ -65,6 +66,8 @@ pub struct Plan {
     pub group: Option<(String, bool, usize)>,
     /// Extra lines for the preview (e.g. skipped files).
     pub notes: Vec<String>,
+    /// Never use GPU encoding for these jobs (Custom: the user's command runs as written).
+    pub cpu_only: bool,
 }
 
 pub trait Mode {

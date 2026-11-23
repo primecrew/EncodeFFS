@@ -19,7 +19,7 @@ pub fn run(kind: &str, out: &Path) -> eframe::Result<()> {
     let out = out.to_path_buf();
     let viewport = egui::ViewportBuilder::default()
         .with_title("Encode FFS")
-        .with_inner_size(if matches!(kind.as_str(), "crop" | "crop-warn" | "watermark" | "reencode-wm" | "codec-missing") { [1100.0, 900.0] } else { [1100.0, 700.0] })
+        .with_inner_size(if matches!(kind.as_str(), "crop" | "crop-warn" | "watermark" | "reencode-wm" | "codec-missing" | "codec-gpu") { [1100.0, 900.0] } else { [1100.0, 700.0] })
         .with_min_inner_size([800.0, 500.0]);
     let options = eframe::NativeOptions { viewport, centered: true, ..Default::default() };
     eframe::run_native(
@@ -61,7 +61,7 @@ struct Live {
 
 impl Live {
     fn new(kind: &str) -> Option<Live> {
-        if !matches!(kind, "crop" | "crop-warn" | "watermark" | "reencode-wm" | "codec-missing") {
+        if !matches!(kind, "crop" | "crop-warn" | "watermark" | "reencode-wm" | "codec-missing" | "codec-gpu") {
             return None;
         }
         use ffenc::cmd::picture::{CropSettings, PictureSettings, WatermarkSettings};
@@ -85,10 +85,23 @@ impl Live {
         };
         let watermark = WatermarkSettings { enabled: true, image: image.clone(), x: 0.7375, y: 0.785, w: 0.25, opacity_pct: 70, ..Default::default() };
         let pic = PictureSettings { crop, watermark };
-        let settings = ffenc::settings::Settings::default();
-        let mode = matches!(kind, "reencode-wm" | "codec-missing").then(|| {
+        let mut settings = ffenc::settings::Settings::default();
+        if kind == "codec-gpu" {
+            // GPU encoding on, with a (fake) working NVIDIA detection for the FFmpeg in use
+            settings.hw = fake_hw("settings-hw-on");
+            if let Some(f) = &ff {
+                settings.hw.detect[0].program = f.ffmpeg.to_string_lossy().into_owned();
+            }
+        }
+        let mode = matches!(kind, "reencode-wm" | "codec-missing" | "codec-gpu").then(|| {
             let mut m = super::modes::new_mode("reencode").unwrap();
-            let v = if kind == "codec-missing" {
+            let v = if kind == "codec-gpu" {
+                serde_json::json!({
+                    "input": video.to_string_lossy(),
+                    "out_dir": video.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+                    "video": { "codec": "Hevc", "crf": 20 }
+                })
+            } else if kind == "codec-missing" {
                 // AV1 chosen while the FFmpeg in use has no AV1 encoder
                 serde_json::json!({
                     "input": video.to_string_lossy(),
@@ -114,7 +127,11 @@ impl Live {
     fn show(&mut self, ctx: &egui::Context, kind: &str) {
         let ffprobe = self.ff.as_ref().map(|f| f.ffprobe.clone());
         let get = std::cell::Cell::new(None);
-        let no_av1 = (kind == "codec-missing").then_some(ffenc::cmd::codecs::Encoders { libx265: true, libsvtav1: false, ac3: true });
+        let no_av1 = match kind {
+            "codec-missing" => Some(ffenc::cmd::codecs::Encoders { libx265: true, libsvtav1: false, ac3: true }),
+            "codec-gpu" => Some(ffenc::cmd::codecs::Encoders { libx265: true, libsvtav1: true, ac3: true }),
+            _ => None,
+        };
         let cx = super::modes::Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: None, encoders: no_av1, ff: self.ff.as_ref(), managed_encoders: None, switch_to_managed: None, get_managed: Some(&get) };
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).vertical_scroll_offset(if kind == "reencode-wm" { 0.0 } else { 0.0 }).show(ui, |ui| match kind {
@@ -127,7 +144,7 @@ impl Live {
                     common::section(ui, "2. Watermark");
                     super::picture::watermark_editor(ui, &cx, "shot", &mut self.pic, &self.srcs, &mut self.rt);
                 }
-                "reencode-wm" | "codec-missing" => {
+                "reencode-wm" | "codec-missing" | "codec-gpu" => {
                     if let Some(m) = self.mode.as_mut() {
                         ui.heading(m.title());
                         m.ui(ui, &cx);
@@ -312,6 +329,37 @@ fn show_crf(ctx: &egui::Context) {
 }
 
 
+/// A fake detection for the 1.1 “Encoding hardware” screenshots (no real GPU needed).
+fn fake_hw(kind: &str) -> ffenc::cmd::hwenc::HwSettings {
+    use ffenc::cmd::hwenc::{HwDetect, HwSettings, HwTest, HwVendor};
+    let failed = kind == "settings-hw-failed";
+    let tests = VideoCodec::ALL
+        .iter()
+        .map(|&codec| HwTest { codec, vendor: HwVendor::Nvidia, ok: !failed, ok_10bit: !failed, error: if failed { "Cannot load nvcuda.dll".into() } else { String::new() } })
+        .collect();
+    let det = HwDetect { program: "ffmpeg.exe".into(), tests, gpu_name: (!failed).then(|| "NVIDIA GeForce RTX 4070".into()), checked: 1 };
+    HwSettings { use_gpu: kind == "settings-hw-on", detect: if kind == "settings-hw-new" { vec![] } else { vec![det] }, nudge_done: false }
+}
+
+fn show_settings_hw(ctx: &egui::Context, kind: &str) {
+    let hw = fake_hw(kind);
+    thread_local! { static USE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) }; }
+    let mut use_gpu = USE.with(|u| u.get()).unwrap_or(hw.use_gpu);
+    common::fit(egui::Window::new("Settings").collapsible(false).resizable(false).default_width(640.0).anchor(egui::Align2::CENTER_TOP, [0.0, 20.0]), ctx, false).show(ctx, |ui| {
+        ui.set_min_width(620.0);
+        common::section(ui, "Encoding hardware");
+        let _ = super::hw::section_ui(ui, &mut use_gpu, &hw, Some(Path::new("ffmpeg.exe")), None, kind == "settings-hw-checking");
+        common::section(ui, "Encoding defaults (used by built-in presets that are not customised, and by new blank presets)");
+        hint(ui, "…");
+    });
+    USE.with(|u| u.set(Some(use_gpu)));
+    if kind == "settings-hw-nudge" {
+        egui::Window::new("Encoding hardware").collapsible(false).resizable(false).default_width(520.0).anchor(egui::Align2::CENTER_CENTER, [0.0, 120.0]).show(ctx, |ui| {
+            let _ = super::hw::nudge_ui(ui, &hw.detect[0]);
+        });
+    }
+}
+
 fn show_about(ctx: &egui::Context) {
     common::fit(
         egui::Window::new("About")
@@ -444,6 +492,10 @@ impl eframe::App for ShotApp {
             }
             "crf-popup" => show_crf(ctx),
             "about" => show_about(ctx),
+            k if k.starts_with("settings-hw") => {
+                let k = k.to_string();
+                show_settings_hw(ctx, &k);
+            }
             k if self.live.is_some() => {
                 let k = k.to_string();
                 self.live.as_mut().unwrap().show(ctx, &k);

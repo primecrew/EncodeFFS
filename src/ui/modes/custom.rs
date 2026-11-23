@@ -229,7 +229,7 @@ impl Mode for CustomMode {
             });
             ui.end_row();
             if o.video == VideoAction::X264 {
-                crate::ui::codecs_ui::video_codec_ui(ui, "cu", &mut o.video_encode, None, &cx.ff_status());
+                crate::ui::codecs_ui::video_codec_ui(ui, "cu", &mut o.video_encode, None, &crate::ui::codecs_ui::FfCodecStatus { gpu: None, ..cx.ff_status() });
                 crate::ui::common::row_label_tip(ui, "Resize", option_tips::RESIZE);
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut o.resize, "New vertical resolution");
@@ -404,7 +404,7 @@ impl Mode for CustomMode {
                 }
             }
             let job = self.job(&input, info, output, af, sf)?;
-            return Ok(Plan { jobs: vec![job], ..Default::default() });
+            return Ok(Plan { jobs: vec![job], cpu_only: true, ..Default::default() });
         }
         if self.scan.is_some() {
             return Err("Still scanning the folder.".into());
@@ -454,7 +454,7 @@ impl Mode for CustomMode {
         }
         let skipped = notes.len();
         notes.insert(0, format!("Prepared {} job(s).", jobs.len()));
-        Ok(Plan { jobs, group: Some(("Custom batch".into(), false, skipped)), notes })
+        Ok(Plan { jobs, group: Some(("Custom batch".into(), false, skipped)), notes, cpu_only: true })
     }
 
     fn wants_folders(&self) -> bool {

@@ -272,10 +272,11 @@ impl Mode for RemuxMode {
                     keep_side_files: false,
                     post: PostAction::Remux { temp: j.temp.clone(), dest: j.dest.clone(), delete_source: self.st.delete_sources.then(|| j.source.clone()) },
                     warnings,
+                    cpu_fallback: None,
                 }
             })
             .collect();
-        Ok(Plan { jobs, group: Some(("Remux".into(), true, plan.skipped.len())), notes })
+        Ok(Plan { jobs, group: Some(("Remux".into(), true, plan.skipped.len())), notes, cpu_only: false })
     }
     fn wants_folders(&self) -> bool {
         true

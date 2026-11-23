@@ -395,6 +395,7 @@ fn all_modes_end_to_end() {
             keep_side_files: false,
             post: PostAction::Remux { temp: j.temp.clone(), dest: j.dest.clone(), delete_source: Some(j.source.clone()) },
             warnings: vec![],
+            cpu_fallback: None,
         })
         .collect();
     let st = run(&env, specs, Some(("Remux".into(), true, plan.skipped.len())));

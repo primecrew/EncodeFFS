@@ -47,6 +47,9 @@ pub struct JobSpec {
     pub keep_side_files: bool,
     pub post: PostAction,
     pub warnings: Vec<String>,
+    /// GPU encode (1.1): the same command with the CPU encoder. When the GPU run fails, the
+    /// runner warns and runs this instead, so one bad file doesn't fail a batch.
+    pub cpu_fallback: Option<Vec<String>>,
 }
 
 impl JobSpec {
@@ -61,6 +64,7 @@ impl JobSpec {
             keep_side_files: false,
             post: PostAction::None,
             warnings: cmd.warnings,
+            cpu_fallback: None,
         }
     }
 }
@@ -299,7 +303,27 @@ impl Queue {
                     if let (Some(r), Some(p)) = (&registry, &partial) {
                         crate::output_guard::register(r, p);
                     }
-                    let status = self.run_job(&job);
+                    let mut status = self.run_job(&job);
+                    if let (JobStatus::Failed(e), Some(cpu)) = (&status, job.spec.cpu_fallback.as_ref()) {
+                        // warn, don't block: redo this file on the CPU encoder
+                        self.log(format!("⚠ GPU encode failed for {} ({e}). Encoding this file again on the CPU (slower).", job.spec.label));
+                        let mut again = job.clone();
+                        again.spec.args = cpu.clone();
+                        again.spec.cpu_fallback = None;
+                        if let Some(p) = &partial {
+                            // a kept (debugging) partial would stop the -n run
+                            let _ = std::fs::remove_file(p);
+                        }
+                        self.set_progress(job.id, |j| {
+                            j.progress = None;
+                            j.pos_s = 0.0;
+                            j.speed.clear();
+                        });
+                        status = self.run_job(&again);
+                        if status == JobStatus::Done {
+                            self.log(format!("Done on the CPU: {}", job.spec.label));
+                        }
+                    }
                     if let (Some(r), Some(p)) = (&registry, &partial) {
                         if !p.exists() || !self.keep_temp() {
                             crate::output_guard::unregister(r, p);
@@ -580,5 +604,42 @@ impl Queue {
         for (p, _) in &spec.side_files {
             let _ = std::fs::remove_file(p);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A GPU job that fails is encoded again with the CPU command (warn, don't block).
+    /// Needs an ffmpeg on PATH; skipped otherwise.
+    #[test]
+    fn failed_gpu_job_is_redone_on_the_cpu() {
+        let ok = std::process::Command::new("ffmpeg").arg("-version").output().map(|o| o.status.success()).unwrap_or(false);
+        if !ok {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("ffenc-gpu-fallback-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let out = dir.join("out.mkv");
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let head = ["-y", "-f", "lavfi", "-i", "testsrc2=s=320x240:r=10:d=1", "-c:v"];
+        // an invalid preset fails on every machine, with or without a GPU
+        let gpu = [&head[..], &["h264_nvenc", "-preset", "no-such-preset", out.to_str().unwrap()]].concat();
+        let cpu = [&head[..], &["libx264", "-preset", "ultrafast", out.to_str().unwrap()]].concat();
+        let spec = JobSpec { label: "gpu job".into(), args: s(&gpu), output: Some(out.clone()), log_file: None, duration_s: Some(1.0), side_files: vec![], keep_side_files: false, post: PostAction::None, warnings: vec![], cpu_fallback: Some(s(&cpu)) };
+        let q = Queue::new(None, || {});
+        q.enqueue(Path::new("ffmpeg"), vec![spec], None, false);
+        let t0 = Instant::now();
+        while q.is_busy() {
+            assert!(t0.elapsed() < Duration::from_secs(60), "timed out");
+            thread::sleep(Duration::from_millis(50));
+        }
+        let s = q.shared.lock().unwrap();
+        assert_eq!(s.jobs[0].status, JobStatus::Done);
+        assert!(s.log.iter().any(|l| l.starts_with("⚠ GPU encode failed for gpu job")));
+        assert!(out.exists());
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

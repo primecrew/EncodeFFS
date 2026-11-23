@@ -323,7 +323,7 @@ impl Mode for WatermarkMode {
             jobs.push(JobSpec::new(format!("Watermark {name}"), cmd, output.clone(), log_path_for(&output), Some(pr.output_duration())));
         }
         let n = jobs.len();
-        Ok(Plan { jobs, group: (n > 1).then(|| ("Add Watermark".into(), false, 0)), notes: if n > 1 { vec![format!("Prepared {n} watermark job(s).")] } else { vec![] } })
+        Ok(Plan { jobs, group: (n > 1).then(|| ("Add Watermark".into(), false, 0)), notes: if n > 1 { vec![format!("Prepared {n} watermark job(s).")] } else { vec![] }, cpu_only: false })
     }
 
     fn on_drop(&mut self, paths: &[PathBuf], _cx: &Ctx) {
