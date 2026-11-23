@@ -2,7 +2,7 @@
 //!
 //! * [`Grabber`] – cached, background frame grabs (the app's FFmpeg) turned into textures.
 //! * [`crop_section`] – "Crop" section: Enable box, Top/Right/Bottom/Left in clock positions,
-//!   checks with a "Round to even" fix, 4 thumbnails (20/40/60/80 %) with the crop drawn on them.
+//!   checks with a "Round to even" fix, one large preview with the crop drawn on it (Previous / Next step through 20/40/60/80 %).
 //! * [`watermark_row`] / [`watermark_window`] – "Add watermark" checkbox + "Set up watermark…"
 //!   wizard for the encode presets; [`watermark_editor`] is the same editor, also used inline by
 //!   the Add Watermark preset.
@@ -21,7 +21,7 @@ use super::theme;
 
 /// Watermark images offered by Browse (any file FFmpeg reads also works via "All files").
 pub const WM_IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff"];
-/// Where the 4 crop thumbnails are taken.
+/// Where the 4 crop preview frames are taken.
 pub const THUMB_AT: [f64; 4] = [0.2, 0.4, 0.6, 0.8];
 /// Where the watermark preview frame is taken.
 pub const PREVIEW_AT: f64 = 0.5;
@@ -179,6 +179,8 @@ pub struct PictureRt {
     pub grab: Grabber,
     pub sel: usize,
     pub wizard_open: bool,
+    /// Which of the 4 crop preview frames is shown (index into THUMB_AT).
+    pub frame: usize,
     drag: Option<(Drag, WatermarkSettings, Pos2)>,
 }
 
@@ -283,7 +285,40 @@ pub fn crop_section(ui: &mut Ui, cx: &Ctx, id: &str, crop: &mut CropSettings, sr
         let (sw, sh) = cur.map(|s| (s.width, s.height)).unwrap_or((0, 0));
         let maxw = if sw > 0 { sw } else { 8192 };
         let maxh = if sh > 0 { sh } else { 8192 };
-        // clock layout: Top at 12, Right at 3, Bottom at 6, Left at 9
+        // one large preview with Previous / Next through the 4 frames
+        if let Some(src) = cur {
+            let n = THUMB_AT.len();
+            rt.frame = rt.frame.min(n - 1);
+            let f = THUMB_AT[rt.frame];
+            let ff = ffmpeg_path(cx);
+            let pw = ui.available_width().clamp(320.0, 960.0);
+            let ph = if src.width > 0 && src.height > 0 { pw * src.height as f32 / src.width as f32 } else { pw * 9.0 / 16.0 };
+            ui.add_space(4.0);
+            match rt.grab.frame(cx.egui, ff.as_deref(), src, f, 1024) {
+                Got::Ready(t) => {
+                    let (r, _) = ui.allocate_exact_size(egui::vec2(pw, ph), Sense::hover());
+                    ui.painter().image(t.id(), r, Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0)), Color32::WHITE);
+                    paint_crop(ui.painter(), r, src.width, src.height, crop);
+                }
+                Got::Busy => status_box(ui, egui::vec2(pw, ph), "", true),
+                Got::Failed(e) => status_box(ui, egui::vec2(pw, ph), e, false),
+            }
+            ui.horizontal(|ui| {
+                let prev = ui.add_enabled(rt.frame > 0, egui::Button::new("◀ Previous"));
+                if hover_tip(prev, "Show the frame before this one.").clicked() {
+                    rt.frame -= 1;
+                }
+                ui.label(RichText::new(format!("{} of {n} ({} %)", rt.frame + 1, (f * 100.0).round() as u32)).strong());
+                let next = ui.add_enabled(rt.frame + 1 < n, egui::Button::new("Next ▶"));
+                if hover_tip(next, "Show the next frame.").clicked() {
+                    rt.frame += 1;
+                }
+            });
+            ui.add_space(6.0);
+        } else {
+            hint(ui, "Choose a video to see a preview.");
+        }
+        // clock layout under the preview: Top at 12, Right at 3, Bottom at 6, Left at 9
         let cell = egui::vec2(150.0, ui.text_style_height(&egui::TextStyle::Body) * 2.0 + ui.spacing().interact_size.y + 8.0);
         let mid = |ui: &mut Ui, add: &mut dyn FnMut(&mut Ui)| {
             ui.allocate_ui_with_layout(cell, egui::Layout::top_down(egui::Align::Center), |ui| {
@@ -323,7 +358,6 @@ pub fn crop_section(ui: &mut Ui, cx: &Ctx, id: &str, crop: &mut CropSettings, sr
             });
         });
         let issues = crop_issues(crop, srcs);
-        let mut fix = false;
         for (sev, t) in &issues {
             match sev {
                 Severity::Error => {
@@ -337,36 +371,10 @@ pub fn crop_section(ui: &mut Ui, cx: &Ctx, id: &str, crop: &mut CropSettings, sr
                 Severity::Note => hint(ui, t.clone()),
             }
         }
-        if issues.iter().any(|(s, _)| *s == Severity::Warn) {
-            fix = hover_tip(ui.button("Round to even"), "Change odd values to even numbers so normal video encodes cleanly.").clicked();
-        }
-        if fix {
+        if issues.iter().any(|(s, _)| *s == Severity::Warn)
+            && hover_tip(ui.button("Round to even"), "Change odd values to even numbers so normal video encodes cleanly.").clicked()
+        {
             crop.round_to_even(sw, sh);
-        }
-        if let Some(src) = cur {
-            let ff = ffmpeg_path(cx);
-            let avail = ui.available_width().max(300.0);
-            let tw = ((avail - 3.0 * 10.0) / 4.0).clamp(160.0, 300.0);
-            let th = if src.width > 0 { tw * src.height as f32 / src.width as f32 } else { tw * 9.0 / 16.0 };
-            ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                for f in THUMB_AT {
-                    ui.vertical(|ui| {
-                        match rt.grab.frame(cx.egui, ff.as_deref(), src, f, 480) {
-                            Got::Ready(t) => {
-                                let (r, _) = ui.allocate_exact_size(egui::vec2(tw, th), Sense::hover());
-                                ui.painter().image(t.id(), r, Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0)), Color32::WHITE);
-                                paint_crop(ui.painter(), r, src.width, src.height, crop);
-                            }
-                            Got::Busy => status_box(ui, egui::vec2(tw, th), "", true),
-                            Got::Failed(e) => status_box(ui, egui::vec2(tw, th), e, false),
-                        }
-                        hint(ui, format!("{} %", (f * 100.0) as u32));
-                    });
-                }
-            });
-        } else {
-            hint(ui, "Choose a video to see thumbnails.");
         }
     });
 }

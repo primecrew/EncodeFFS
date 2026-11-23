@@ -318,8 +318,9 @@ Re-encode, Custom pipeline (single file and folder batch) and Batch re-encode ca
 ## Crop and watermark
 - **Crop** (off by default) is on every preset that re-encodes video: Re-encode (and the archive presets), Batch
   re-encode, Join (Re-encode method), Custom pipeline (when video is encoded), Frameserving and Add Watermark. Enter
-  Top / Right / Bottom / Left in pixels. Four previews (20, 40, 60, 80 % into the video) show the outline, with source
-  and result size. Odd values warn (with **Round to even**), a crop that removes the whole picture stops the run, and a
+  Top / Right / Bottom / Left in pixels in the boxes under the preview (with source and result size). One large
+  preview shows the crop outline; **◀ Previous** / **Next ▶** step through 4 frames (20, 40, 60, 80 % into the video),
+  labelled for example "2 of 4 (40 %)". With several files, a drop-down picks the file to preview. Odd values warn (with **Round to even**), a crop that removes the whole picture stops the run, and a
   result that is not a multiple of 8 is only a note. With several files, every file is checked. The crop runs first.
 - **Add watermark** (off by default) sits next to it; **Set up watermark…** opens the placement window: drag to move,
   corner handles to resize (shape locked unless you untick it), opacity 0–100 %, X / Y / W / H boxes, corner and center

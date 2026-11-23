@@ -91,7 +91,10 @@ impl Live {
             m.load(&v, &settings);
             m
         });
-        Some(Live { settings, ff, mode, pic, rt: Default::default(), srcs })
+        // "crop" shows the second preview frame so the "2 of 4 (40 %)" label is visible
+        let mut rt = super::picture::PictureRt::default();
+        rt.frame = usize::from(kind == "crop");
+        Some(Live { settings, ff, mode, pic, rt, srcs })
     }
 
     fn show(&mut self, ctx: &egui::Context, kind: &str) {
