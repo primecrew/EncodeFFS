@@ -91,7 +91,8 @@ pub fn build(pr: &StillParams) -> Result<BuiltCommand, String> {
         None => a.push("-shortest".into()),
         Some(d) => a.push_all(["-t".to_string(), fmt_num(d)]),
     }
-    if pr.faststart {
+    // like subs / tracks / join / frameserve / custom: -movflags only means something for MP4 / MOV
+    if pr.faststart && super::reencode::is_mp4_like(&pr.output) {
         a.extend(faststart_args());
     }
     a.push(p(&pr.output));
@@ -121,6 +122,27 @@ mod tests {
             vec!["-y", "-loop", "1", "-i", "/in/cover art.png", "-i", "/in/song.flac", "-c:v", "libx264", "-tune",
                  "stillimage", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-shortest", "/out/cover art_still.mp4"]
         );
+    }
+    #[test]
+    fn faststart_only_for_mp4_like_output() {
+        let mut pr = base();
+        pr.faststart = true;
+        pr.output = "/out/cover art_still.mkv".into();
+        let a = build(&pr).unwrap().args;
+        assert!(!a.iter().any(|x| x == "-movflags"), "{a:?}");
+        assert_eq!(a.last().unwrap(), "/out/cover art_still.mkv");
+        for ext in ["mp4", "mov", "m4v"] {
+            pr.output = format!("/out/x.{ext}").into();
+            let s = build(&pr).unwrap().args.join(" ");
+            assert!(s.contains(&format!("-movflags +faststart /out/x.{ext}")), "{s}");
+        }
+        // faststart off: identical commands for MP4 and MKV apart from the file name
+        pr.faststart = false;
+        pr.output = "/out/x.mkv".into();
+        let mkv = build(&pr).unwrap().args;
+        pr.output = "/out/x.mp4".into();
+        let mp4 = build(&pr).unwrap().args;
+        assert_eq!(mkv[..mkv.len() - 1], mp4[..mp4.len() - 1]);
     }
     #[test]
     fn custom_duration_faststart_range() {

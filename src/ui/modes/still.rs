@@ -116,7 +116,9 @@ impl Mode for StillMode {
                 st.video.tune = Some("stillimage".into());
             }
             crate::ui::codecs_ui::audio_codec_ui(ui, "m2", &mut st.audio_encode, false, &cx.ff_status());
-            faststart_ui(ui, &mut st.faststart, true);
+            // MP4 / MOV only; empty name = automatic .mp4 name
+            let mp4 = st.out_name.trim().is_empty() || ffenc::cmd::reencode::is_mp4_like(&PathBuf::from(st.out_name.trim()));
+            faststart_ui(ui, &mut st.faststart, mp4);
             range_ui(ui, &mut st.range_convert, None);
         });
     }
