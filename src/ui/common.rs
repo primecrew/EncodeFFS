@@ -1044,3 +1044,23 @@ mod bitrate_menu_tests {
         assert!(!show_custom_bitrate_field(256, &AAC_BITRATES, false));
     }
 }
+
+/// Call first inside every menu / submenu / context menu: items stay on one line (the menu grows
+/// to fit) instead of wrapping, e.g. "100 %" splitting into "100" / "%" after a text-size change.
+pub fn one_line_menu(ui: &mut egui::Ui) {
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+}
+
+/// View › Choose size submenu (75–300 % radio items). Returns the submenu button's response.
+pub fn choose_size_menu(ui: &mut egui::Ui, scale: &mut f32) -> egui::Response {
+    ui.menu_button("Choose size", |ui| {
+        one_line_menu(ui);
+        for s in ffenc::settings::SCALE_STEPS {
+            if ui.radio(*scale == s, format!("{:.0} %", s * 100.0)).clicked() {
+                *scale = s;
+                ui.close_menu();
+            }
+        }
+    })
+    .response
+}

@@ -510,6 +510,7 @@ impl PresetUi {
                 ev = Some(SideEvent::Import);
             }
             ui.menu_button(RichText::new("Export").small(), |ui| {
+                super::common::one_line_menu(ui);
                 if ui.button("Export selected preset…").clicked() {
                     ev = Some(SideEvent::Export { all: false });
                     ui.close_menu();
@@ -629,6 +630,7 @@ impl PresetUi {
                         let id = p.id.clone();
                         let (pinned, cat) = (p.pinned, p.category.clone());
                         r.context_menu(|ui| {
+                            super::common::one_line_menu(ui);
                             if ui.button("Run (preview command)").clicked() {
                                 run = Some(i);
                                 ui.close_menu();

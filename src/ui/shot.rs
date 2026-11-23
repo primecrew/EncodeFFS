@@ -28,7 +28,7 @@ pub fn run(kind: &str, out: &Path) -> eframe::Result<()> {
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx, &Appearance::default());
             let live = Live::new(&kind);
-            Ok(Box::new(ShotApp { kind, out, frames: 0, requested: false, saved: false, live, started: std::time::Instant::now() }))
+            Ok(Box::new(ShotApp { kind, out, frames: 0, requested: false, saved: false, live, started: std::time::Instant::now(), menu_rects: (None, None), menu_scale: std::env::var("FFENC_SHOT_SCALE").ok().and_then(|v| v.parse().ok()).unwrap_or(1.1), menu_from: std::env::var("FFENC_SHOT_FROM").ok().and_then(|v| v.parse().ok()) }))
         }),
     )
 }
@@ -41,6 +41,11 @@ struct ShotApp {
     saved: bool,
     live: Option<Live>,
     started: std::time::Instant,
+    /// "choose-size": where the View menu and its Choose size item were drawn (for simulated clicks).
+    menu_rects: (Option<egui::Rect>, Option<egui::Rect>),
+    menu_scale: f32,
+    /// FFENC_SHOT_FROM: open the menu at this size first, close it, switch to menu_scale, reopen.
+    menu_from: Option<f32>,
 }
 
 /// Real widgets fed with real media (FFENC_SHOT_VIDEO / FFENC_SHOT_IMAGE, FFmpeg from PATH),
@@ -315,7 +320,89 @@ fn show_about(ctx: &egui::Context) {
 }
 
 impl eframe::App for ShotApp {
+    /// "choose-size": open View, then hover Choose size, like a user would.
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if self.kind != "choose-size" {
+            return;
+        }
+        let (view, size) = self.menu_rects;
+        let mut f = self.frames;
+        if self.menu_from.is_some() {
+            if f == 12 {
+                raw.events.push(egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() });
+                return;
+            }
+            if f >= 13 {
+                f -= 13; // second round at the new size
+            }
+        }
+        match (f, view, size) {
+            (3, Some(v), _) => {
+                let p = v.center();
+                raw.events.push(egui::Event::PointerMoved(p));
+                raw.events.push(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+            }
+            (4, Some(v), _) => {
+                raw.events.push(egui::Event::PointerButton { pos: v.center(), button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+            }
+            (f, _, Some(r)) if f >= 6 => {
+                // move in from the left edge of the item, then rest on it
+                let p = if f == 6 { r.left_center() + egui::vec2(8.0, 0.0) } else { r.center() };
+                raw.events.push(egui::Event::PointerMoved(p));
+            }
+            _ => {}
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.kind == "choose-size" {
+            // default 110 % (FFENC_SHOT_SCALE to change); the submenu is the real View › Choose size one
+            let first = self.menu_from.filter(|_| self.frames < 13).unwrap_or(self.menu_scale);
+            let a = Appearance { scale: first, ..Appearance::default() };
+            if self.frames == 0 || self.frames == 13 {
+                theme::apply(ctx, &a);
+                self.menu_rects.1 = None;
+            }
+            theme::begin_frame(ctx, &a);
+            egui::TopBottomPanel::top("shot_menu").show(ctx, |ui| {
+                egui::menu::bar(ui, |ui| {
+                    let mut size = None;
+                    let v = ui.menu_button("View", |ui| {
+                        common::one_line_menu(ui);
+                        ui.label(RichText::new(format!("Text size: {:.0} %", first * 100.0)).strong());
+                        let _ = ui.button("Larger      Ctrl +");
+                        let _ = ui.button("Smaller     Ctrl −");
+                        let _ = ui.button("100 %        Ctrl+0");
+                        let mut sc = first;
+                        size = Some(common::choose_size_menu(ui, &mut sc).rect);
+                    });
+                    self.menu_rects.0 = Some(v.response.rect);
+                    if size.is_some() {
+                        self.menu_rects.1 = size;
+                    }
+                });
+            });
+            egui::CentralPanel::default().show(ctx, |_| {});
+            self.frames += 1;
+            let shoot_at = if self.menu_from.is_some() { 30 } else { 14 };
+            if self.frames >= shoot_at && !self.requested {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+                self.requested = true;
+            }
+            for ev in ctx.input(|i| i.raw.events.clone()) {
+                if let egui::Event::Screenshot { image, .. } = ev {
+                    if save_png(&self.out, &image) {
+                        self.saved = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
+            }
+            ctx.request_repaint();
+            if self.frames > 200 && !self.saved {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            return;
+        }
         theme::begin_frame(ctx, &Appearance::default());
         let items = sample_items();
         match self.kind.as_str() {

@@ -963,6 +963,7 @@ impl App {
                 if ui.button("Settings…").clicked() {
                     self.settings_edit = Some(self.settings.clone());
                     ui.close_menu();
+                crate::ui::common::one_line_menu(ui);
                 }
                 if ui.add(egui::Button::new("New").shortcut_text(ctx.format_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::N))))
                     .on_hover_text("Start a new job with the selected preset: clears the files and option edits on the form. Folder-based presets (Remux, Batch re-encode, Custom in folder mode) start with empty folder fields; the Recent list and Settings folders are not changed. Other presets still use the Settings output folder. Running and queued jobs, presets and Settings are not changed.")
@@ -989,6 +990,7 @@ impl App {
                 let modified = self.pre.modified(&self.pre.cur().id.clone());
                 let builtin = self.pre.is_builtin(self.pre.current);
                 if ui.button("New preset…").clicked() {
+                crate::ui::common::one_line_menu(ui);
                     self.pre.dialog = Some(Dialog::New { name: String::new(), from: presets::NewFrom::Copy(self.pre.cur().id.clone()) });
                     ui.close_menu();
                 }
@@ -1060,6 +1062,7 @@ impl App {
                 if ui.checkbox(&mut self.settings.show_source_panel, "Source info panel (ffprobe)").clicked() {
                     self.save_settings();
                     ui.close_menu();
+                crate::ui::common::one_line_menu(ui);
                 }
                 if self.settings.show_source_panel && source_panel_too_narrow(ctx) {
                     hint(ui, "(hidden while the window is too narrow for it at this text size)");
@@ -1083,14 +1086,7 @@ impl App {
                 if ui.button("100 %        Ctrl+0").clicked() {
                     a.scale = 1.0;
                 }
-                ui.menu_button("Choose size", |ui| {
-                    for s in ffenc::settings::SCALE_STEPS {
-                        if ui.radio(a.scale == s, format!("{:.0} %", s * 100.0)).clicked() {
-                            a.scale = s;
-                            ui.close_menu();
-                        }
-                    }
-                });
+                crate::ui::common::choose_size_menu(ui, &mut a.scale);
                 ui.separator();
                 if ui.button("Appearance settings…").clicked() {
                     self.settings_edit = Some(self.settings.clone());
@@ -1101,6 +1097,7 @@ impl App {
                 if ui.button("Keyboard shortcuts & accessibility   (F1)").clicked() {
                     self.show_help = true;
                     ui.close_menu();
+                crate::ui::common::one_line_menu(ui);
                 }
                 ui.separator();
                 if ui.button("Locate FFmpeg folder…").clicked() {
