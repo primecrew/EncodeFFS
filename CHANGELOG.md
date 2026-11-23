@@ -4,6 +4,11 @@ User-facing history for **Encode FFS** (stable edition, `master`, `Encode FFS.ex
 
 Create Slideshow is part of this stable build (the old **Slideshow** branch is archived as `archive/slideshow`). The **Codecs** edition (optional HEVC / AV1 video and AC3 audio, H.264 + AAC remaining the default) is now also merged into this stable app. The `codecs` branch is kept for history and is tagged `archive/codecs`. The retired **Experimental UI** branch (`ui-experimental`) remains separate.
 
+## 1.1.0-rc.2
+
+- Crop: one large preview instead of four small pictures. **◀ Previous** and **Next ▶** step through the frames at 20, 40, 60 and 80 % into the video, with a label such as "2 of 4 (40 %)". The crop outline and the file drop-down (several files) are unchanged. The Top / Right / Bottom / Left boxes, with the source and result size, are now under the preview.
+- Watermark: the "Keep the image's shape" box is now called **Maintain Aspect Ratio** (it works the same way).
+
 ## 1.1.0-rc.1
 
 - **Crop** on every preset that re-encodes video (Re-encode and the archive presets, Batch re-encode, Join with the Re-encode method, Custom pipeline when video is encoded, Frameserving, Add Watermark). Off by default. Tick **Crop** and enter Top / Right / Bottom / Left in pixels; four preview pictures (20, 40, 60 and 80 % into the video) show the crop outline, with the source size and the result size. With several files, a drop-down picks which file to preview, and every file is checked. An odd value or odd result shows a red warning with a **Round to even** button; a crop that removes the whole picture stops the run; a result that is not a multiple of 8 is only a note. The crop is the first step, before deinterlace and resize.
