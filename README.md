@@ -183,7 +183,9 @@ Re-encode.
   - **Signpost format:** AviSource `pixel_type`; leave on Automatic.
   - **Audio:** keep the audio, keep it converted to 16-bit (`ConvertAudioTo16bit()`), or no audio (`audio=false`).
     The signpost's audio is PCM, so there is no compressed-audio passthrough (one lossy encode). See **Choosing a codec**.
-  - **Force a frame rate:** `AssumeFPS(num, den)`, e.g. 30000/1001.
+  - **Change the frame rate:** `ChangeFPS(num, den)` after any Trim, e.g. 24000/1001. Frames are repeated or
+    dropped, so the length stays the same and the audio stays in sync (1.1; earlier versions used `AssumeFPS`,
+    which changed the speed of the video only and put the audio out of sync).
   - **Only part of the timeline:** `Trim(first, last)` in frames; last = 0 means to the end.
 - **Script file:** the path is written as-is in quotes; AviSynth has no escapes, and Windows paths can't contain `"`.
   Paths with non-English letters get `utf8=true`. The file is UTF-8 without BOM, with CRLF line endings.
@@ -435,8 +437,8 @@ In the **Video** section of Re-encode, Batch re-encode, Custom pipeline (when re
 (e.g. `5` for a screen-recorded meeting, `29.97`, `30000/1001`) to change it. FFmpeg drops or repeats frames
 so the length, audio and sync stay the same. A lower rate makes motion less smooth and often makes the file
 smaller, but not in proportion. Stream-copy modes (Remux, passthrough video) can't change the frame rate.
-In Frameserver, the existing "Frame rate (AssumeFPS)" option is about the *source* timeline; Output frame
-rate is for the encoded file.
+In Frameserver, "Change the frame rate (ChangeFPS)" converts in the AviSynth script and Output frame rate
+converts in FFmpeg; both keep the length and the audio sync.
 
 ## Job history (0.5.4)
 **File › Job history…** lists every **successful** job, newest at the bottom: when it finished, the job,

@@ -21,6 +21,9 @@ use ffenc::settings::Settings;
 use crate::ui::option_tips;
 use ffenc::util::{fmt_hms, stem};
 
+/// Frame rate row: a real conversion, the audio is not touched.
+const FPS_TIP: &str = "Off: the signpost's frame rate is used. On: the video is converted to this rate by repeating or dropping frames (AviSynth ChangeFPS). The length stays the same and the audio is not changed, so it stays in sync.";
+
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum Place {
     /// %TEMP%, deleted after the job.
@@ -50,6 +53,7 @@ struct State {
     trim: bool,
     trim_first: u64,
     trim_last: u64,
+    /// "Change the frame rate" (ChangeFPS). The saved name is kept for old presets.
     assume_fps: bool,
     fps_num: u32,
     fps_den: u32,
@@ -288,15 +292,12 @@ impl FrameserveMode {
         }
         let info = self.probe.info()?;
         let full = info.any_duration()?;
-        let fps = if st.assume_fps && st.fps_den > 0 { st.fps_num as f64 / st.fps_den as f64 } else { info.video().and_then(|v| v.fps).unwrap_or(0.0) };
+        // trim frame numbers are source frames; ChangeFPS (after Trim) keeps the length
+        let fps = info.video().and_then(|v| v.fps).unwrap_or(0.0);
         if st.trim && fps > 0.0 {
             let total = (full * fps).round();
             let last = if st.trim_last == 0 { total - 1.0 } else { (st.trim_last as f64).min(total - 1.0) };
             return Some(((last - st.trim_first as f64 + 1.0) / fps).max(0.0));
-        }
-        if st.assume_fps && fps > 0.0 {
-            let orig = info.video().and_then(|v| v.fps).unwrap_or(fps);
-            return Some(full * orig / fps);
         }
         Some(full)
     }
@@ -562,9 +563,9 @@ impl Mode for FrameserveMode {
             }).response.labelled_by(l.id);
             ui.end_row();
 
-            crate::ui::common::row_label_tip(ui, "Frame rate", "Normally the frame rate of the signpost file is used. Force one only if the editor exported the wrong rate.");
+            crate::ui::common::row_label_tip(ui, "Frame rate", FPS_TIP);
             ui.horizontal_wrapped(|ui| {
-                ui.checkbox(&mut st.assume_fps, "Force a frame rate (AssumeFPS)");
+                ui.checkbox(&mut st.assume_fps, "Change the frame rate (ChangeFPS)").on_hover_text(FPS_TIP);
                 if st.assume_fps {
                     let cur = fs::FPS_CHOICES.iter().find(|c| c.1 == st.fps_num && c.2 == st.fps_den).map(|c| c.0.to_string()).unwrap_or_else(|| format!("{}/{}", st.fps_num, st.fps_den));
                     egui::ComboBox::from_id_salt("fs_fps").selected_text(format!("{cur} fps")).show_ui(ui, |ui| {

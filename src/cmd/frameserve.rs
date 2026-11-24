@@ -3,7 +3,7 @@
 //! and ffmpeg reads the script (`-i script.avs`, avisynth demuxer).
 //!
 //! Function names follow the AviSynth+ documentation (avisynth.nl "Convert",
-//! "AviSource", "ConvertBits", "AssumeFPS", "Trim"). Strings in AviSynth have no
+//! "AviSource", "ConvertBits", "ChangeFPS", "Trim"). Strings in AviSynth have no
 //! escape sequences, so a path is written as-is between quotes (Windows paths
 //! can't contain `"` anyway; if one does, the triple-quote form is used).
 //! Non-ASCII paths get `utf8=true` (AviSynth+ r2768 and newer); the script itself
@@ -224,7 +224,9 @@ pub struct ScriptOptions {
     pub interlaced: bool,
     /// (first frame, last frame; 0 = to the end).
     pub trim: Option<(u64, u64)>,
-    /// (numerator, denominator).
+    /// Convert to this frame rate (numerator, denominator) with ChangeFPS: frames are repeated or
+    /// dropped, so the length and the audio stay as they are (AssumeFPS would change the speed of
+    /// the video only and put the audio out of sync).
     pub fps: Option<(u32, u32)>,
     pub bits: BitDepth,
 }
@@ -291,12 +293,6 @@ pub fn script(o: &ScriptOptions) -> Result<String, String> {
         "# The signpost file only works while your editor is serving frames (DebugMode FrameServer running).".to_string(),
         format!("AviSource({})", args.join(", ")),
     ];
-    if let Some((n, d)) = o.fps {
-        if n == 0 || d == 0 {
-            return Err("The frame rate must be above 0.".into());
-        }
-        lines.push(format!("AssumeFPS({n}, {d})"));
-    }
     if let Some((a, b)) = o.trim {
         if b != 0 && b < a {
             return Err(format!("Trim: the last frame ({b}) is before the first frame ({a})."));
@@ -304,6 +300,13 @@ pub fn script(o: &ScriptOptions) -> Result<String, String> {
         if a != 0 || b != 0 {
             lines.push(format!("Trim({a}, {b})"));
         }
+    }
+    // after Trim, so the trim frame numbers stay the editor's (source) frame numbers
+    if let Some((n, d)) = o.fps {
+        if n == 0 || d == 0 {
+            return Err("The frame rate must be above 0.".into());
+        }
+        lines.push(format!("ChangeFPS({n}, {d})"));
     }
     if let Some(f) = o.color.function() {
         let mut ca = vec![];
@@ -544,8 +547,8 @@ mod tests {
             lines(&script(&o).unwrap()),
             [
                 r#"AviSource("C:\a.avi", audio=true, pixel_type="YUY2")"#,
-                "AssumeFPS(30000, 1001)",
                 "Trim(100, 2000)",
+                "ChangeFPS(30000, 1001)",
                 r#"ConvertToYUV422(matrix="PC.709", interlaced=true)"#,
                 "ConvertBits(10)",
                 "ConvertAudioTo16bit()",
@@ -585,6 +588,28 @@ mod tests {
         assert_eq!(Color::Yuv444.pix_fmt(BitDepth::Ten), "yuv444p10le");
         assert_eq!(Color::Rgb32.pix_fmt(BitDepth::Eight), "yuv420p");
         assert!(Color::ALL.iter().all(|c| !c.help().is_empty() && c.label().contains(c.function().unwrap_or("None"))));
+    }
+
+    /// A changed frame rate is a real conversion (ChangeFPS, after Trim), never AssumeFPS, which
+    /// changes the speed of the video only and puts the audio out of sync (1.1 bug report).
+    #[test]
+    fn frame_rate_change_keeps_audio_in_sync() {
+        let mut o = ScriptOptions::new(r"C:\sp.avi");
+        let plain = script(&o).unwrap();
+        for (n, d) in [(24000, 1001), (30, 1), (60, 1)] {
+            o.fps = Some((n, d));
+            o.trim = Some((10, 0));
+            let s = script(&o).unwrap();
+            assert!(!s.contains("AssumeFPS"), "{s}");
+            let l = lines(&s);
+            let t = l.iter().position(|x| x.starts_with("Trim(")).unwrap();
+            assert_eq!(l[t + 1], format!("ChangeFPS({n}, {d})"), "after Trim: trim frames are source frames");
+        }
+        // left at the default: the script is exactly as before
+        o.fps = None;
+        o.trim = None;
+        assert_eq!(script(&o).unwrap(), plain);
+        assert!(!plain.contains("FPS("));
     }
 
     fn enc() -> EncodeParams {

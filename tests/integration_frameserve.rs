@@ -62,10 +62,49 @@ fn variants() -> Vec<(&'static str, Box<dyn Fn(&mut ScriptOptions)>, &'static st
         ("default", Box::new(|_o: &mut ScriptOptions| {}), "yuv420p", true, 120, 29.97),
         ("yv12 interlaced pt", Box::new(|o: &mut ScriptOptions| { o.color = Color::Yv12; o.interlaced = true; o.pixel_type = PixelType::Rgb32; }), "yuv420p", true, 120, 29.97),
         ("422 10-bit 16bit audio", Box::new(|o: &mut ScriptOptions| { o.color = Color::Yuv422; o.bits = BitDepth::Ten; o.audio = AudioMode::To16bit; o.matrix = Matrix::Pc709; }), "yuv422p10le", true, 120, 29.97),
-        ("444 no audio trim fps", Box::new(|o: &mut ScriptOptions| { o.color = Color::Yuv444; o.audio = AudioMode::None; o.trim = Some((30, 89)); o.fps = Some((25, 1)); }), "yuv444p", false, 60, 25.0),
+        ("444 no audio trim fps", Box::new(|o: &mut ScriptOptions| { o.color = Color::Yuv444; o.audio = AudioMode::None; o.trim = Some((30, 89)); o.fps = Some((25, 1)); }), "yuv444p", false, 50, 25.0),
         ("rgb32", Box::new(|o: &mut ScriptOptions| { o.color = Color::Rgb32; o.matrix = Matrix::Rec601; }), "yuv420p", true, 120, 29.97),
         ("none", Box::new(|o: &mut ScriptOptions| { o.color = Color::None; o.trim = Some((100, 0)); }), "yuv420p", true, 20, 29.97),
     ]
+}
+
+
+/// (video length, audio length) in seconds from the packets: last pts + duration per stream type.
+fn av_lengths(ffprobe: &Path, f: &Path) -> (f64, Option<f64>) {
+    let o = Command::new(ffprobe).args(["-v", "error", "-show_entries", "packet=codec_type,pts_time,duration_time", "-of", "json"]).arg(f).output().unwrap();
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    let (mut vend, mut aend) = (0.0f64, None::<f64>);
+    for p in v["packets"].as_array().unwrap() {
+        let t: f64 = p["pts_time"].as_str().and_then(|x| x.parse().ok()).unwrap_or(0.0);
+        let d: f64 = p["duration_time"].as_str().and_then(|x| x.parse().ok()).unwrap_or(0.0);
+        match p["codec_type"].as_str().unwrap_or("") {
+            "video" => vend = vend.max(t + d),
+            "audio" => aend = Some(aend.unwrap_or(0.0).max(t + d)),
+            _ => {}
+        }
+    }
+    (vend, aend)
+}
+
+/// Frame-rate changes with audio: (label, ChangeFPS rate or None, output frame rate field).
+const RATE_CASES: &[(&str, Option<(u32, u32)>, &str)] = &[
+    ("rate default", None, ""),
+    ("rate 23.976", Some((24000, 1001)), ""),
+    ("rate 30", Some((30, 1)), ""),
+    ("rate 60", Some((60, 1)), ""),
+    ("field 23.976", None, "24000/1001"),
+    ("field 30", None, "30"),
+    ("field 60", None, "60"),
+];
+
+/// The audio and the video end together (within about one frame) whatever the frame rate.
+fn assert_in_sync(label: &str, ffprobe: &Path, out: &Path) -> (f64, f64) {
+    let (v, a) = av_lengths(ffprobe, out);
+    let a = a.unwrap_or_else(|| panic!("{label}: no audio"));
+    // one frame at the slowest rate here, plus AAC padding
+    assert!((v - a).abs() < 1.0 / 23.976 + 0.03, "{label}: video {v:.3} s, audio {a:.3} s – out of sync");
+    assert!((v - 4.004).abs() < 0.1, "{label}: length {v:.3} s changed (speed-up/slow-down)");
+    (v, a)
 }
 
 #[test]
@@ -111,12 +150,29 @@ fn frameserve_commands_with_real_ffmpeg() {
         assert_eq!(v["chapters"].as_array().unwrap().len(), 2, "{label}");
     }
 
+    // ---- part 1b: the output frame rate field (fps filter) keeps the audio in sync
+    for (label, _, field) in RATE_CASES.iter().filter(|c| c.1.is_none()) {
+        let so = ScriptOptions::new(&avi);
+        let mut pr = enc(dir.join("s.avs"), script(&so).unwrap(), dir.join(format!("p1 {label}.mp4")));
+        pr.video.output_fps = field.to_string();
+        let mut args = build(&pr).unwrap().args;
+        assert!(!args.iter().any(|a| a == "-r"), "{label}: never retime the input");
+        let i = args.iter().position(|a| a == "-i").unwrap();
+        args[i + 1] = avi.to_string_lossy().into_owned();
+        let o = Command::new(&ffmpeg).args(["-hide_banner", "-loglevel", "error"]).args(&args).output().unwrap();
+        assert!(o.status.success(), "{label}: {}", String::from_utf8_lossy(&o.stderr));
+        let (v, a) = assert_in_sync(label, &ffprobe, &pr.output);
+        eprintln!("field sync OK: {label}: video {v:.3} s, audio {a:.3} s");
+    }
+
     // ---- part 2: real AviSynth+ through the Windows ffmpeg under Wine (optional)
     let Some(win_ffmpeg) = std::env::var_os("FFENC_WINE_FFMPEG").map(PathBuf::from) else {
         eprintln!("FFENC_WINE_FFMPEG not set – AviSynth part skipped (no avisynth demuxer on this ffmpeg)");
         std::fs::remove_dir_all(&dir).unwrap();
         return;
     };
+    // FFENC_WINE: the wine loader to use (default "wine")
+    let wine = std::env::var_os("FFENC_WINE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("wine"));
     for (label, tweak, pix, audio, frames, fps) in variants() {
         let mut so = ScriptOptions::new(z(&avi));
         tweak(&mut so);
@@ -129,7 +185,7 @@ fn frameserve_commands_with_real_ffmpeg() {
         pr.faststart = false;
         let b = build(&pr).unwrap();
         std::fs::write(&sp, &b.side_files[0].1).unwrap();
-        let o = Command::new("wine").arg(&win_ffmpeg).args(["-hide_banner", "-loglevel", "error"]).args(&b.args).env("WINEDEBUG", "-all").output().unwrap();
+        let o = Command::new(&wine).arg(&win_ffmpeg).args(["-hide_banner", "-loglevel", "error"]).args(&b.args).env("WINEDEBUG", "-all").output().unwrap();
         assert!(o.status.success() && out.is_file(), "{label}: wine ffmpeg {}\n{}\nscript:\n{}", b.args.join(" "), String::from_utf8_lossy(&o.stderr), b.side_files[0].1);
         let v = probe(&ffprobe, &out);
         let vs = of_type(&v, "video");
@@ -139,6 +195,23 @@ fn frameserve_commands_with_real_ffmpeg() {
         let want = frames as f64 / fps;
         assert!((d - want).abs() < 0.15, "{label}: duration {d}, expected about {want}");
         eprintln!("AviSynth+ under Wine OK: {label} -> {pix}, {d:.3} s");
+    }
+    // frame-rate changes in the script (ChangeFPS) and in the output field, with audio
+    for (label, rate, field) in RATE_CASES {
+        let mut so = ScriptOptions::new(z(&avi));
+        so.fps = *rate;
+        let text = script(&so).unwrap();
+        assert!(!text.contains("AssumeFPS"), "{label}: AssumeFPS changes the speed of the video only");
+        let sp = dir.join(format!("{TEMP_PREFIX}{}.avs", label.replace(' ', "_")));
+        let out = dir.join(format!("p2 {label}.mp4"));
+        let mut pr = enc(PathBuf::from(z(&sp)), text, PathBuf::from(z(&out)));
+        pr.video.output_fps = field.to_string();
+        let b = build(&pr).unwrap();
+        std::fs::write(&sp, &b.side_files[0].1).unwrap();
+        let o = Command::new(&wine).arg(&win_ffmpeg).args(["-hide_banner", "-loglevel", "error"]).args(&b.args).env("WINEDEBUG", "-all").output().unwrap();
+        assert!(o.status.success() && out.is_file(), "{label}: wine ffmpeg {}\n{}", b.args.join(" "), String::from_utf8_lossy(&o.stderr));
+        let (v, a) = assert_in_sync(label, &ffprobe, &out);
+        eprintln!("AviSynth+ under Wine sync OK: {label}: video {v:.3} s, audio {a:.3} s");
     }
     std::fs::remove_dir_all(&dir).unwrap();
 }

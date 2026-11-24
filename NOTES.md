@@ -202,7 +202,7 @@ Functional changes ported from the experimental branch (0.6.0-dev.2/dev.3); no U
   - **Function names** were checked against the AviSynth+ docs (avisynth.nl Convert / AviSource):
     - `ConvertToYUV420()` (**default**), `ConvertToYV12()`, `ConvertToYUV422()`, `ConvertToYUV444()` and
       `ConvertToRGB32()`, each with `matrix=` (default `"Rec709"`) and `interlaced=true`.
-    - Also: `ConvertBits(10)`, `AssumeFPS(n, d)`, `Trim(a, b)` and `ConvertAudioTo16bit()`.
+    - Also: `ConvertBits(10)`, `Trim(a, b)`, `ChangeFPS(n, d)` (after Trim; was `AssumeFPS` before 1.1, which desynced the audio) and `ConvertAudioTo16bit()`.
     - `AviSource(path, audio=true|false[, pixel_type="…"][, utf8=true])`.
   - **Colour help:** inline text for the selected option, plus a **Which one? (help)** button that explains every
     choice in plain words.
