@@ -21,9 +21,6 @@ use ffenc::settings::Settings;
 use crate::ui::option_tips;
 use ffenc::util::{fmt_hms, stem};
 
-/// Frame rate row: a real conversion, the audio is not touched.
-const FPS_TIP: &str = "Off: the signpost's frame rate is used. On: the video is converted to this rate by repeating or dropping frames (AviSynth ChangeFPS). The length stays the same and the audio is not changed, so it stays in sync.";
-
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum Place {
     /// %TEMP%, deleted after the job.
@@ -53,10 +50,6 @@ struct State {
     trim: bool,
     trim_first: u64,
     trim_last: u64,
-    /// "Change the frame rate" (ChangeFPS). The saved name is kept for old presets.
-    assume_fps: bool,
-    fps_num: u32,
-    fps_den: u32,
     bits: BitDepth,
     /// Only used with PC.709 / PC.601: squeeze full range to TV range in FFmpeg.
     /// Rec709 / Rec601 / Rec2020 already squeeze in the script; this stays off.
@@ -101,9 +94,6 @@ impl State {
             trim: false,
             trim_first: 0,
             trim_last: 0,
-            assume_fps: false,
-            fps_num: 30000,
-            fps_den: 1001,
             bits: BitDepth::Eight,
             range_convert: false,
             place: Place::Temp,
@@ -139,7 +129,6 @@ impl State {
             matrix: self.matrix,
             interlaced: self.interlaced,
             trim: self.trim.then_some((self.trim_first, self.trim_last)),
-            fps: self.assume_fps.then_some((self.fps_num, self.fps_den)),
             bits: conflicts::script_bit_depth(&self.video),
         }
     }
@@ -209,6 +198,24 @@ impl State {
 
     /// After loading a saved preset: map old script Bit depth onto the codec 10-bit
     /// checkbox when the codec supports it. H.264 stays 8-bit.
+    /// Old presets (before 1.1) could force a frame rate in the script ("assume_fps" with
+    /// "fps_num"/"fps_den"). That option is gone; the rate moves to Output frame rate when that box
+    /// is empty, so the preset still converts to the rate the user chose. Otherwise it is ignored.
+    fn migrate_forced_fps(&mut self, v: &serde_json::Value) {
+        if v.get("assume_fps").and_then(|x| x.as_bool()) != Some(true) || !self.video.output_fps.trim().is_empty() {
+            return;
+        }
+        let num = v.get("fps_num").and_then(|x| x.as_u64()).unwrap_or(0);
+        let den = v.get("fps_den").and_then(|x| x.as_u64()).unwrap_or(0);
+        if num == 0 || den == 0 {
+            return;
+        }
+        let rate = if den == 1 { num.to_string() } else { format!("{num}/{den}") };
+        if ffenc::cmd::common::parse_output_fps(&rate).ok().flatten().is_some() {
+            self.video.output_fps = rate;
+        }
+    }
+
     fn migrate_bit_depth(&mut self) {
         if self.video.codec != ffenc::cmd::codecs::VideoCodec::H264 {
             self.video.ten_bit = self.bits == BitDepth::Ten;
@@ -292,7 +299,7 @@ impl FrameserveMode {
         }
         let info = self.probe.info()?;
         let full = info.any_duration()?;
-        // trim frame numbers are source frames; ChangeFPS (after Trim) keeps the length
+        // trim frame numbers are source frames
         let fps = info.video().and_then(|v| v.fps).unwrap_or(0.0);
         if st.trim && fps > 0.0 {
             let total = (full * fps).round();
@@ -411,17 +418,7 @@ impl Mode for FrameserveMode {
             self.tested = Some(r);
             self.test = None;
         }
-        if self.probe.update(cx.egui, cx.ffprobe, &self.st.signpost) {
-            // prefill the frame rate from the signpost
-            if let Some(f) = self.probe.info().and_then(|i| i.video()).and_then(|v| v.fps) {
-                if !self.st.assume_fps {
-                    if let Some(c) = fs::FPS_CHOICES.iter().min_by(|a, b| ((a.1 as f64 / a.2 as f64) - f).abs().total_cmp(&((b.1 as f64 / b.2 as f64) - f).abs())) {
-                        self.st.fps_num = c.1;
-                        self.st.fps_den = c.2;
-                    }
-                }
-            }
-        }
+        self.probe.update(cx.egui, cx.ffprobe, &self.st.signpost);
 
         // help + environment check
         ui.horizontal_wrapped(|ui| {
@@ -561,23 +558,6 @@ impl Mode for FrameserveMode {
                     ui.selectable_value(&mut st.audio_mode, a, a.label());
                 }
             }).response.labelled_by(l.id);
-            ui.end_row();
-
-            crate::ui::common::row_label_tip(ui, "Frame rate", FPS_TIP);
-            ui.horizontal_wrapped(|ui| {
-                ui.checkbox(&mut st.assume_fps, "Change the frame rate (ChangeFPS)").on_hover_text(FPS_TIP);
-                if st.assume_fps {
-                    let cur = fs::FPS_CHOICES.iter().find(|c| c.1 == st.fps_num && c.2 == st.fps_den).map(|c| c.0.to_string()).unwrap_or_else(|| format!("{}/{}", st.fps_num, st.fps_den));
-                    egui::ComboBox::from_id_salt("fs_fps").selected_text(format!("{cur} fps")).show_ui(ui, |ui| {
-                        for c in fs::FPS_CHOICES {
-                            if ui.selectable_label(st.fps_num == c.1 && st.fps_den == c.2, format!("{} fps", c.0)).clicked() {
-                                st.fps_num = c.1;
-                                st.fps_den = c.2;
-                            }
-                        }
-                    }).response.on_hover_text("Frame rate");
-                }
-            });
             ui.end_row();
 
             crate::ui::common::row_label_tip(ui, "Trim", option_tips::TRIM_FRAMES);
@@ -871,6 +851,7 @@ impl Mode for FrameserveMode {
     fn load(&mut self, v: &serde_json::Value, s: &Settings) {
         self.st = restore(v, State::from_settings(s));
         self.st.migrate_bit_depth();
+        self.st.migrate_forced_fps(v);
         self.probe = ProbeSlot::default();
         self.tested = None;
         self.pic = Default::default();
@@ -888,6 +869,39 @@ impl Mode for FrameserveMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Presets saved with the removed script frame-rate option still load; the forced rate moves to
+    /// the Output frame rate box when that is empty, otherwise it is ignored.
+    #[test]
+    fn old_forced_frame_rate_moves_to_output_frame_rate() {
+        let s = Settings::default();
+        let mut m = FrameserveMode::default();
+        let base = m.save();
+        let with = |extra: serde_json::Value| {
+            let mut v = base.clone();
+            for (k, x) in extra.as_object().unwrap() {
+                v[k] = x.clone();
+            }
+            v
+        };
+        m.load(&with(serde_json::json!({"assume_fps": true, "fps_num": 24000, "fps_den": 1001})), &s);
+        assert_eq!(m.st.video.output_fps, "24000/1001");
+        m.load(&with(serde_json::json!({"assume_fps": true, "fps_num": 25, "fps_den": 1})), &s);
+        assert_eq!(m.st.video.output_fps, "25");
+        // the box already has a rate: keep it
+        let mut v = with(serde_json::json!({"assume_fps": true, "fps_num": 60, "fps_den": 1}));
+        v["video"]["output_fps"] = "30".into();
+        m.load(&v, &s);
+        assert_eq!(m.st.video.output_fps, "30");
+        // option was off (or broken values): ignored
+        m.load(&with(serde_json::json!({"assume_fps": false, "fps_num": 60, "fps_den": 1})), &s);
+        assert_eq!(m.st.video.output_fps, "");
+        m.load(&with(serde_json::json!({"assume_fps": true, "fps_num": 0, "fps_den": 1})), &s);
+        assert_eq!(m.st.video.output_fps, "");
+        // the old keys are not written again, and the script has no frame-rate line
+        assert!(m.save().get("assume_fps").is_none());
+        assert!(!m.st.script().unwrap_or_default().contains("FPS("));
+    }
 
     #[test]
     fn defaults_yuv420_and_paths() {

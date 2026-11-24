@@ -62,7 +62,7 @@ fn variants() -> Vec<(&'static str, Box<dyn Fn(&mut ScriptOptions)>, &'static st
         ("default", Box::new(|_o: &mut ScriptOptions| {}), "yuv420p", true, 120, 29.97),
         ("yv12 interlaced pt", Box::new(|o: &mut ScriptOptions| { o.color = Color::Yv12; o.interlaced = true; o.pixel_type = PixelType::Rgb32; }), "yuv420p", true, 120, 29.97),
         ("422 10-bit 16bit audio", Box::new(|o: &mut ScriptOptions| { o.color = Color::Yuv422; o.bits = BitDepth::Ten; o.audio = AudioMode::To16bit; o.matrix = Matrix::Pc709; }), "yuv422p10le", true, 120, 29.97),
-        ("444 no audio trim fps", Box::new(|o: &mut ScriptOptions| { o.color = Color::Yuv444; o.audio = AudioMode::None; o.trim = Some((30, 89)); o.fps = Some((25, 1)); }), "yuv444p", false, 50, 25.0),
+        ("444 no audio trim", Box::new(|o: &mut ScriptOptions| { o.color = Color::Yuv444; o.audio = AudioMode::None; o.trim = Some((30, 89)); }), "yuv444p", false, 60, 29.97),
         ("rgb32", Box::new(|o: &mut ScriptOptions| { o.color = Color::Rgb32; o.matrix = Matrix::Rec601; }), "yuv420p", true, 120, 29.97),
         ("none", Box::new(|o: &mut ScriptOptions| { o.color = Color::None; o.trim = Some((100, 0)); }), "yuv420p", true, 20, 29.97),
     ]
@@ -86,15 +86,12 @@ fn av_lengths(ffprobe: &Path, f: &Path) -> (f64, Option<f64>) {
     (vend, aend)
 }
 
-/// Frame-rate changes with audio: (label, ChangeFPS rate or None, output frame rate field).
-const RATE_CASES: &[(&str, Option<(u32, u32)>, &str)] = &[
-    ("rate default", None, ""),
-    ("rate 23.976", Some((24000, 1001)), ""),
-    ("rate 30", Some((30, 1)), ""),
-    ("rate 60", Some((60, 1)), ""),
-    ("field 23.976", None, "24000/1001"),
-    ("field 30", None, "30"),
-    ("field 60", None, "60"),
+/// Frame-rate changes with audio: (label, Output frame rate box).
+const RATE_CASES: &[(&str, &str)] = &[
+    ("rate default", ""),
+    ("field 23.976", "24000/1001"),
+    ("field 30", "30"),
+    ("field 60", "60"),
 ];
 
 /// The audio and the video end together (within about one frame) whatever the frame rate.
@@ -151,7 +148,7 @@ fn frameserve_commands_with_real_ffmpeg() {
     }
 
     // ---- part 1b: the output frame rate field (fps filter) keeps the audio in sync
-    for (label, _, field) in RATE_CASES.iter().filter(|c| c.1.is_none()) {
+    for (label, field) in RATE_CASES {
         let so = ScriptOptions::new(&avi);
         let mut pr = enc(dir.join("s.avs"), script(&so).unwrap(), dir.join(format!("p1 {label}.mp4")));
         pr.video.output_fps = field.to_string();
@@ -196,12 +193,11 @@ fn frameserve_commands_with_real_ffmpeg() {
         assert!((d - want).abs() < 0.15, "{label}: duration {d}, expected about {want}");
         eprintln!("AviSynth+ under Wine OK: {label} -> {pix}, {d:.3} s");
     }
-    // frame-rate changes in the script (ChangeFPS) and in the output field, with audio
-    for (label, rate, field) in RATE_CASES {
-        let mut so = ScriptOptions::new(z(&avi));
-        so.fps = *rate;
+    // the Output frame rate box with a real script and audio
+    for (label, field) in RATE_CASES {
+        let so = ScriptOptions::new(z(&avi));
         let text = script(&so).unwrap();
-        assert!(!text.contains("AssumeFPS"), "{label}: AssumeFPS changes the speed of the video only");
+        assert!(!text.contains("FPS("), "{label}: the script never changes the frame rate");
         let sp = dir.join(format!("{TEMP_PREFIX}{}.avs", label.replace(' ', "_")));
         let out = dir.join(format!("p2 {label}.mp4"));
         let mut pr = enc(PathBuf::from(z(&sp)), text, PathBuf::from(z(&out)));
