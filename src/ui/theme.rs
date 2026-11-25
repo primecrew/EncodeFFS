@@ -180,8 +180,14 @@ pub fn style(k: Kind, a: &Appearance) -> egui::Style {
     if k == Kind::HighContrast {
         s.spacing.button_padding = egui::vec2(6.0, 3.0);
     }
+    // Scroll bars get their own strip beside the content (never drawn over buttons at the right
+    // edge), with a gap between the content and the bar. Points, so it scales with the text size.
+    s.spacing.scroll = egui::style::ScrollStyle { bar_inner_margin: SCROLL_GAP, ..egui::style::ScrollStyle::solid() };
     s
 }
+
+/// Gap between scrollable content and its scroll bar (points; scales with the text size).
+pub const SCROLL_GAP: f32 = 10.0;
 
 /// Apply theme + scale + mono size. Call when the appearance changed (cheap enough
 /// to call on every change; not every frame).
@@ -248,6 +254,15 @@ pub fn contrast(a: Color32, b: Color32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scroll_bars_never_cover_content() {
+        for k in [Kind::Dark, Kind::Light, Kind::HighContrast] {
+            let st = style(k, &Appearance::default());
+            assert!(!st.spacing.scroll.floating, "solid bars get their own strip beside the content");
+            assert!(st.spacing.scroll.bar_inner_margin >= 8.0, "gap between the content and the bar");
+        }
+    }
 
     #[test]
     fn text_contrast_aa_in_every_theme() {

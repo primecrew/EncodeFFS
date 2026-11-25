@@ -258,12 +258,26 @@ pub fn folder_row_nodrop(ui: &mut Ui, id: &str, label: &str, value: &mut String,
     folder_row_impl(ui, id, label, value, default_folder, recents, false, empty_hint)
 }
 
+/// Width a plain button with `text` takes in `ui`, plus the spacing before it and the text
+/// field's own frame margin (a TextEdit is `desired_width` plus 4 points on each side).
+fn button_room(ui: &Ui, text: &str) -> f32 {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let w = ui.fonts(|f| f.layout_no_wrap(text.to_owned(), font, egui::Color32::WHITE).size().x);
+    w + 2.0 * ui.spacing().button_padding.x + ui.spacing().item_spacing.x + 8.0
+}
+
+/// Room for the "Recent" drop-down (120 wide) and the spacing before it.
+fn combo_room(ui: &Ui) -> f32 {
+    120.0 + 2.0 * ui.spacing().button_padding.x + ui.spacing().item_spacing.x
+}
+
 fn folder_row_impl(ui: &mut Ui, id: &str, label: &str, value: &mut String, default_folder: &str, recents: &[String], droppable: bool, empty_hint: &str) -> bool {
     use ffenc::recent_folders;
     let mut changed = false;
     row_label(ui, label);
     ui.horizontal(|ui| {
-        let w = (ui.available_width() - 200.0).max(120.0);
+        // the field takes what's left after Recent and Browse…, so they stay inside the panel
+        let w = (ui.available_width() - combo_room(ui) - button_room(ui, "Browse…")).max(80.0);
         let mut te = egui::TextEdit::singleline(value).desired_width(w);
         let hint = if empty_hint.is_empty() {
             if droppable { "Drop a folder here, or Browse…".to_string() } else { String::new() }
@@ -322,7 +336,7 @@ fn path_row_impl(ui: &mut Ui, label: &str, value: &mut String, pick: Pick, fallb
     let mut changed = false;
     row_label(ui, label);
     ui.horizontal(|ui| {
-        let w = (ui.available_width() - 80.0).max(120.0);
+        let w = (ui.available_width() - button_room(ui, "Browse…")).max(80.0);
         let mut te = egui::TextEdit::singleline(value).desired_width(w);
         if droppable {
             te = te.hint_text(match pick {
@@ -539,7 +553,7 @@ pub fn trim_rows(ui: &mut Ui, ids: (&str, &str), start: &mut f64, end: &mut f64,
     use ffenc::timeparse::clock;
     let big = ui.text_style_height(&egui::TextStyle::Body) * 1.15;
     hover_tip(row_label(ui, RichText::new("Trim").size(big).strong().color(ui.visuals().strong_text_color())), crate::ui::option_tips::TRIM);
-    ui.label(RichText::new("Cut time off the start and end (seconds, mm:ss or hh:mm:ss)").color(ui.visuals().strong_text_color()));
+    ui.add(egui::Label::new(RichText::new("Cut time off the start and end (seconds, mm:ss or hh:mm:ss)").color(ui.visuals().strong_text_color())).wrap());
     ui.end_row();
     row_label(ui, "From Start");
     let a = time_field(ui, ids.0, "Trim from start", start, 0.0..=1.0e7);
