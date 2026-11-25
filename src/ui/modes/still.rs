@@ -97,12 +97,12 @@ impl Mode for StillMode {
             ui.label("");
             self.probe.status_ui(ui, describe_audio);
             ui.end_row();
-            crate::ui::common::row_label(ui, "Duration");
-            ui.horizontal(|ui| {
+            crate::ui::common::row_label_tip(ui, "Duration", crate::ui::common::TIME_FORMATS);
+            ui.horizontal_wrapped(|ui| {
                 let ad = self.probe.info().and_then(|i| i.any_duration());
                 ui.checkbox(&mut st.use_audio_duration, format!("Use audio duration{}", ad.map(|d| format!(" ({})", fmt_hms(d))).unwrap_or_default()));
                 if !st.use_audio_duration {
-                    num_f64(ui, &mut st.custom_duration, 0.01..=1.0e7, 0.1, " s");
+                    crate::ui::common::time_field(ui, "m2_dur", "Duration", &mut st.custom_duration, 0.01..=1.0e7);
                 }
             });
             ui.end_row();

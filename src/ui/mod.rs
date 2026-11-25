@@ -2036,10 +2036,11 @@ if ui.button("About").clicked() {
                     crate::ui::common::row_label_tip(ui, "Gain", "Pre-gain in decibels, applied before the compressor (+6 dB is roughly twice as loud). 0 = unchanged.");
                     common::num_f64(ui, &mut ed.gain_db, -30.0..=30.0, 0.1, " dB");
                     ui.end_row();
-                    crate::ui::common::row_label(ui, "Trim start / end");
-                    ui.horizontal(|ui| {
-                        common::num_f64(ui, &mut ed.trim_start, 0.0..=1e7, 0.1, " s");
-                        common::num_f64(ui, &mut ed.trim_end, 0.0..=1e7, 0.1, " s");
+                    crate::ui::common::row_label_tip(ui, "Trim (cut from start / end)", option_tips::TRIM);
+                    ui.horizontal_wrapped(|ui| {
+                        common::time_field(ui, "set_ts", "Default trim: cut from start", &mut ed.trim_start, 0.0..=1e7);
+                        ui.label("/");
+                        common::time_field(ui, "set_te", "Default trim: cut from end", &mut ed.trim_end, 0.0..=1e7);
                     });
                     ui.end_row();
                     crate::ui::common::row_label(ui, "Chapter interval");
@@ -2047,7 +2048,7 @@ if ui.button("About").clicked() {
                     ui.end_row();
                     crate::ui::common::row_label(ui, "Length tolerance");
                     ui.horizontal_wrapped(|ui| {
-                        common::num_f64(ui, &mut ed.duration_tolerance_s, 0.0..=60.0, 0.1, " s");
+                        common::time_field(ui, "set_tol", "Length tolerance", &mut ed.duration_tolerance_s, 0.0..=60.0);
                         common::hint(ui, "Audio & subtitles: added tracks this close to the video's length count as matching (no warning).");
                     });
                     ui.end_row();

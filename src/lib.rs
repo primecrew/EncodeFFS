@@ -18,6 +18,7 @@ pub mod settings;
 pub mod recent_folders;
 pub mod data_migrate;
 pub mod updater;
+pub mod timeparse;
 pub mod util;
 pub mod winver;
 

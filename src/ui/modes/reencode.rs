@@ -140,29 +140,28 @@ impl Mode for ReencodeMode {
             self.probe.status_ui(ui, describe_video);
             ui.end_row();
 
-            crate::ui::common::row_label_tip(ui, "Duration", "Length used for progress and automatic chapters. Override it only when ffprobe reports a wrong duration.");
-            ui.horizontal(|ui| {
+            crate::ui::common::row_label_tip(ui, "Duration", "Length used for progress and automatic chapters. Override it only when ffprobe reports a wrong duration. Type seconds, mm:ss or hh:mm:ss.");
+            ui.horizontal_wrapped(|ui| {
                 ui.checkbox(&mut st.override_duration, "Override ffprobe duration");
                 if st.override_duration {
-                    num_f64(ui, &mut st.duration, 0.0..=1.0e7, 0.1, " s");
-                    ui.label(fmt_hms(st.duration));
+                    crate::ui::common::time_field(ui, "m1_dur", "Duration", &mut st.duration, 0.0..=1.0e7);
                 }
             });
             ui.end_row();
 
             crate::ui::common::row_label_tip(ui, "Trim", option_tips::TRIM);
-            ui.horizontal(|ui| {
-                ui.label("start");
-                num_f64(ui, &mut st.trim_start, 0.0..=1.0e7, 0.1, " s");
-                ui.label("end");
-                num_f64(ui, &mut st.trim_end, 0.0..=1.0e7, 0.1, " s");
+            ui.horizontal_wrapped(|ui| {
+                ui.label("cut from start");
+                crate::ui::common::time_field(ui, "m1_ts", "Trim: cut from start", &mut st.trim_start, 0.0..=1.0e7);
+                ui.label("cut from end");
+                crate::ui::common::time_field(ui, "m1_te", "Trim: cut from end", &mut st.trim_end, 0.0..=1.0e7);
                 let dur = if st.override_duration { Some(st.duration) } else { summary.as_ref().map(|s| s.duration_s) };
                 if let Some(d) = dur {
                     let out = d - st.trim_start - st.trim_end;
                     if out > 0.0 {
                         hint(ui, format!("output {}", fmt_hms(out)));
                     } else {
-                        ui.colored_label(crate::ui::theme::c().err, "trim exceeds duration");
+                        warn(ui, "The trim removes the whole video: start + end must be less than its length.");
                     }
                 }
             });

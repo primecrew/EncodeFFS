@@ -439,6 +439,14 @@ In Frameserver, Output frame rate is the only frame rate control; the script kee
 video only and put the audio out of sync. It was removed; a preset saved with it moves that rate into Output
 frame rate when that box is empty.)
 
+## Time fields (1.1)
+Every box that takes a time in seconds (trim, duration override, still image duration, slideshow times,
+the Settings defaults) also accepts **mm:ss** and **hh:mm:ss**: `84.5` = 84.5 seconds, `12:30` = 12 min 30 s,
+`1:05.5`, `1:02:03`, `1:02:03.25`. The parsed value is shown next to the box, e.g. "= 1:02:03 (3,723 s)", and FFmpeg
+gets plain seconds. Letters, negative values, minutes or seconds of 60 or more in the colon forms (use
+hh:mm:ss for an hour or more) and more than two colons show a warning, and the box keeps its last good
+value. Trim "end" is how much to cut from the end, not an end time. Frameserver Trim stays in frames.
+
 ## Job history (0.5.4)
 **File › Job history…** lists every **successful** job, newest at the bottom: when it finished, the job,
 the preset it came from, the output file (its final name), how long it took, the form settings (JSON) and

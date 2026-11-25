@@ -192,11 +192,11 @@ impl Mode for CustomMode {
             }
             ui.end_row();
             crate::ui::common::row_label_tip(ui, "Trim", option_tips::TRIM);
-            ui.horizontal(|ui| {
-                ui.label("start");
-                num_f64(ui, &mut st.o.trim_start, 0.0..=1.0e7, 0.1, " s");
-                ui.label("end");
-                num_f64(ui, &mut st.o.trim_end, 0.0..=1.0e7, 0.1, " s");
+            ui.horizontal_wrapped(|ui| {
+                ui.label("cut from start");
+                crate::ui::common::time_field(ui, "cu_ts", "Trim: cut from start", &mut st.o.trim_start, 0.0..=1.0e7);
+                ui.label("cut from end");
+                crate::ui::common::time_field(ui, "cu_te", "Trim: cut from end", &mut st.o.trim_end, 0.0..=1.0e7);
             });
             ui.end_row();
         });

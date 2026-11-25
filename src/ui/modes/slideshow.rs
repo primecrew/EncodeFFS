@@ -664,13 +664,13 @@ impl Mode for SlideshowMode {
             ui.end_row();
             match self.st.duration_mode {
                 DurationMode::PerImage => {
-                    row_label(ui, "Seconds per image");
-                    num_f64(ui, &mut self.st.per_image_s, 0.1..=3600.0, 0.1, " s");
+                    row_label_tip(ui, "Time per image", crate::ui::common::TIME_FORMATS);
+                    ui.horizontal_wrapped(|ui| crate::ui::common::time_field(ui, "ss_per", "Time per image", &mut self.st.per_image_s, 0.1..=3600.0));
                     ui.end_row();
                 }
                 DurationMode::FixedTotal => {
-                    row_label(ui, "Total length");
-                    num_f64(ui, &mut self.st.fixed_total_s, 0.1..=86400.0, 0.5, " s");
+                    row_label_tip(ui, "Total length", crate::ui::common::TIME_FORMATS);
+                    ui.horizontal_wrapped(|ui| crate::ui::common::time_field(ui, "ss_total", "Total length", &mut self.st.fixed_total_s, 0.1..=86400.0));
                     ui.end_row();
                 }
                 DurationMode::MatchAudio => {
@@ -729,9 +729,9 @@ impl Mode for SlideshowMode {
                 }
             });
             ui.end_row();
-            row_label_tip(ui, "Crossfade length", "Extra time added between two images; each image stays fully visible for its display time, then the transition runs. With N images: total = N×per-image + (N−1)×transition. Example: 3 images of 5 s with a 2 s fade last 19 s.");
+            row_label_tip(ui, "Crossfade length", "Extra time added between two images; each image stays fully visible for its display time, then the transition runs. With N images: total = N×per-image + (N−1)×transition. Example: 3 images of 5 s with a 2 s fade last 19 s. Type seconds, mm:ss or hh:mm:ss.");
             ui.add_enabled_ui(self.st.transition != Transition::None, |ui| {
-                num_f64(ui, &mut self.st.fade_s, 0.0..=30.0, 0.05, " s");
+                ui.horizontal_wrapped(|ui| crate::ui::common::time_field(ui, "ss_fade", "Crossfade length", &mut self.st.fade_s, 0.0..=30.0));
             });
             ui.end_row();
 

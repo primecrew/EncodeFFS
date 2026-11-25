@@ -395,6 +395,57 @@ pub fn num_f64(ui: &mut Ui, v: &mut f64, range: std::ops::RangeInclusive<f64>, s
     ui.add(egui::DragValue::new(v).range(range).speed(speed).suffix(suffix.to_string()).max_decimals(3))
 }
 
+/// Hover help and hint for every time field (1.1).
+pub const TIME_FORMATS: &str = "Type seconds, mm:ss or hh:mm:ss (e.g. 84.5, 1:24.5, 1:02:03).";
+
+/// Text as typed in a time field and the value it was last synced with.
+#[derive(Clone, Default)]
+struct TimeBuf {
+    text: String,
+    value: f64,
+}
+
+/// Time field (1.1): accepts seconds, mm:ss or hh:mm:ss and stores plain seconds in `v`, which is
+/// what the commands use. Shows the parsed value next to it ("= 1:02:03 (3,723 s)"). Invalid or
+/// out-of-range text gets a warning and is not used (`v` keeps its last good value).
+pub fn time_field(ui: &mut Ui, id: &str, name: &str, v: &mut f64, range: std::ops::RangeInclusive<f64>) -> egui::Response {
+    use ffenc::timeparse::{describe, parse_time, plain_seconds};
+    let key = ui.id().with(("time_field", id));
+    let mut buf: TimeBuf = ui.ctx().data_mut(|d| d.get_temp(key)).unwrap_or(TimeBuf { text: plain_seconds(*v), value: *v });
+    if buf.value != *v {
+        // changed elsewhere (preset loaded, reset, …)
+        buf = TimeBuf { text: plain_seconds(*v), value: *v };
+    }
+    let resp = ui.add(egui::TextEdit::singleline(&mut buf.text).desired_width(96.0).hint_text("0"));
+    let resp = named(resp, egui::WidgetType::TextEdit, &format!("{name}. {TIME_FORMATS}"));
+    let problem = match parse_time(&buf.text) {
+        Ok(x) if x < *range.start() => Some(format!("Must be at least {}.", describe(*range.start()))),
+        Ok(x) if x > *range.end() => Some(format!("Must be at most {}.", describe(*range.end()))),
+        Ok(x) => {
+            *v = x;
+            None
+        }
+        Err(e) => Some(e),
+    };
+    buf.value = *v;
+    match problem {
+        None => {
+            ui.label(RichText::new(format!("= {}", describe(*v))).strong());
+        }
+        Some(e) => warn(ui, format!("{e} Not used: still {}.", describe(*v))),
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(key, buf));
+    resp
+}
+
+/// Put `text` in the time field `id` as if typed (screenshots); `v` is the field's current value.
+pub fn seed_time_text(ui: &Ui, id: &str, text: &str, v: f64) {
+    let key = ui.id().with(("time_field", id));
+    if ui.ctx().data(|d| d.get_temp::<TimeBuf>(key)).is_none() {
+        ui.ctx().data_mut(|d| d.insert_temp(key, TimeBuf { text: text.into(), value: v }));
+    }
+}
+
 pub fn num_u32(ui: &mut Ui, v: &mut u32, range: std::ops::RangeInclusive<u32>, suffix: &str) -> egui::Response {
     ui.add(egui::DragValue::new(v).range(range).speed(1.0).suffix(suffix.to_string()))
 }

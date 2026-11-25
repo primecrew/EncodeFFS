@@ -38,7 +38,7 @@ pub const DEINTERLACE: &str = "Turns interlaced video (the old “combed” look
 pub const RESIZE: &str = "Changes the height of the picture; the width stays in proportion. Leave this off to keep the original size.";
 
 /// Start/end trim in seconds (re-encode, batch, custom).
-pub const TRIM: &str = "How many seconds to cut from the start and from the end of the file. Leave both at 0 to keep the whole clip.";
+pub const TRIM: &str = "How much to cut from the start and from the end, in seconds, mm:ss or hh:mm:ss (like 84.5, 1:24.5 or 1:02:03). The end box is an amount to remove, not an end time. Leave both at 0 to keep the whole clip.";
 
 /// Frameserver trim is in frame numbers, not seconds.
 pub const TRIM_FRAMES: &str = "Encode only part of the timeline, by first and last frame number. Leave this off to use the whole clip.";

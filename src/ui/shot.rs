@@ -360,6 +360,42 @@ fn show_settings_hw(ctx: &egui::Context, kind: &str) {
     }
 }
 
+/// 1.1 time fields: seconds, mm:ss and hh:mm:ss with the parsed value, and one invalid entry.
+fn show_time_fields(ctx: &egui::Context) {
+    thread_local! { static V: std::cell::Cell<(f64, f64, f64, f64)> = const { std::cell::Cell::new((0.0, 0.0, 0.0, 0.0)) }; }
+    let (mut a, mut b, mut c, mut d) = V.with(|v| v.get());
+    common::fit(egui::Window::new("Re-encode video").collapsible(false).resizable(false).default_width(900.0).anchor(egui::Align2::CENTER_TOP, [0.0, 20.0]), ctx, false).show(ctx, |ui| {
+        ui.set_min_width(860.0);
+        egui::Grid::new("shot_time").num_columns(2).spacing([12.0, 10.0]).show(ui, |ui| {
+            common::row_label_tip(ui, "Trim", super::option_tips::TRIM);
+            ui.horizontal_wrapped(|ui| {
+                ui.label("cut from start");
+                common::seed_time_text(ui, "ts", "1:02:03", a);
+                common::time_field(ui, "ts", "Trim: cut from start", &mut a, 0.0..=1.0e7);
+                ui.label("cut from end");
+                common::seed_time_text(ui, "te", "84.5", b);
+                common::time_field(ui, "te", "Trim: cut from end", &mut b, 0.0..=1.0e7);
+                hint(ui, format!("output {}", ffenc::util::fmt_hms((5400.0 - a - b).max(0.0))));
+            });
+            ui.end_row();
+            common::row_label(ui, "mm:ss");
+            ui.horizontal_wrapped(|ui| {
+                common::seed_time_text(ui, "mm", "12:30", c);
+                common::time_field(ui, "mm", "Example", &mut c, 0.0..=1.0e7);
+            });
+            ui.end_row();
+            common::row_label(ui, "Invalid");
+            ui.horizontal_wrapped(|ui| {
+                common::seed_time_text(ui, "bad", "1:75", d);
+                common::time_field(ui, "bad", "Example", &mut d, 0.0..=1.0e7);
+            });
+            ui.end_row();
+        });
+        hint(ui, "Source: 1:30:00 (5,400 s)");
+    });
+    V.with(|v| v.set((a, b, c, d)));
+}
+
 fn show_about(ctx: &egui::Context) {
     common::fit(
         egui::Window::new("About")
@@ -491,6 +527,7 @@ impl eframe::App for ShotApp {
             }
             "crf-popup" => show_crf(ctx),
             "about" => show_about(ctx),
+            "time-fields" => show_time_fields(ctx),
             k if k.starts_with("settings-hw") => {
                 let k = k.to_string();
                 show_settings_hw(ctx, &k);
