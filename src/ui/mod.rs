@@ -399,6 +399,7 @@ impl App {
         let data_migration = ffenc::data_migrate::migrate_if_needed();
         let first_run = !settings::settings_path().exists();
         let mut settings = Settings::load();
+        common::remember_input_dir(&settings.last_input_dir);
         // where the app-managed FFmpeg lives (before anything looks for FFmpeg)
         ffenc::ffmpeg::managed::set_location(&settings.managed_ffmpeg_dir);
         // appearance before the first frame, so panels are laid out at the right scale
@@ -616,6 +617,13 @@ impl App {
     }
 
     fn save_settings(&mut self) {
+        if let Some(dir) = presets::primary_input(self.pre.editor(self.pre.current, &self.settings)).and_then(|p| p.parent().map(|d| d.to_path_buf())).filter(|d| d.is_dir()) {
+            common::remember_input_dir(&dir.to_string_lossy());
+        }
+        let last = common::last_input_dir();
+        if !last.is_empty() {
+            self.settings.last_input_dir = last;
+        }
         self.settings.drafts = self.pre.drafts();
         self.settings.last_preset = self.pre.cur().id.clone();
         self.queue.set_keep_temp(self.settings.keep_temp_files);
@@ -2130,7 +2138,7 @@ if ui.button("About").clicked() {
                     let drafts = std::mem::take(&mut ed.drafts);
                     let (input_folder, output_folder, ffmpeg_bin_path) = (ed.input_folder.clone(), ed.output_folder.clone(), ed.ffmpeg_bin_path.clone());
                     let (recent_folders, recent_folder_limit) = (ed.recent_folders.clone(), ed.recent_folder_limit);
-                    ed = Settings { drafts, last_preset: ed.last_preset.clone(), input_folder, output_folder, ffmpeg_bin_path, recent_folders, recent_folder_limit, ..Settings::default() };
+                    ed = Settings { drafts, last_preset: ed.last_preset.clone(), last_input_dir: ed.last_input_dir.clone(), input_folder, output_folder, ffmpeg_bin_path, recent_folders, recent_folder_limit, ..Settings::default() };
                 }
             });
         });

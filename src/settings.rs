@@ -339,6 +339,9 @@ pub struct Settings {
     pub drafts: BTreeMap<String, serde_json::Value>,
     /// Id of the preset that was open last.
     pub last_preset: String,
+    /// Folder of the last input file used (1.1): Browse starts there while it exists. The input
+    /// boxes themselves start blank on launch.
+    pub last_input_dir: String,
     /// Right-hand "Source" panel (ffprobe summary of the selected input).
     pub show_source_panel: bool,
     /// Terminal syntax for "Copy command" in the run confirmation.
@@ -410,6 +413,7 @@ impl Default for Settings {
             keep_logs_on_success: false,
             drafts: BTreeMap::new(),
             last_preset: String::new(),
+            last_input_dir: String::new(),
             show_source_panel: true,
             copy_shell: crate::cmdline::Shell::PowerShell,
             appearance: Appearance::default(),

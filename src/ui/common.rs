@@ -145,6 +145,29 @@ fn start_dir(current: &str, fallback: &str) -> Option<PathBuf> {
     d.or_else(|| Some(PathBuf::from(fallback)).filter(|p| p.is_dir()))
 }
 
+/// Folder of the last input file used this session (seeded from Settings at launch).
+static LAST_INPUT_DIR: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// Remember `dir` as the last input folder (ignored when blank).
+pub fn remember_input_dir(dir: &str) {
+    let dir = dir.trim();
+    if !dir.is_empty() {
+        *LAST_INPUT_DIR.lock().unwrap_or_else(|e| e.into_inner()) = dir.to_string();
+    }
+}
+
+pub fn last_input_dir() -> String {
+    LAST_INPUT_DIR.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Where Browse… for an input file opens: the box's own folder when it has a path, else the
+/// last-used input folder if it still exists, else the Settings input folder.
+fn file_start_dir(current: &str, last: &str, fallback: &str) -> Option<PathBuf> {
+    let last = last.trim();
+    let fb = if !last.is_empty() && std::path::Path::new(last).is_dir() { last } else { fallback };
+    start_dir(current, fb)
+}
+
 /// Keep a window inside the screen at any text size (large UI scales leave few
 /// points of screen): capped to the screen with a margin. `scroll` adds a
 /// vertical scrollbar for dialogs that have no scroll area of their own.
@@ -314,7 +337,11 @@ fn path_row_impl(ui: &mut Ui, label: &str, value: &mut String, pick: Pick, fallb
         }
         if ui.button("Browse…").clicked() {
             let mut d = rfd::FileDialog::new();
-            if let Some(s) = start_dir(value, fallback_dir) {
+            let start = match pick {
+                Pick::File(..) => file_start_dir(value, &last_input_dir(), fallback_dir),
+                Pick::Folder => start_dir(value, fallback_dir),
+            };
+            if let Some(s) = start {
                 d = d.set_directory(s);
             }
             let picked = match pick {
@@ -327,6 +354,11 @@ fn path_row_impl(ui: &mut Ui, label: &str, value: &mut String, pick: Pick, fallb
             }
         }
     });
+    if changed && matches!(pick, Pick::File(..)) {
+        if let Some(dir) = std::path::Path::new(value.trim()).parent().filter(|d| d.is_dir()) {
+            remember_input_dir(&dir.to_string_lossy());
+        }
+    }
     ui.end_row();
     changed
 }
@@ -1286,5 +1318,30 @@ mod time_field_tests {
         input.events.push(egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() });
         let _ = ctx.run(input, |ctx| time_popup_ui(ctx));
         assert!(!time_popup_open(&ctx));
+    }
+}
+
+#[cfg(test)]
+mod browse_dir_tests {
+    use super::*;
+
+    #[test]
+    fn input_browse_starts_in_the_last_used_folder_while_it_exists() {
+        let tmp = std::env::temp_dir().join(format!("ffenc-browse-{}", std::process::id()));
+        let (last, def) = (tmp.join("last"), tmp.join("default"));
+        std::fs::create_dir_all(&last).unwrap();
+        std::fs::create_dir_all(&def).unwrap();
+        let (l, d) = (last.to_string_lossy().into_owned(), def.to_string_lossy().into_owned());
+        // blank box: last-used folder
+        assert_eq!(file_start_dir("", &l, &d), Some(last.clone()));
+        // nothing remembered: Settings input folder
+        assert_eq!(file_start_dir("", "", &d), Some(def.clone()));
+        // remembered folder gone: Settings input folder
+        let gone = tmp.join("gone").to_string_lossy().into_owned();
+        assert_eq!(file_start_dir("", &gone, &d), Some(def.clone()));
+        // a path in the box wins
+        let f = def.join("clip.mp4").to_string_lossy().into_owned();
+        assert_eq!(file_start_dir(&f, &l, &d), Some(def.clone()));
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

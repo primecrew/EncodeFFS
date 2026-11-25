@@ -315,9 +315,17 @@ impl PresetUi {
     pub fn editor(&mut self, idx: usize, s: &Settings) -> &mut Editor {
         let p = self.list[idx].clone();
         if !self.editors.contains_key(&p.id) {
-            let e = make_editor(&p, s, s.drafts.get(&p.id))
+            let draft = s.drafts.get(&p.id);
+            let mut e = make_editor(&p, s, draft)
                 .or_else(|| make_editor(&Preset { kind: "custom".into(), ..p.clone() }, s, None))
                 .expect("custom kind exists");
+            // 1.1: single-file forms open blank (no input from an earlier launch); option edits stay
+            if let Some(d) = draft.filter(|_| !e.mode.wants_folders()) {
+                let opts = presets::strip_run_fields(d.clone(), e.mode.run_fields());
+                if let Some(ne) = make_editor(&p, s, Some(&opts)) {
+                    e = ne;
+                }
+            }
             self.editors.insert(p.id.clone(), e);
         }
         self.editors.get_mut(&p.id).unwrap()
@@ -337,13 +345,19 @@ impl PresetUi {
         }
     }
 
-    /// Drafts to persist: edited forms in full, otherwise just the run fields.
+    /// Drafts to persist: edited forms (without the input files of single-file forms, which
+    /// open blank on the next launch); folder-based forms also keep their folders.
     pub fn drafts(&self) -> std::collections::BTreeMap<String, Value> {
         self.editors
             .iter()
             .filter_map(|(id, e)| {
+                let folders = e.mode.wants_folders();
                 if e.modified() {
-                    return Some((id.clone(), e.mode.save()));
+                    let v = e.mode.save();
+                    return Some((id.clone(), if folders { v } else { presets::strip_run_fields(v, e.mode.run_fields()) }));
+                }
+                if !folders {
+                    return None;
                 }
                 // unchanged form: remember only the files of the current run
                 let Value::Object(m) = e.run_values() else { return None };
@@ -1345,18 +1359,46 @@ mod tests {
         let mut pu = ui_with(presets::factory_all());
         set(pu.editor(0, &s0), "input", json!("/v/a.mkv"), &s0);
         let _ = pu.editor(1, &s0); // opened, untouched
-        let d = pu.drafts();
-        assert_eq!(d.len(), 1);
-        assert_eq!(d["builtin-reencode"], json!({"input": "/v/a.mkv"}));
+        // 1.1: an input file alone is not kept for the next launch
+        assert!(pu.drafts().is_empty(), "{:?}", pu.drafts());
         set(pu.editor(0, &s0), "trim_end", json!(4.0), &s0);
         let d = pu.drafts();
         assert_eq!(d["builtin-reencode"]["trim_end"], json!(4.0));
-        // next start: draft restored, still shown as modified
+        assert!(d["builtin-reencode"].get("input").is_none(), "input file not persisted");
+        // next start: option edits restored (still shown as modified), input box blank
         let s1 = Settings { drafts: d, ..Settings::default() };
         let mut pu2 = ui_with(presets::factory_all());
         let e = pu2.editor(0, &s1);
-        assert_eq!(e.mode.save()["input"], json!("/v/a.mkv"));
+        assert_eq!(e.mode.save()["input"], json!(""));
+        assert_eq!(e.mode.save()["trim_end"], json!(4.0));
         assert!(e.modified());
+    }
+
+    #[test]
+    fn single_file_forms_open_blank_from_older_settings() {
+        // settings written by 1.0 kept the input file (and output name) of every open form
+        let mut s = Settings { output_folder: "/my/out".into(), ..Settings::default() };
+        let list = presets::factory_all();
+        for p in &list {
+            s.drafts.insert(p.id.clone(), json!({"input": "/v/a.mkv", "video": "/v/a.mkv", "image": "/v/a.png", "signpost": "/v/s.avi", "dest": "/v/d.mkv", "files": ["/v/a.mkv"], "out_name": "a_encoded.mp4"}));
+        }
+        let mut pu = ui_with(list.clone());
+        for i in 0..list.len() {
+            let e = pu.editor(i, &s);
+            if e.mode.wants_folders() {
+                continue;
+            }
+            assert!(primary_input(e).is_none(), "{}: opens with no input file", list[i].id);
+            let v = e.mode.save();
+            for k in e.mode.run_fields() {
+                if let Some(x) = v.get(*k) {
+                    assert!(x.as_str().map(|s| s.is_empty()).unwrap_or(true) || x.as_array().map(|a| a.is_empty()).unwrap_or(false) || !x.is_string() && !x.is_array(), "{}: {k} = {x}", list[i].id);
+                }
+            }
+            if v.get("out_dir").is_some() {
+                assert_eq!(v["out_dir"], json!("/my/out"), "{}: output folder still from Settings", list[i].id);
+            }
+        }
     }
 
     #[test]

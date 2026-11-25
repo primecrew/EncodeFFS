@@ -245,8 +245,10 @@ Everything in the preset panel is a **preset**: a named, saved set of options fo
   (“Re-encode video (your edits)”, or the name you gave it) and the built-in goes back to factory. Built-ins you had
   deleted come back hidden. User presets that used a built-in's name are renamed (“… (2)”). The log lists every change.
 - **New…** starts from a copy of any preset or a blank preset of any type. Right-click a preset for the same actions.
-- Files chosen for a run (inputs, typed output names) are *not* part of a preset; they're remembered as a draft and carried
-  over when you switch to another preset that takes a file.
+- Files chosen for a run (inputs, typed output names) are *not* part of a preset. While the app is open they're carried
+  over when you switch to another preset that takes a file. On the next launch the file boxes start blank (1.1);
+  Browse… opens in the folder of the last input file you used while it still exists, otherwise in the Settings input
+  folder. Unsaved option edits are still kept, and folder-based presets (Batch, Remux folder, Slideshow) keep their folders.
 - **Favorites** (`"pinned": true`) and **folders** (`"category"`) are stored with the preset and survive export/import.
 - **Import / export** (panel buttons or Presets menu): JSON files with one or many presets. Imports get new ids and unique names;
   unknown types are skipped. Imported copies of built-ins become your own presets.
