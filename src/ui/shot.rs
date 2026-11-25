@@ -134,7 +134,7 @@ impl Live {
         };
         let cx = super::modes::Ctx { settings: &self.settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade: None, encoders: no_av1, ff: self.ff.as_ref(), managed_encoders: None, switch_to_managed: None, get_managed: Some(&get) };
         egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).vertical_scroll_offset(if kind == "reencode-wm" { 0.0 } else { 0.0 }).show(ui, |ui| match kind {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).vertical_scroll_offset(0.0).show(ui, |ui| match kind {
                 "crop" | "crop-warn" => {
                     ui.heading("Re-encode video");
                     super::picture::crop_section(ui, &cx, "shot", &mut self.pic.crop, &self.srcs, &mut self.rt);
@@ -484,7 +484,6 @@ impl eframe::App for ShotApp {
                             super::modes::Plan::default(),
                             vec![],
                             None,
-                            ffenc::output_guard::WhenExists::Ask,
                         ));
                     }
                     let _ = p.borrow_mut().as_mut().unwrap().show(ctx, &ffenc::settings::Settings::default());

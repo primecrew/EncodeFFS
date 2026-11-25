@@ -937,7 +937,7 @@ impl App {
                 match ffenc::cmd::codecs::encoder_runtime(&needed, self.ff.as_ref(), enc.as_ref(), self.managed_encoders.as_ref(), managed_ok) {
                     ffenc::cmd::codecs::EncoderRuntime::NeedDownload { short } => {
                         self.preview_origin = Some(origin.clone());
-                        self.fallback_prompt = Some(FallbackPrompt::ask(short.to_string(), plan, items, Some(origin), self.settings.when_exists));
+                        self.fallback_prompt = Some(FallbackPrompt::ask(short.to_string(), plan, items, Some(origin)));
                     }
                     ffenc::cmd::codecs::EncoderRuntime::UseManaged { short } => {
                         self.queue.log(ffenc::cmd::codecs::use_managed_note(short));
@@ -1723,7 +1723,7 @@ if ui.button("About").clicked() {
         self.finished.show(ctx);
         if let Some(prompt) = self.fallback_prompt.as_mut() {
             match prompt.show(ctx, &self.settings) {
-                FallbackEvent::Ready { plan, program, items, origin, policy: _ } => {
+                FallbackEvent::Ready { plan, program, items, origin } => {
                     self.fallback_prompt = None;
                     self.start_managed_probe(ctx);
                     if let Some(origin) = origin {
@@ -2552,7 +2552,7 @@ impl eframe::App for App {
         if let Some(short) = self.get_managed.take() {
             // same download prompt as at Run, without a job: it installs only into the app-managed folder
             if self.fallback_prompt.is_none() {
-                self.fallback_prompt = Some(FallbackPrompt::ask(short.to_string(), modes::Plan::default(), Vec::new(), None, self.settings.when_exists));
+                self.fallback_prompt = Some(FallbackPrompt::ask(short.to_string(), modes::Plan::default(), Vec::new(), None));
             }
         }
         if self.switch_to_managed.get() {

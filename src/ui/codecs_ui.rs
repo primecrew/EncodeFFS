@@ -41,10 +41,6 @@ pub struct FfCodecStatus<'a> {
 }
 
 impl FfCodecStatus<'_> {
-    pub fn none() -> Self {
-        Self { paths: None, encoders: None, managed_encoders: None, switch_to_managed: None, get_managed: None, source_height: None, gpu: None }
-    }
-
     pub fn with_height(mut self, height: Option<u32>) -> Self {
         self.source_height = height;
         self
@@ -52,10 +48,6 @@ impl FfCodecStatus<'_> {
 
     pub fn offer_switch(&self, encoder: &str) -> bool {
         codecs::can_switch_to_managed(self.paths, self.encoders.as_ref(), self.managed_encoders.as_ref(), encoder)
-    }
-
-    pub fn offer_switch_any(&self) -> bool {
-        codecs::can_switch_to_managed_for_any(self.paths, self.encoders.as_ref(), self.managed_encoders.as_ref())
     }
 
     pub fn offer_switch_video(&self) -> bool {

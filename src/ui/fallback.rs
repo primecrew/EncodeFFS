@@ -10,7 +10,6 @@ use eframe::egui::{self, RichText};
 
 use ffenc::cmd::codecs;
 use ffenc::ffmpeg::locate;
-use ffenc::output_guard::WhenExists;
 use ffenc::settings::Settings;
 use ffenc::updater::install::{self, Stage};
 use ffenc::updater::{self, AvailableBuild};
@@ -24,7 +23,6 @@ pub struct FallbackPrompt {
     /// Conflicts to show after the download, if any.
     pub items: Vec<ffenc::cmd::conflicts::Conflict>,
     pub origin: Option<ffenc::job_history::Origin>,
-    pub policy: WhenExists,
     stage: StageUi,
 }
 
@@ -41,13 +39,13 @@ enum StageUi {
 
 pub enum FallbackEvent {
     None,
-    Ready { plan: Plan, program: PathBuf, items: Vec<ffenc::cmd::conflicts::Conflict>, origin: Option<ffenc::job_history::Origin>, policy: WhenExists },
+    Ready { plan: Plan, program: PathBuf, items: Vec<ffenc::cmd::conflicts::Conflict>, origin: Option<ffenc::job_history::Origin> },
     Cancelled,
 }
 
 impl FallbackPrompt {
-    pub fn ask(short: String, plan: Plan, items: Vec<ffenc::cmd::conflicts::Conflict>, origin: Option<ffenc::job_history::Origin>, policy: WhenExists) -> Self {
-        Self { short, plan, items, origin, policy, stage: StageUi::Ask }
+    pub fn ask(short: String, plan: Plan, items: Vec<ffenc::cmd::conflicts::Conflict>, origin: Option<ffenc::job_history::Origin>) -> Self {
+        Self { short, plan, items, origin, stage: StageUi::Ask }
     }
 
     /// Managed ffmpeg.exe once a download has finished (or if it was already there).
@@ -89,7 +87,6 @@ impl FallbackPrompt {
                                     program,
                                     items: self.items.clone(),
                                     origin: self.origin.clone(),
-                                    policy: self.policy,
                                 };
                             }
                             self.stage = StageUi::Failed("The download finished, but the app-managed FFmpeg was not found.".into());
