@@ -19,7 +19,7 @@ pub fn run(kind: &str, out: &Path) -> eframe::Result<()> {
     let out = out.to_path_buf();
     let viewport = egui::ViewportBuilder::default()
         .with_title("Encode FFS")
-        .with_inner_size(if matches!(kind.as_str(), "crop" | "crop-warn" | "watermark" | "reencode-wm" | "codec-missing" | "codec-gpu") { [1100.0, 900.0] } else { [1100.0, 700.0] })
+        .with_inner_size(if matches!(kind.as_str(), "crop" | "crop-warn" | "watermark" | "reencode-wm" | "codec-missing" | "codec-gpu" | "trim-section" | "trim-popup") { [1100.0, 900.0] } else { [1100.0, 700.0] })
         .with_min_inner_size([800.0, 500.0]);
     let options = eframe::NativeOptions { viewport, centered: true, ..Default::default() };
     eframe::run_native(
@@ -61,7 +61,7 @@ struct Live {
 
 impl Live {
     fn new(kind: &str) -> Option<Live> {
-        if !matches!(kind, "crop" | "crop-warn" | "watermark" | "reencode-wm" | "codec-missing" | "codec-gpu") {
+        if !matches!(kind, "crop" | "crop-warn" | "watermark" | "reencode-wm" | "codec-missing" | "codec-gpu" | "trim-section" | "trim-popup") {
             return None;
         }
         use ffenc::cmd::picture::{CropSettings, PictureSettings, WatermarkSettings};
@@ -93,7 +93,7 @@ impl Live {
                 settings.hw.detect[0].program = f.ffmpeg.to_string_lossy().into_owned();
             }
         }
-        let mode = matches!(kind, "reencode-wm" | "codec-missing" | "codec-gpu").then(|| {
+        let mode = matches!(kind, "reencode-wm" | "codec-missing" | "codec-gpu" | "trim-section" | "trim-popup").then(|| {
             let mut m = super::modes::new_mode("reencode").unwrap();
             let v = if kind == "codec-gpu" {
                 serde_json::json!({
@@ -107,6 +107,14 @@ impl Live {
                     "input": video.to_string_lossy(),
                     "out_dir": video.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
                     "video": { "codec": "Av1", "crf": 35 }
+                })
+            } else if kind.starts_with("trim-") {
+                // 1:30:00 source, 2:15 cut from the start and 3:00 from the end
+                serde_json::json!({
+                    "input": video.to_string_lossy(),
+                    "out_dir": video.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+                    "trim_start": 135.0,
+                    "trim_end": 180.0
                 })
             } else {
                 serde_json::json!({
@@ -144,7 +152,7 @@ impl Live {
                     common::section(ui, "2. Watermark");
                     super::picture::watermark_editor(ui, &cx, "shot", &mut self.pic, &self.srcs, &mut self.rt);
                 }
-                "reencode-wm" | "codec-missing" | "codec-gpu" => {
+                "reencode-wm" | "codec-missing" | "codec-gpu" | "trim-section" | "trim-popup" => {
                     if let Some(m) = self.mode.as_mut() {
                         ui.heading(m.title());
                         m.ui(ui, &cx);
@@ -153,6 +161,12 @@ impl Live {
                 _ => {}
             });
         });
+        if kind == "trim-popup" {
+            // the pop-up the From Start box raises when "1:75" is typed and Enter is pressed
+            let e = ffenc::timeparse::parse_time("1:75").unwrap_err();
+            common::time_popup(ctx, format!("{e}\n\nThe box goes back to 2:15."));
+        }
+        common::time_popup_ui(ctx);
         ctx.request_repaint();
     }
 }
@@ -360,42 +374,6 @@ fn show_settings_hw(ctx: &egui::Context, kind: &str) {
     }
 }
 
-/// 1.1 time fields: seconds, mm:ss and hh:mm:ss with the parsed value, and one invalid entry.
-fn show_time_fields(ctx: &egui::Context) {
-    thread_local! { static V: std::cell::Cell<(f64, f64, f64, f64)> = const { std::cell::Cell::new((0.0, 0.0, 0.0, 0.0)) }; }
-    let (mut a, mut b, mut c, mut d) = V.with(|v| v.get());
-    common::fit(egui::Window::new("Re-encode video").collapsible(false).resizable(false).default_width(900.0).anchor(egui::Align2::CENTER_TOP, [0.0, 20.0]), ctx, false).show(ctx, |ui| {
-        ui.set_min_width(860.0);
-        egui::Grid::new("shot_time").num_columns(2).spacing([12.0, 10.0]).show(ui, |ui| {
-            common::row_label_tip(ui, "Trim", super::option_tips::TRIM);
-            ui.horizontal_wrapped(|ui| {
-                ui.label("cut from start");
-                common::seed_time_text(ui, "ts", "1:02:03", a);
-                common::time_field(ui, "ts", "Trim: cut from start", &mut a, 0.0..=1.0e7);
-                ui.label("cut from end");
-                common::seed_time_text(ui, "te", "84.5", b);
-                common::time_field(ui, "te", "Trim: cut from end", &mut b, 0.0..=1.0e7);
-                hint(ui, format!("output {}", ffenc::util::fmt_hms((5400.0 - a - b).max(0.0))));
-            });
-            ui.end_row();
-            common::row_label(ui, "mm:ss");
-            ui.horizontal_wrapped(|ui| {
-                common::seed_time_text(ui, "mm", "12:30", c);
-                common::time_field(ui, "mm", "Example", &mut c, 0.0..=1.0e7);
-            });
-            ui.end_row();
-            common::row_label(ui, "Invalid");
-            ui.horizontal_wrapped(|ui| {
-                common::seed_time_text(ui, "bad", "1:75", d);
-                common::time_field(ui, "bad", "Example", &mut d, 0.0..=1.0e7);
-            });
-            ui.end_row();
-        });
-        hint(ui, "Source: 1:30:00 (5,400 s)");
-    });
-    V.with(|v| v.set((a, b, c, d)));
-}
-
 fn show_about(ctx: &egui::Context) {
     common::fit(
         egui::Window::new("About")
@@ -527,7 +505,6 @@ impl eframe::App for ShotApp {
             }
             "crf-popup" => show_crf(ctx),
             "about" => show_about(ctx),
-            "time-fields" => show_time_fields(ctx),
             k if k.starts_with("settings-hw") => {
                 let k = k.to_string();
                 show_settings_hw(ctx, &k);

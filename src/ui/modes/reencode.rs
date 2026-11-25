@@ -14,7 +14,7 @@ use ffenc::cmd::common::*;
 use ffenc::cmd::reencode::{self, ReencodeParams};
 use ffenc::ffmpeg::runner::JobSpec;
 use ffenc::settings::Settings;
-use ffenc::util::{fmt_hms, stem, VIDEO_EXTS};
+use ffenc::util::{stem, VIDEO_EXTS};
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
@@ -149,23 +149,8 @@ impl Mode for ReencodeMode {
             });
             ui.end_row();
 
-            crate::ui::common::row_label_tip(ui, "Trim", option_tips::TRIM);
-            ui.horizontal_wrapped(|ui| {
-                ui.label("cut from start");
-                crate::ui::common::time_field(ui, "m1_ts", "Trim: cut from start", &mut st.trim_start, 0.0..=1.0e7);
-                ui.label("cut from end");
-                crate::ui::common::time_field(ui, "m1_te", "Trim: cut from end", &mut st.trim_end, 0.0..=1.0e7);
-                let dur = if st.override_duration { Some(st.duration) } else { summary.as_ref().map(|s| s.duration_s) };
-                if let Some(d) = dur {
-                    let out = d - st.trim_start - st.trim_end;
-                    if out > 0.0 {
-                        hint(ui, format!("output {}", fmt_hms(out)));
-                    } else {
-                        warn(ui, "The trim removes the whole video: start + end must be less than its length.");
-                    }
-                }
-            });
-            ui.end_row();
+            let dur = if st.override_duration { Some(st.duration) } else { summary.as_ref().map(|s| s.duration_s) };
+            let _ = crate::ui::common::trim_rows(ui, ("m1_ts", "m1_te"), &mut st.trim_start, &mut st.trim_end, dur.filter(|d| *d > 0.0));
 
             if output_rows_sfx(ui, &mut st.out_dir, &mut st.out_name, &mut st.suffix, &cx.settings.output_folder) {
                 st.regen_name();

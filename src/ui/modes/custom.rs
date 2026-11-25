@@ -191,14 +191,7 @@ impl Mode for CustomMode {
                 st.regen_name();
             }
             ui.end_row();
-            crate::ui::common::row_label_tip(ui, "Trim", option_tips::TRIM);
-            ui.horizontal_wrapped(|ui| {
-                ui.label("cut from start");
-                crate::ui::common::time_field(ui, "cu_ts", "Trim: cut from start", &mut st.o.trim_start, 0.0..=1.0e7);
-                ui.label("cut from end");
-                crate::ui::common::time_field(ui, "cu_te", "Trim: cut from end", &mut st.o.trim_end, 0.0..=1.0e7);
-            });
-            ui.end_row();
+            let _ = crate::ui::common::trim_rows(ui, ("cu_ts", "cu_te"), &mut st.o.trim_start, &mut st.o.trim_end, None);
         });
         if st.o.batch && !self.rows.is_empty() {
             crate::ui::layout::section(ui, "custom.files", egui::CollapsingHeader::new(format!("Files ({})", self.rows.len())), false, |ui| {

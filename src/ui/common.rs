@@ -398,52 +398,146 @@ pub fn num_f64(ui: &mut Ui, v: &mut f64, range: std::ops::RangeInclusive<f64>, s
 /// Hover help and hint for every time field (1.1).
 pub const TIME_FORMATS: &str = "Type seconds, mm:ss or hh:mm:ss (e.g. 84.5, 1:24.5, 1:02:03).";
 
-/// Text as typed in a time field and the value it was last synced with.
+/// Text as typed in a time field, the value it was last synced with, and the last good text.
 #[derive(Clone, Default)]
 struct TimeBuf {
     text: String,
     value: f64,
+    good: String,
+}
+
+/// Message for the time pop-up, and the pass it was raised in (so the Enter that raised it doesn't close it).
+#[derive(Clone)]
+struct TimePopup {
+    msg: String,
+    pass: u64,
+}
+
+fn time_popup_id() -> egui::Id {
+    egui::Id::new("time_entry_popup")
+}
+
+/// Raise the time pop-up with `msg` unless one is already showing.
+pub fn time_popup(ctx: &egui::Context, msg: impl Into<String>) {
+    let id = time_popup_id();
+    if ctx.data(|d| d.get_temp::<TimePopup>(id)).is_none() {
+        let pop = TimePopup { msg: msg.into(), pass: ctx.cumulative_pass_nr() };
+        ctx.data_mut(|d| d.insert_temp(id, pop));
+    }
+}
+
+/// Is the time pop-up showing?
+#[cfg(test)]
+pub fn time_popup_open(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<TimePopup>(time_popup_id())).is_some()
+}
+
+/// Draw the time pop-up (once per frame, from the app). Large, high-contrast text and an OK button.
+pub fn time_popup_ui(ctx: &egui::Context) {
+    let id = time_popup_id();
+    let Some(pop) = ctx.data(|d| d.get_temp::<TimePopup>(id)) else { return };
+    let mut close = false;
+    egui::Modal::new(egui::Id::new("time_entry_modal")).show(ctx, |ui| {
+        ui.set_max_width((ctx.screen_rect().width() - 80.0).clamp(240.0, 620.0));
+        let size = ui.text_style_height(&egui::TextStyle::Body) * 1.35;
+        ui.label(RichText::new("⚠ Check this time").size(size * 1.15).strong().color(ui.visuals().warn_fg_color));
+        ui.add_space(6.0);
+        ui.label(RichText::new(&pop.msg).size(size).strong().color(ui.visuals().strong_text_color()));
+        ui.add_space(10.0);
+        let ok = ui.add(egui::Button::new(RichText::new("   OK   ").size(size).strong()));
+        let fresh = ctx.cumulative_pass_nr() <= pop.pass + 1;
+        close = ok.clicked() || (!fresh && ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape)));
+    });
+    if close {
+        ctx.data_mut(|d| d.remove::<TimePopup>(id));
+    }
 }
 
 /// Time field (1.1): accepts seconds, mm:ss or hh:mm:ss and stores plain seconds in `v`, which is
-/// what the commands use. Shows the parsed value next to it ("= 1:02:03 (3,723 s)"). Invalid or
-/// out-of-range text gets a warning and is not used (`v` keeps its last good value).
+/// what the commands use. Valid text is used as you type. Invalid or out-of-range text is not used:
+/// when you leave the box or press Enter a pop-up says what's wrong and the box goes back to its
+/// last good value.
 pub fn time_field(ui: &mut Ui, id: &str, name: &str, v: &mut f64, range: std::ops::RangeInclusive<f64>) -> egui::Response {
-    use ffenc::timeparse::{describe, parse_time, plain_seconds};
+    use ffenc::timeparse::{clock, field_text, parse_time};
     let key = ui.id().with(("time_field", id));
-    let mut buf: TimeBuf = ui.ctx().data_mut(|d| d.get_temp(key)).unwrap_or(TimeBuf { text: plain_seconds(*v), value: *v });
+    let fresh = |v: f64| TimeBuf { text: field_text(v), value: v, good: field_text(v) };
+    let mut buf: TimeBuf = ui.ctx().data_mut(|d| d.get_temp(key)).unwrap_or_else(|| fresh(*v));
     if buf.value != *v {
         // changed elsewhere (preset loaded, reset, …)
-        buf = TimeBuf { text: plain_seconds(*v), value: *v };
+        buf = fresh(*v);
     }
-    let resp = ui.add(egui::TextEdit::singleline(&mut buf.text).desired_width(96.0).hint_text("0"));
+    let resp = ui.add(egui::TextEdit::singleline(&mut buf.text).desired_width(110.0).hint_text("0"));
     let resp = named(resp, egui::WidgetType::TextEdit, &format!("{name}. {TIME_FORMATS}"));
+    let resp = hover_tip(resp, TIME_FORMATS);
+    let t = buf.text.trim().to_string();
     let problem = match parse_time(&buf.text) {
-        Ok(x) if x < *range.start() => Some(format!("Must be at least {}.", describe(*range.start()))),
-        Ok(x) if x > *range.end() => Some(format!("Must be at most {}.", describe(*range.end()))),
+        Ok(x) if x < *range.start() => Some(format!("“{t}” is too short here. The shortest allowed is {}.", clock(*range.start()))),
+        Ok(x) if x > *range.end() => Some(format!("“{t}” is too long here. The longest allowed is {}.", clock(*range.end()))),
         Ok(x) => {
             *v = x;
+            buf.good = buf.text.clone();
             None
         }
         Err(e) => Some(e),
     };
     buf.value = *v;
-    match problem {
-        None => {
-            ui.label(RichText::new(format!("= {}", describe(*v))).strong());
+    if let Some(e) = problem {
+        if resp.lost_focus() {
+            time_popup(ui.ctx(), format!("{e}\n\nThe box goes back to {}.", clock(*v)));
+            buf.text = buf.good.clone();
         }
-        Some(e) => warn(ui, format!("{e} Not used: still {}.", describe(*v))),
     }
     ui.ctx().data_mut(|d| d.insert_temp(key, buf));
     resp
 }
 
-/// Put `text` in the time field `id` as if typed (screenshots); `v` is the field's current value.
+/// Put `text` in the time field `id` as if typed (tests); `v` is the field's current value.
+#[cfg(test)]
 pub fn seed_time_text(ui: &Ui, id: &str, text: &str, v: f64) {
     let key = ui.id().with(("time_field", id));
     if ui.ctx().data(|d| d.get_temp::<TimeBuf>(key)).is_none() {
-        ui.ctx().data_mut(|d| d.insert_temp(key, TimeBuf { text: text.into(), value: v }));
+        ui.ctx().data_mut(|d| d.insert_temp(key, TimeBuf { text: text.into(), value: v, good: text.into() }));
     }
+}
+
+/// Trim rows for a 2-column grid: a bold "Trim" heading with a short explanation, then
+/// "From Start [box]" and "From End [box]". With the source length known, a "New length" row too,
+/// and a pop-up when the trim would remove the whole video. `ids` are the two boxes' ids.
+pub fn trim_rows(ui: &mut Ui, ids: (&str, &str), start: &mut f64, end: &mut f64, length: Option<f64>) -> (egui::Response, egui::Response) {
+    use ffenc::timeparse::clock;
+    let big = ui.text_style_height(&egui::TextStyle::Body) * 1.15;
+    hover_tip(row_label(ui, RichText::new("Trim").size(big).strong().color(ui.visuals().strong_text_color())), crate::ui::option_tips::TRIM);
+    ui.label(RichText::new("Cut time off the start and end (seconds, mm:ss or hh:mm:ss)").color(ui.visuals().strong_text_color()));
+    ui.end_row();
+    row_label(ui, "From Start");
+    let a = time_field(ui, ids.0, "Trim from start", start, 0.0..=1.0e7);
+    ui.end_row();
+    row_label(ui, "From End");
+    let b = time_field(ui, ids.1, "Trim from end", end, 0.0..=1.0e7);
+    ui.end_row();
+    if let Some(d) = length {
+        let out = d - *start - *end;
+        row_label(ui, "");
+        if out > 0.0 {
+            ui.label(RichText::new(format!("New length: {} (was {})", clock(out), clock(d))).strong());
+        } else {
+            warn(ui, format!("This trim removes the whole video (it is {} long).", clock(d)));
+            if a.lost_focus() || b.lost_focus() {
+                time_popup(
+                    ui.ctx(),
+                    format!(
+                        "This trim removes the whole video.\n\nThe video is {} long, but From Start ({}) plus From End ({}) is {}. Make them add up to less than the video's length.",
+                        clock(d),
+                        clock(*start),
+                        clock(*end),
+                        clock(*start + *end)
+                    ),
+                );
+            }
+        }
+        ui.end_row();
+    }
+    (a, b)
 }
 
 pub fn num_u32(ui: &mut Ui, v: &mut u32, range: std::ops::RangeInclusive<u32>, suffix: &str) -> egui::Response {
@@ -1114,4 +1208,83 @@ pub fn choose_size_menu(ui: &mut egui::Ui, scale: &mut f32) -> egui::Response {
         }
     })
     .response
+}
+
+#[cfg(test)]
+mod time_field_tests {
+    use super::*;
+
+    /// Frames with the trim rows: From Start seeded with `text` and focused in frame 0, Enter in
+    /// frame 1. Returns start, end, and whether the pop-up is up after each frame.
+    fn enter(text: &str, start: f64, end: f64, length: Option<f64>) -> (f64, f64, Vec<bool>) {
+        let ctx = egui::Context::default();
+        let (mut a, mut b) = (start, end);
+        let mut popup = vec![];
+        for frame in 0..4 {
+            let mut input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0))), ..Default::default() };
+            if frame == 1 {
+                input.events.push(egui::Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() });
+            }
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    egui::Grid::new("g").num_columns(2).show(ui, |ui| {
+                        seed_time_text(ui, "s", text, a);
+                        let (r, _) = trim_rows(ui, ("s", "e"), &mut a, &mut b, length);
+                        if frame == 0 {
+                            r.request_focus();
+                        }
+                    });
+                });
+                time_popup_ui(ctx);
+            });
+            popup.push(time_popup_open(&ctx));
+        }
+        (a, b, popup)
+    }
+
+    #[test]
+    fn valid_text_is_used_without_a_popup() {
+        let (a, b, popup) = enter("1:02:03", 0.0, 4.0, Some(5400.0));
+        assert_eq!((a, b), (3723.0, 4.0));
+        assert!(popup.iter().all(|p| !p), "{popup:?}");
+        let (a, _, popup) = enter("84.5", 0.0, 0.0, None);
+        assert_eq!(a, 84.5);
+        assert!(popup.iter().all(|p| !p));
+    }
+
+    #[test]
+    fn invalid_text_pops_up_on_enter_and_keeps_the_last_good_value() {
+        let (a, _, popup) = enter("1:75", 5.0, 0.0, None);
+        assert_eq!(a, 5.0, "not used");
+        assert_eq!(popup, vec![false, true, true, true], "shown on Enter, not while typing; stays until OK");
+        let (a, _, popup) = enter("abc", 7.0, 0.0, Some(100.0));
+        assert_eq!(a, 7.0);
+        assert!(popup[1]);
+    }
+
+    #[test]
+    fn trim_removing_the_whole_video_pops_up() {
+        let (a, b, popup) = enter("1:00", 0.0, 30.0, Some(80.0));
+        assert_eq!((a, b), (60.0, 30.0), "warn, don't block: the values are kept");
+        assert!(popup[1]);
+        let (_, _, popup) = enter("40", 0.0, 30.0, Some(80.0));
+        assert!(popup.iter().all(|p| !p));
+    }
+
+    #[test]
+    fn popup_closes_with_ok_and_messages_are_plain() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(Default::default(), |ctx| time_popup(ctx, ffenc::timeparse::parse_time("1:75").unwrap_err()));
+        assert!(time_popup_open(&ctx));
+        let msg = ctx.data(|d| d.get_temp::<TimePopup>(time_popup_id())).unwrap().msg;
+        assert!(msg.starts_with("“1:75” isn't a valid time. Seconds must be below 60."), "{msg}");
+        // Escape on a later frame closes it
+        for _ in 0..3 {
+            let _ = ctx.run(Default::default(), |ctx| time_popup_ui(ctx));
+        }
+        let mut input = egui::RawInput::default();
+        input.events.push(egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() });
+        let _ = ctx.run(input, |ctx| time_popup_ui(ctx));
+        assert!(!time_popup_open(&ctx));
+    }
 }

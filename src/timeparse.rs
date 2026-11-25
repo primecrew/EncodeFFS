@@ -5,35 +5,38 @@
 //! Rejected with a plain message: letters, signs, empty parts, minutes or seconds of 60 or more in
 //! the colon forms, more than two colons.
 
+const USE: &str = "Use seconds, mm:ss or hh:mm:ss (like 84.5, 1:24.5 or 1:02:03).";
+
 /// Plain seconds from what the user typed. Empty = 0.
 pub fn parse_time(text: &str) -> Result<f64, String> {
     let t = text.trim();
     if t.is_empty() {
         return Ok(0.0);
     }
+    let fail = |why: &str| format!("“{t}” isn't a valid time. {why}{USE}");
     if t.starts_with('-') {
-        return Err("A time can't be negative.".into());
+        return Err(fail("A time can't be negative. "));
     }
     let parts: Vec<&str> = t.split(':').collect();
     if parts.len() > 3 {
-        return Err("Too many colons. Use seconds, mm:ss or hh:mm:ss.".into());
+        return Err(fail("It has too many colons. "));
     }
-    let bad = || format!("“{t}” is not a time. Use seconds, mm:ss or hh:mm:ss (e.g. 84.5, 1:24.5, 1:02:03).");
+    let bad = || fail("");
     let secs_part = parts[parts.len() - 1];
     let secs = number(secs_part).ok_or_else(bad)?;
     if parts.len() == 1 {
         return Ok(secs);
     }
     if secs >= 60.0 {
-        return Err(format!("Seconds must be below 60 in “{t}”."));
+        return Err(fail("Seconds must be below 60. "));
     }
     let whole = |p: &str| -> Option<u64> { (!p.is_empty() && p.chars().all(|c| c.is_ascii_digit())).then(|| p.parse().ok()).flatten() };
     let minutes = whole(parts[parts.len() - 2]).ok_or_else(bad)?;
     if minutes >= 60 {
         return Err(if parts.len() == 2 {
-            format!("Minutes must be below 60 in “{t}”. For an hour or more use hh:mm:ss (e.g. 1:30:00).")
+            fail("Minutes must be below 60. For an hour or more use hh:mm:ss (like 1:30:00). ")
         } else {
-            format!("Minutes must be below 60 in “{t}”.")
+            fail("Minutes must be below 60. ")
         });
     }
     let hours = if parts.len() == 3 { whole(parts[0]).ok_or_else(bad)? } else { 0 };
@@ -53,6 +56,12 @@ pub fn plain_seconds(v: f64) -> String {
     let s = format!("{:.3}", v.max(0.0));
     let s = s.trim_end_matches('0').trim_end_matches('.');
     if s.is_empty() { "0".into() } else { s.to_string() }
+}
+
+/// What a time box shows for a stored value: plain seconds below a minute ("12", "84.5" shows as
+/// "1:24.5"), the clock form from a minute up ("2:15", "1:02:03"). Parses back to the same value.
+pub fn field_text(v: f64) -> String {
+    if v >= 60.0 { clock(v) } else { plain_seconds(v) }
 }
 
 /// Clock form: "0:12", "1:24.5", "1:02:03", "1:02:03.25" (up to 3 decimals).
@@ -117,11 +126,13 @@ mod tests {
             assert!(parse_time(t).is_err(), "{t:?} should be rejected");
         }
         assert!(parse_time("-5").unwrap_err().contains("negative"));
-        assert!(parse_time("1:2:3:4").unwrap_err().contains("Too many colons"));
+        assert!(parse_time("1:2:3:4").unwrap_err().contains("too many colons"));
         assert!(parse_time("1:75").unwrap_err().contains("Seconds must be below 60"));
         assert!(parse_time("90:00").unwrap_err().contains("hh:mm:ss"));
         assert!(parse_time("1:75:00").unwrap_err().contains("Minutes must be below 60"));
         assert!(parse_time("abc").unwrap_err().contains("seconds, mm:ss or hh:mm:ss"));
+        assert_eq!(parse_time("1:75").unwrap_err(), "“1:75” isn't a valid time. Seconds must be below 60. Use seconds, mm:ss or hh:mm:ss (like 84.5, 1:24.5 or 1:02:03).");
+        assert_eq!(parse_time("12a").unwrap_err(), "“12a” isn't a valid time. Use seconds, mm:ss or hh:mm:ss (like 84.5, 1:24.5 or 1:02:03).");
     }
 
     #[test]
@@ -135,6 +146,13 @@ mod tests {
         assert_eq!(plain_seconds(84.5), "84.5");
         assert_eq!(plain_seconds(0.1), "0.1");
         assert_eq!(plain_seconds(10.0), "10");
+        assert_eq!(field_text(12.0), "12");
+        assert_eq!(field_text(0.5), "0.5");
+        assert_eq!(field_text(135.0), "2:15");
+        assert_eq!(field_text(3723.0), "1:02:03");
+        for v in [0.0, 0.1, 59.999, 60.0, 84.5, 135.0, 3599.5, 3723.25, 86400.0] {
+            assert!((parse_time(&field_text(v)).unwrap() - v).abs() < 1e-9, "{v}");
+        }
         // what a field shows parses back to the same value
         for v in [0.0, 0.1, 2.5, 84.5, 3723.0, 3723.25, 86400.0] {
             assert_eq!(parse_time(&plain_seconds(v)).unwrap(), v);

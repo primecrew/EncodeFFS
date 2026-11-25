@@ -1720,6 +1720,7 @@ if ui.button("About").clicked() {
         }
         self.history_window(ctx);
         self.new_confirm_dialog(ctx);
+        common::time_popup_ui(ctx);
         self.finished.show(ctx);
         if let Some(prompt) = self.fallback_prompt.as_mut() {
             match prompt.show(ctx, &self.settings) {
@@ -2036,13 +2037,7 @@ if ui.button("About").clicked() {
                     crate::ui::common::row_label_tip(ui, "Gain", "Pre-gain in decibels, applied before the compressor (+6 dB is roughly twice as loud). 0 = unchanged.");
                     common::num_f64(ui, &mut ed.gain_db, -30.0..=30.0, 0.1, " dB");
                     ui.end_row();
-                    crate::ui::common::row_label_tip(ui, "Trim (cut from start / end)", option_tips::TRIM);
-                    ui.horizontal_wrapped(|ui| {
-                        common::time_field(ui, "set_ts", "Default trim: cut from start", &mut ed.trim_start, 0.0..=1e7);
-                        ui.label("/");
-                        common::time_field(ui, "set_te", "Default trim: cut from end", &mut ed.trim_end, 0.0..=1e7);
-                    });
-                    ui.end_row();
+                    let _ = common::trim_rows(ui, ("set_ts", "set_te"), &mut ed.trim_start, &mut ed.trim_end, None);
                     crate::ui::common::row_label(ui, "Chapter interval");
                     common::num_f64(ui, &mut ed.chapter_interval_min, 0.1..=600.0, 0.1, " min");
                     ui.end_row();

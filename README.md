@@ -440,12 +440,16 @@ video only and put the audio out of sync. It was removed; a preset saved with it
 frame rate when that box is empty.)
 
 ## Time fields (1.1)
-Every box that takes a time in seconds (trim, duration override, still image duration, slideshow times,
-the Settings defaults) also accepts **mm:ss** and **hh:mm:ss**: `84.5` = 84.5 seconds, `12:30` = 12 min 30 s,
-`1:05.5`, `1:02:03`, `1:02:03.25`. The parsed value is shown next to the box, e.g. "= 1:02:03 (3,723 s)", and FFmpeg
-gets plain seconds. Letters, negative values, minutes or seconds of 60 or more in the colon forms (use
-hh:mm:ss for an hour or more) and more than two colons show a warning, and the box keeps its last good
-value. Trim "end" is how much to cut from the end, not an end time. Frameserver Trim stays in frames.
+Every box that takes a time (trim, duration override, still image duration, slideshow times, the
+Settings defaults) accepts plain seconds or **mm:ss** / **hh:mm:ss**: `84.5` = 84.5 seconds, `12:30` = 12 min 30 s,
+`1:05.5`, `1:02:03`, `1:02:03.25`. A whole number on its own is seconds. FFmpeg gets plain seconds.
+- **Trim** is a heading with **From Start** and **From End** boxes below it (From End is how much to cut off
+  the end, not an end time). In Re-encode, where the source length is known, a **New length** line shows
+  the result, e.g. "New length: 1:24:45 (was 1:30:00)".
+- An invalid entry (letters, a negative value, minutes or seconds of 60 or more in the colon forms, too
+  many colons) brings up a pop-up when you leave the box or press Enter, and the box goes back to its last
+  good value. A trim that removes the whole video gets the same pop-up.
+- Frameserver Trim stays in frames.
 
 ## Job history (0.5.4)
 **File › Job history…** lists every **successful** job, newest at the bottom: when it finished, the job,

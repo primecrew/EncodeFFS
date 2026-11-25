@@ -189,14 +189,7 @@ impl Mode for BatchMode {
             crate::ui::common::row_label(ui, "Name suffix");
             ui.text_edit_singleline(&mut bs.suffix);
             ui.end_row();
-            crate::ui::common::row_label_tip(ui, "Trim", option_tips::TRIM);
-            ui.horizontal_wrapped(|ui| {
-                ui.label("cut from start");
-                crate::ui::common::time_field(ui, "m7_ts", "Trim: cut from start", &mut bs.trim_start, 0.0..=1.0e7);
-                ui.label("cut from end");
-                crate::ui::common::time_field(ui, "m7_te", "Trim: cut from end", &mut bs.trim_end, 0.0..=1.0e7);
-            });
-            ui.end_row();
+            let _ = crate::ui::common::trim_rows(ui, ("m7_ts", "m7_te"), &mut bs.trim_start, &mut bs.trim_end, None);
             passthrough_ui(ui, "m7_pt", &mut bs.passthrough);
             crate::ui::common::row_label_tip(ui, "Chapters", option_tips::CHAPTERS_BATCH);
             ui.vertical(|ui| {
