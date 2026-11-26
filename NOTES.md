@@ -507,5 +507,5 @@ Behaviour follows the script unless listed here. Each change fixes a bug or an i
   `docs\` in the zip and the installer; uninstall removes only the guide's `.html` and `images\*.png`.
 - **Help › User Guide** opens `<exe dir>\docs\index.html` when it exists, otherwise `USER_GUIDE_URL` (GitHub).
 - Screenshots come from the real window: `FFENC_SCREENSHOT=guide` (see the comment block in `src/ui/shot.rs` for the
-  `FFENC_GUIDE_*` variables). They were taken from the Windows build under Wine with neutral sample files in
+  `FFENC_GUIDE_*` variables). They were taken from the Windows build under Wine in the Dark theme, with neutral sample files in
   `C:\Videos` and FFmpeg in `C:\ffmpeg\bin`, so the pictures show Windows paths and no personal folders.
