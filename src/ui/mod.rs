@@ -366,6 +366,28 @@ pub fn user_guide_target(exe_dir: &Path) -> String {
     }
 }
 
+/// GitHub folder with the guide's Markdown pages (the online copy).
+const USER_GUIDE_DOCS_URL: &str = "https://github.com/primecrew/EncodeFFS/blob/master/docs/";
+
+/// One page of the guide, like Help › User Guide: the offline `docs\<page>.html` next to the exe
+/// when it is there, otherwise the page on GitHub at `anchor` (the offline page opens at the top,
+/// because Explorer can't pass a #section to a local file).
+pub fn guide_page_target(exe_dir: &Path, page: &str, anchor: &str) -> String {
+    let local = exe_dir.join("docs").join(format!("{page}.html"));
+    if local.is_file() {
+        local.to_string_lossy().into_owned()
+    } else if anchor.is_empty() {
+        format!("{USER_GUIDE_DOCS_URL}{page}.md")
+    } else {
+        format!("{USER_GUIDE_DOCS_URL}{page}.md#{anchor}")
+    }
+}
+
+/// Open a guide page (see `guide_page_target`).
+pub fn open_guide_page(page: &str, anchor: &str) {
+    open_target(&guide_page_target(&locate::exe_dir(), page, anchor));
+}
+
 /// Open a file, folder or web address with the OS (Explorer opens web addresses in the default browser).
 fn open_target(t: &str) {
     open_path(Path::new(t));
@@ -2813,6 +2835,24 @@ mod tests {
         std::fs::create_dir_all(dir.join("docs")).unwrap();
         std::fs::write(dir.join("docs").join("index.html"), "<html></html>").unwrap();
         assert_eq!(super::user_guide_target(&dir), dir.join("docs").join("index.html").to_string_lossy());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn guide_page_prefers_the_offline_copy_and_links_the_section_online() {
+        let dir = std::env::temp_dir().join(format!("ffenc_guidepage_{}", ffenc::util::unique_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(
+            super::guide_page_target(&dir, "frameserver", "installing-the-frameserving-tools"),
+            "https://github.com/primecrew/EncodeFFS/blob/master/docs/frameserver.md#installing-the-frameserving-tools"
+        );
+        assert_eq!(super::guide_page_target(&dir, "settings", ""), "https://github.com/primecrew/EncodeFFS/blob/master/docs/settings.md");
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(dir.join("docs").join("frameserver.html"), "<html></html>").unwrap();
+        assert_eq!(super::guide_page_target(&dir, "frameserver", "installing-the-frameserving-tools"), dir.join("docs").join("frameserver.html").to_string_lossy());
+        // the page and section exist in the guide
+        let md = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/frameserver.md")).unwrap();
+        assert!(md.contains("\n## Installing the frameserving tools\n"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

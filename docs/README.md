@@ -10,7 +10,7 @@ Encode FFS is a Windows front end for FFmpeg from PrimeCrew Software. You pick a
 2. [Single-file presets](single-file-presets.md): Re-encode, Audio & subtitles, Join, still image, watermark and more
 3. [Batch re-encode](batch.md): re-encode every video in a folder
 4. [Remux](remux.md): change the container without re-encoding
-5. [Frameserver](frameserver.md): encode straight from your editor with DebugMode FrameServer and AviSynth+
+5. [Frameserver](frameserver.md): encode straight from your editor with DebugMode FrameServer and AviSynth+ ([installing them](frameserver.md#installing-the-frameserving-tools))
 6. [Create Slideshow](slideshow.md): turn still images into a video
 7. [Custom pipeline and custom batches](custom-batch.md): build your own job, for one file or a whole folder
 8. [Trim and time formats](trim-and-time.md): cutting the start and end, and how to type times

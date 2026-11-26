@@ -40,6 +40,8 @@ The run confirmation asks: **Keep both** (adds ` (2)` to the new name), **Overwr
 
 See [Frameserver](frameserver.md).
 
+If a check line at the top of the Frameserver form starts with **Problem:**, AviSynth+ is missing or doesn't match FFmpeg, or the FFmpeg in use can't read AviSynth scripts. **How to install…** next to the line opens [Installing the frameserving tools](frameserver.md#installing-the-frameserving-tools), which has the official downloads and the steps for AviSynth+ and DebugMode FrameServer.
+
 ## Dark scenes look grey or washed out
 
 The levels were probably squeezed from full range to TV range twice. In Re-encode, leave **Convert full-range to limited-range** off for normal captures (OBS and similar). For frameserving from Vegas, use **PC.709** for 8-bit projects and **Rec709** for 32-bit full-range projects.

@@ -384,6 +384,8 @@ fn show_conflicts(ui: &mut egui::Ui, st: &mut State, filter: &[ConflictKind]) {
     }
 }
 
+const INSTALL_HELP: &str = "Opens the user guide at “Installing the frameserving tools”: where to download AviSynth+ and DebugMode FrameServer, and how to install them.";
+
 const HELP: &str = "How it works: your editor (Premiere, Vegas, After Effects…) serves the finished timeline through DebugMode FrameServer, which writes a small \"signpost\" .avi file. Pick that file here. This preset writes an AviSynth script (.avs) that opens the signpost with AviSource, and FFmpeg encodes the script to MP4 or MKV.\n\n\
 Before you run: 1) keep the project open and serving in the editor until the encode finishes – the signpost only works while it is serving; 2) AviSynth+ must be installed, and it must match FFmpeg: this 64-bit FFmpeg needs 64-bit AviSynth+ (the AviSynth+ installer puts both in Windows); 3) use \"Test the script\" to check that everything connects.\n\n\
 If AviSource can't open the signpost, other AviSynth source filters such as DirectShowSource or FFVideoSource (FFMS2 plugin) can sometimes read it – type them in the script editor below. They are not needed normally.
@@ -437,15 +439,21 @@ impl Mode for FrameserveMode {
                     ui.label("Checking AviSynth support…");
                 });
             }
-            None => hint(ui, "Set the FFmpeg folder to check AviSynth support."),
+            None => hint(ui, "Choose an FFmpeg (Settings › FFmpeg to use) to check AviSynth support."),
             Some(s) => {
-                for (l, t) in avisynth::advice(s) {
+                let advice = avisynth::advice(s);
+                for (l, t) in &advice {
                     let mark = match l {
                         Level::Ok => "OK:",
                         Level::Warn => "Note:",
                         Level::Error => "Problem:",
                     };
-                    ui.label(RichText::new(format!("{mark} {t}")).color(level_color(l)));
+                    ui.label(RichText::new(format!("{mark} {t}")).color(level_color(*l)));
+                }
+                if advice.iter().any(|(l, _)| *l == Level::Error) {
+                    if ui.small_button("How to install…").on_hover_text(INSTALL_HELP).clicked() {
+                        crate::ui::open_guide_page("frameserver", "installing-the-frameserving-tools");
+                    }
                 }
             }
         }
