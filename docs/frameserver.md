@@ -6,7 +6,7 @@ The **Frameserver (AviSynth script)** preset encodes straight from your video ed
 
 How it works: the editor serves the finished timeline through **DebugMode FrameServer**, which writes a small "signpost" `.avi` file. You pick that file. The app writes a short **AviSynth** script that opens the signpost, and FFmpeg encodes the script.
 
-![The Frameserver form with C:\Videos\project-signpost.avi selected. The checks at the top say FFmpeg can read AviSynth scripts but AviSynth is not installed. Below are the colour format, colour matrix, signpost format, audio and trim options.](images/frameserver.png)
+![The Frameserver form with C:\Videos\My Project.avi selected. Both checks at the top are OK: FFmpeg can read AviSynth scripts, and 64-bit AviSynth was found in Windows\System32. The signpost line reads 1280x720, 29.970 fps, 28042 frames, 00:15:35.67, audio 48000 Hz, 2 ch. Below are the colour format, colour matrix, signpost format, audio and trim options.](images/frameserver.png)
 
 ## What you need
 
@@ -14,12 +14,12 @@ How it works: the editor serves the finished timeline through **DebugMode FrameS
 - **AviSynth+ (64-bit)**, because the app's FFmpeg is 64-bit. The AviSynth+ installer can put both versions on your PC.
 - An FFmpeg that can read AviSynth scripts. The usual Windows builds (BtbN and gyan.dev, including the one the app downloads) can.
 
-The checks at the top of the form tell you, in plain words, whether each piece is there and what to install if not. **How frameserving works…** shows a short help text.
+The checks at the top of the form tell you, in plain words, whether each piece is there. When everything is ready, both lines start with **OK:**, as in the picture above: FFmpeg can read AviSynth scripts, and AviSynth+ was found (64-bit, matching FFmpeg). If something is missing, the line starts with **Problem:** and says what to install. **How frameserving works…** shows a short help text.
 
 ## Step by step
 
 1. In the editor, start DebugMode FrameServer and save the signpost `.avi`.
-2. In Encode FFS, select **Frameserver (AviSynth script)** and pick the signpost (drop it or **Browse…**).
+2. In Encode FFS, select **Frameserver (AviSynth script)** and pick the signpost (drop it or **Browse…**). The line under it shows what the editor is serving: size, frame rate, number of frames, length and audio.
 3. Check the script options. The defaults suit most HD projects.
 4. Optional: **Test the script** opens it with ffprobe and reports size, frame rate, length and audio. If it fails, it tells you why (the editor isn't serving, AviSynth+ is missing, the wrong bitness, and so on).
 5. Choose the video and audio codecs and the output, then **Preview & run…** and **Run**.
