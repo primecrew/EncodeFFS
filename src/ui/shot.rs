@@ -620,6 +620,7 @@ fn save_png(path: &Path, image: &ColorImage) -> bool {
 //   FFENC_GUIDE_USER_PRESETS=1        add two sample user presets (one pinned)
 //   FFENC_GUIDE_CLICK=<x>,<y>[;<x>,<y>] click there (points) one after another, e.g. to open a menu;
 //                                     the pointer then rests on the last point
+//   FFENC_GUIDE_HOVER=<x>,<y>         keep the pointer there without clicking (shows tooltips)
 
 /// Run the real app for a guide screenshot.
 pub fn run_guide(out: &Path) -> eframe::Result<()> {
@@ -720,6 +721,13 @@ impl eframe::App for GuideShot {
                 .filter_map(|p| p.split_once(',').and_then(|(x, y)| Some(egui::pos2(x.trim().parse().ok()?, y.trim().parse().ok()?))))
                 .collect();
             self.clicks = Some(pts);
+        }
+        if self.set_up {
+            if let Some((x, y)) = env("FFENC_GUIDE_HOVER").split_once(',') {
+                if let (Ok(x), Ok(y)) = (x.trim().parse(), y.trim().parse()) {
+                    raw.events.push(egui::Event::PointerMoved(egui::pos2(x, y)));
+                }
+            }
         }
         let none = || egui::Modifiers::default();
         if let Some(p) = self.pressed.take() {

@@ -6,6 +6,7 @@ pub mod common;
 pub mod fallback;
 pub mod shot;
 pub mod finished;
+pub mod header;
 pub mod hw;
 pub mod layout;
 pub mod managed_loc;
@@ -316,6 +317,7 @@ pub struct App {
     updater: UpdaterUi,
     fallback_prompt: Option<FallbackPrompt>,
     show_about: bool,
+    header: header::Header,
     first_run_dismissed: bool,
     locate: Option<LocateDlg>,
     startup_check: Option<Bg<Result<AvailableBuild, String>>>,
@@ -384,6 +386,15 @@ fn install_fonts(ctx: &egui::Context) {
             }
         }
     }
+    // Segoe UI Bold for the header title (other text stays regular); without it the header draws a heavier line itself.
+    let bold = read("segoeuib.ttf").is_some_and(|bytes| {
+        fonts.font_data.insert("ui-bold".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+        let mut chain = vec!["ui-bold".to_string()];
+        chain.extend(fonts.families.get(&egui::FontFamily::Proportional).cloned().unwrap_or_default());
+        fonts.families.insert(header::bold_family(), chain);
+        true
+    });
+    header::set_bold_font(bold);
     ctx.set_fonts(fonts);
 }
 
@@ -539,6 +550,7 @@ impl App {
             confirm_clear_history: false,
             confirm_new: false,
             show_about: false,
+            header: header::Header::default(),
             first_run_dismissed: false,
             locate: None,
             startup_check: None,
@@ -2363,6 +2375,8 @@ impl eframe::App for App {
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
             self.menu(ctx, ui);
+            ui.separator();
+            self.header.show(ui);
             self.banners(ctx, ui);
         });
 

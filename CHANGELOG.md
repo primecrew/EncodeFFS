@@ -6,6 +6,7 @@ Create Slideshow is part of this stable build (the old **Slideshow** branch is a
 
 ## Unreleased
 
+- **Header** under the menu bar: the app icon (32 × 32, sharp at every text size) and "Encode FFS v<version>" in large bold text that follows the text size. The FFmpeg version and its tooltip stay at the top right of the menu bar.
 - **User guide** with screenshots, in Markdown in the `docs` folder (start at `docs/README.md`): getting started, the single-file presets, Batch, Remux, Frameserver, Slideshow, Custom pipeline and custom batches, Trim and time formats, Presets, Settings, Job history and a short troubleshooting page.
 - **Help › User Guide** opens it. The installer and the portable zip now include an offline copy (HTML pages and images in `docs` next to the program), which opens first; without it the app opens the online guide on GitHub. Uninstall removes the guide's files.
 

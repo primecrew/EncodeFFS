@@ -28,6 +28,7 @@ The version of FFmpeg in use is shown at the top right of the window.
 
 ## The main window
 
+- **Top: menu bar and header.** The File, Presets, View and Help menus, with the FFmpeg version in use on the right (hover it to see the folder). Below them, the app icon, name and version, for example "Encode FFS v1.1.0".
 - **Left: presets.** Default Presets (the ones that come with the app) and User Presets (the ones you save). Click one to select it. See [Presets](presets.md).
 - **Middle: the form** for the selected preset: input, output and options.
 - **Right: Source.** What ffprobe reports about the input file: container, length, size, video, audio tracks, subtitles and chapters. Turn it on or off in **View › Source info panel**.

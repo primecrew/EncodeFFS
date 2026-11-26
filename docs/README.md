@@ -2,7 +2,7 @@
 
 Encode FFS is a Windows front end for FFmpeg from PrimeCrew Software. You pick a preset, choose your files, check the exact FFmpeg command, and run the job in a queue.
 
-![The Encode FFS main window with the Re-encode video preset selected and a 10-minute gameplay video loaded. Presets are on the left, the form in the middle, the Source panel on the right and the queue and log at the bottom.](images/main-window.png)
+![The Encode FFS main window with the Re-encode video preset selected and a 10-minute gameplay video loaded. The header under the menu bar shows the app icon, name and version. Presets are on the left, the form in the middle, the Source panel on the right and the queue and log at the bottom.](images/main-window.png)
 
 ## Contents
 
