@@ -90,7 +90,7 @@ impl ManagedLocUi {
         ui.horizontal_wrapped(|ui| {
             ui.label("Current:");
             ui.add(egui::Label::new(RichText::new(cur.join("bin").display().to_string()).monospace()).selectable(true));
-            ui.label(if custom { "(your folder)" } else { "(default)" });
+            ui.label(if custom { "(custom location)" } else { "(default)" });
         });
         egui::Grid::new("set_mloc").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             let start = cur.to_string_lossy().into_owned();

@@ -6,6 +6,11 @@ Create Slideshow is part of this stable build (the old **Slideshow** branch is a
 
 ## Unreleased
 
+- **FFmpeg to use** (File › Settings…, replacing the "FFmpeg bin folder" box): choose **My FFmpeg** (your own folder, with Browse…) or **App's FFmpeg** (the copy the app downloads and updates, with **Download…** when it isn't there yet). Each shows its version and what it supports, for example "Has HEVC, AV1 and AC3 · GPU: NVIDIA NVENC (H.264, HEVC, AV1)". One click switches and applies straight away. The app remembers your own folder while it uses its own copy, so switching back loses nothing. Existing settings keep working: the folder you had set becomes My FFmpeg.
+- The FFmpeg version at the top right is now a drop-down (**FFmpeg <version>** with a small arrow), with **My FFmpeg**, **App's FFmpeg** (the one in use is ticked) and **FFmpeg settings…**. Switching is off while jobs or an FFmpeg update run. The tooltip with the folder in use stays.
+- **Switch to the app-managed FFmpeg** and installing an FFmpeg update while you use your own FFmpeg now remember your own folder, so you can switch back. Your own FFmpeg folder is still never changed. The per-job **Use the app's own FFmpeg for <codec>** is unchanged.
+- The FFmpeg updates window no longer suggests that Help › Roll back FFmpeg switches back to your own FFmpeg (it goes back to the app's previous build), and a custom App-managed FFmpeg location is labelled "(custom location)" rather than "(your folder)".
+
 - **Header** under the menu bar: the app icon (32 × 32, sharp at every text size) and "Encode FFS v<version>" in large bold text that follows the text size. The FFmpeg version and its tooltip stay at the top right of the menu bar.
 - **User guide** with screenshots, in Markdown in the `docs` folder (start at `docs/README.md`): getting started, the single-file presets, Batch, Remux, Frameserver, Slideshow, Custom pipeline and custom batches, Trim and time formats, Presets, Settings, Job history and a short troubleshooting page.
 - **Help › User Guide** opens it. The installer and the portable zip now include an offline copy (HTML pages and images in `docs` next to the program), which opens first; without it the app opens the online guide on GitHub. Uninstall removes the guide's files.

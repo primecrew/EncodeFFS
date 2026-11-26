@@ -112,7 +112,7 @@ impl Grabber {
                 self.slots.retain(|_, s| matches!(s, Slot::Busy(_)));
             }
             let slot = match ffmpeg {
-                None => Slot::Failed("FFmpeg not found – set the FFmpeg folder in Settings.".into()),
+                None => Slot::Failed("FFmpeg not found – choose one in Settings › FFmpeg to use.".into()),
                 Some(_) if !path.is_file() => Slot::Failed("File not found.".into()),
                 Some(ff) => {
                     let (ff, p) = (ff.to_path_buf(), path.to_path_buf());

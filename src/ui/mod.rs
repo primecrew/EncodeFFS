@@ -4,6 +4,7 @@ pub mod chapter_creator;
 pub mod codecs_ui;
 pub mod common;
 pub mod fallback;
+pub mod ffchoice;
 pub mod shot;
 pub mod finished;
 pub mod header;
@@ -294,6 +295,14 @@ pub struct App {
     /// Encoders of the app-managed copy (when it exists and is not already in use).
     managed_encoders: Option<ffenc::cmd::codecs::Encoders>,
     managed_task: Option<Bg<Result<FfmpegCheck, String>>>,
+    /// Version of the app-managed copy (when probed; or the in-use one when that is the managed copy).
+    managed_version: Option<Result<String, String>>,
+    /// "My FFmpeg" (1.1) when it is not the one in use: its bin folder and check.
+    own_bin: Option<PathBuf>,
+    own_check: Option<Result<FfmpegCheck, String>>,
+    own_task: Option<Bg<Result<FfmpegCheck, String>>>,
+    /// Settings › FFmpeg to use: the My FFmpeg folder box.
+    own_edit: ffchoice::OwnEdit,
     /// Set during a frame when the user clicks “Switch to the app-managed FFmpeg”.
     switch_to_managed: Cell<bool>,
     /// Set when the user clicks “Use the app's own FFmpeg for <codec>” (download the app-managed copy).
@@ -526,6 +535,11 @@ impl App {
             ff_task: None,
             managed_encoders: None,
             managed_task: None,
+            managed_version: None,
+            own_bin: None,
+            own_check: None,
+            own_task: None,
+            own_edit: ffchoice::OwnEdit::default(),
             switch_to_managed: Cell::new(false),
             get_managed: Cell::new(None),
             preview: None,
@@ -597,11 +611,36 @@ impl App {
     }
 
     fn refresh_ffmpeg(&mut self, ctx: &egui::Context) {
+        let managed = locate::managed_bin();
+        // settings from before 1.1 only had the FFmpeg folder: remember it as "My FFmpeg"
+        // (in memory; saved with the next save, so first-run checks still see no settings file)
+        self.settings.remember_own_ffmpeg(&managed);
         self.ff = locate::locate(Path::new(self.settings.ffmpeg_bin_path.trim()));
+        if self.settings.own_ffmpeg_bin_path.trim().is_empty() {
+            // no folder set, but found one by itself (next to the app or on PATH): that is "My FFmpeg"
+            if let Some(f) = self.ff.as_ref().filter(|f| !f.is_app_managed()) {
+                self.settings.own_ffmpeg_bin_path = f.bin_dir.to_string_lossy().into_owned();
+            }
+        }
+        if let Some(ed) = self.settings_edit.as_mut() {
+            ed.ffmpeg_bin_path = self.settings.ffmpeg_bin_path.clone();
+            ed.own_ffmpeg_bin_path = self.settings.own_ffmpeg_bin_path.clone();
+        }
         self.ff_check = None;
         self.ff_task = None;
         self.managed_encoders = None;
         self.managed_task = None;
+        self.managed_version = None;
+        self.own_check = None;
+        self.own_task = None;
+        self.own_bin = locate::check_bin_dir(Path::new(self.settings.own_ffmpeg_bin_path.trim())).ok().filter(|_| !self.settings.own_ffmpeg_bin_path.trim().is_empty());
+        let own_in_use = self.own_bin.as_ref().is_some_and(|b| self.ff.as_ref().is_some_and(|f| locate::is_managed_dir(&f.bin_dir, b)));
+        if !own_in_use {
+            if let Some(b) = &self.own_bin {
+                let p = b.join(locate::exe("ffmpeg"));
+                self.own_task = Some(Bg::spawn(ctx, move || version::check_ffmpeg(&p)));
+            }
+        }
         match &self.ff {
             Some(f) => {
                 self.queue.log(format!("Using FFmpeg from {} ({})", f.bin_dir.display(), f.source.label()));
@@ -627,17 +666,104 @@ impl App {
     }
 
     /// Point the FFmpeg folder setting at the app-managed copy, save, and re-probe.
-    /// The user's own FFmpeg files are not moved or overwritten.
+    /// The user's own FFmpeg files are not moved or overwritten, and their folder is remembered.
     fn apply_switch_to_managed(&mut self, ctx: &egui::Context) {
-        let old = self.settings.ffmpeg_bin_path.clone();
-        match settings::set_configured_ffmpeg_to_managed(&mut self.settings) {
-            Ok(bin) => {
-                let from = if old.trim().is_empty() { "the previous location".into() } else { old };
-                self.queue.log(format!("Switched to the app-managed FFmpeg at {} (was {from}).", bin.display()));
-                self.save_settings();
-                if let Some(ed) = self.settings_edit.as_mut() {
-                    ed.ffmpeg_bin_path = bin.to_string_lossy().into_owned();
+        self.apply_ffmpeg_choice(ctx, ffchoice::Action::UseApps);
+    }
+
+    /// Why "FFmpeg to use" can't switch right now.
+    fn ff_switch_blocked(&self) -> Option<&'static str> {
+        if self.queue.is_busy() {
+            Some("Can't switch FFmpeg while jobs are running.")
+        } else if self.updater.busy() {
+            Some("Can't switch FFmpeg while an FFmpeg update is running.")
+        } else {
+            None
+        }
+    }
+
+    /// What "FFmpeg to use" shows (Settings and the menu-bar drop-down).
+    fn ff_view(&self) -> ffchoice::View<'static> {
+        use ffchoice::{Entry, FfmpegChoice};
+        let gpu = |prog: &Path| self.settings.hw.for_program(&prog.to_string_lossy()).cloned();
+        let line = |chk: Option<&Result<FfmpegCheck, String>>, prog: &Path| match chk {
+            Some(Ok(c)) => ffenc::cmd::hwenc::support_line(Some(&c.encoders), gpu(prog).as_ref()),
+            _ => String::new(),
+        };
+        let ver = |chk: Option<&Result<FfmpegCheck, String>>| chk.map(|r| r.as_ref().map(|c| c.version.clone()).map_err(|e| e.clone()));
+        let current = self.ff.as_ref().map(|f| if f.is_app_managed() { FfmpegChoice::Apps } else { FfmpegChoice::Mine });
+        let in_use = |e: &mut Entry, f: &FfPaths| {
+            e.bin = Some(f.bin_dir.clone());
+            e.version = ver(self.ff_check.as_ref());
+            e.support = line(self.ff_check.as_ref(), &f.ffmpeg);
+        };
+        let mut mine = Entry::default();
+        let mut apps = Entry::default();
+        match (&self.ff, current) {
+            (Some(f), Some(FfmpegChoice::Mine)) => in_use(&mut mine, f),
+            _ => {
+                if let Some(b) = &self.own_bin {
+                    mine.bin = Some(b.clone());
+                    mine.version = ver(self.own_check.as_ref());
+                    mine.support = line(self.own_check.as_ref(), &b.join(locate::exe("ffmpeg")));
                 }
+            }
+        }
+        match (&self.ff, current) {
+            (Some(f), Some(FfmpegChoice::Apps)) => in_use(&mut apps, f),
+            _ => {
+                let b = locate::managed_bin();
+                if locate::bin_dir_ok(&b) {
+                    apps.version = self.managed_version.clone();
+                    apps.support = match (&self.managed_version, &self.managed_encoders) {
+                        (Some(Ok(_)), Some(e)) => ffenc::cmd::hwenc::support_line(Some(e), gpu(&FallbackPrompt::managed_program()).as_ref()),
+                        _ => String::new(),
+                    };
+                    apps.bin = Some(b);
+                }
+            }
+        }
+        ffchoice::View { current, mine, apps, blocked: self.ff_switch_blocked() }
+    }
+
+    /// "FFmpeg to use" (Settings, menu bar, “Switch to the app-managed FFmpeg”): change, save, re-probe.
+    /// Only the setting changes; no FFmpeg files are written.
+    fn apply_ffmpeg_choice(&mut self, ctx: &egui::Context, action: ffchoice::Action) {
+        use ffchoice::Action;
+        let managed = locate::managed_bin();
+        let old = self.settings.ffmpeg_bin_path.clone();
+        let from = if old.trim().is_empty() { "the automatic lookup".to_string() } else { old };
+        let blocked = self.ff_switch_blocked();
+        let r: Result<String, String> = match action {
+            Action::OpenSettings => {
+                if self.settings_edit.is_none() {
+                    self.settings_edit = Some(self.settings.clone());
+                }
+                return;
+            }
+            Action::Download => {
+                self.updater.open_and_check(ctx, &self.settings);
+                return;
+            }
+            _ if blocked.is_some() => Err(blocked.unwrap_or_default().to_string()),
+            Action::UseApps => self.settings.use_app_ffmpeg_at(&managed).map(|b| format!("Now using the app's FFmpeg at {} (was {from}). Your own FFmpeg folder is remembered.", b.display())),
+            Action::UseMine => self.settings.use_own_ffmpeg(&managed).map(|()| format!("Now using your own FFmpeg at {} (was {from}).", self.settings.ffmpeg_bin_path)),
+            Action::SetOwn(d) => match self.settings.set_own_ffmpeg(&d, &managed) {
+                Ok(b) => {
+                    self.own_edit = ffchoice::OwnEdit::default();
+                    Ok(format!("Now using your own FFmpeg at {} (was {from}).", b.display()))
+                }
+                Err(e) => {
+                    self.own_edit.err = Some(e);
+                    return;
+                }
+            },
+        };
+        match r {
+            Ok(m) => {
+                self.queue.log(m);
+                self.own_edit.err = None;
+                self.save_settings();
                 self.refresh_ffmpeg(ctx);
             }
             Err(e) => self.error = Some(e),
@@ -1200,22 +1326,29 @@ if ui.button("About").clicked() {
                     ui.close_menu();
                 }
             });
+            let mut ff_act = None;
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                match (&self.ff, &self.ff_check) {
-                    (None, _) => {
-                        ui.colored_label(crate::ui::theme::c().err, "FFmpeg not found");
-                    }
+                // "FFmpeg <ver> ⏷": the version, plus the FFmpeg to use drop-down (1.1)
+                let err = crate::ui::theme::c().err;
+                let (title, tip) = match (&self.ff, &self.ff_check) {
+                    (None, _) => (RichText::new("FFmpeg not found ⏷").color(err), "No FFmpeg found. Click to choose one.".to_string()),
                     (Some(_), None) => {
                         ui.spinner();
+                        return;
                     }
-                    (Some(f), Some(Ok(c))) => {
-                        ui.label(RichText::new(format!("FFmpeg {}", c.version)).small()).on_hover_text(format!("{}\n({})", f.bin_dir.display(), f.source.label()));
-                    }
-                    (Some(_), Some(Err(e))) => {
-                        ui.colored_label(crate::ui::theme::c().err, "FFmpeg error").on_hover_text(e);
-                    }
-                }
+                    (Some(f), Some(Ok(c))) => (RichText::new(format!("FFmpeg {} ⏷", c.version)).small(), format!("{}\n({})", f.bin_dir.display(), f.source.label())),
+                    (Some(f), Some(Err(e))) => (RichText::new("FFmpeg error ⏷").color(err), format!("{}\n{e}", f.bin_dir.display())),
+                };
+                let view = self.ff_view();
+                let r = ui.menu_button(title, |ui| {
+                    crate::ui::common::one_line_menu(ui);
+                    ff_act = ffchoice::menu(ui, &view);
+                });
+                r.response.on_hover_text(tip);
             });
+            if let Some(a) = ff_act {
+                self.apply_ffmpeg_choice(ctx, a);
+            }
         });
     }
 
@@ -1662,8 +1795,11 @@ if ui.button("About").clicked() {
         let ver = self.ff_version().map(|s| s.to_string());
         if let UpdaterEvent::Installed { bin, managed } = self.updater.show(ctx, &mut self.settings, self.ff.as_ref(), ver.as_deref(), qb) {
             if managed && Path::new(self.settings.ffmpeg_bin_path.trim()) != bin {
-                self.queue.log(format!("FFmpeg folder setting changed from {} to the app-managed copy {}", self.settings.ffmpeg_bin_path, bin.display()));
-                self.settings.ffmpeg_bin_path = bin.to_string_lossy().into_owned();
+                let from = self.settings.ffmpeg_bin_path.clone();
+                match self.settings.use_app_ffmpeg_at(&bin) {
+                    Ok(_) => self.queue.log(format!("Now using the app's FFmpeg at {} (was {}). Your own FFmpeg folder is remembered: pick My FFmpeg to switch back.", bin.display(), if from.trim().is_empty() { "the automatic lookup" } else { from.as_str() })),
+                    Err(e) => self.queue.log(e),
+                }
             }
             self.save_settings();
             self.refresh_ffmpeg(ctx);
@@ -1988,6 +2124,7 @@ if ui.button("About").clicked() {
         let mut reset_layout = false;
         let mut mloc_out = None;
         let mut hw_recheck = false;
+        let mut ff_act = None;
         common::fit(egui::Window::new("Settings").collapsible(false).resizable(true).default_width(640.0), ctx, false).remember("settings", true).show(ctx, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible).max_height((ctx.screen_rect().height() - 150.0).max(120.0)).show(ui, |ui| {
                 common::section(ui, "Appearance");
@@ -2003,10 +2140,6 @@ if ui.button("About").clicked() {
                 common::section(ui, "Folders");
                 egui::Grid::new("set_f").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                     let d = ed.input_folder.clone();
-                    common::path_row_nodrop(ui, "FFmpeg bin folder", &mut ed.ffmpeg_bin_path, common::Pick::Folder, &d);
-                    ui.label("");
-                    hint(ui, "Must contain ffmpeg.exe and ffprobe.exe (ffprobe is used to read source info).");
-                    ui.end_row();
                     common::path_row_nodrop(ui, "Input folder", &mut ed.input_folder, common::Pick::Folder, &d);
                     common::path_row_nodrop(ui, "Output folder", &mut ed.output_folder, common::Pick::Folder, &d);
                     crate::ui::common::row_label(ui, "Remember recent folders");
@@ -2017,7 +2150,13 @@ if ui.button("About").clicked() {
                     ui.end_row();
                 });
                 hint(ui, REMEMBER_RECENT_FOLDERS_HELP);
-                hint(ui, "FFmpeg lookup order: this folder -> ffmpeg\\ next to the app -> app-managed copy -> PATH.");
+                common::section(ui, "FFmpeg to use");
+                {
+                    let view = self.ff_view();
+                    let own = self.settings.own_ffmpeg_bin_path.clone();
+                    ff_act = ffchoice::settings_section(ui, &view, &own, &mut self.own_edit);
+                }
+                hint(ui, "With no folder chosen, the app looks in ffmpeg\\ next to the app, then the app-managed copy, then PATH. FFmpeg needs ffmpeg.exe and ffprobe.exe (ffprobe reads source info).");
                 common::section(ui, "App-managed FFmpeg location");
                 hint(ui, managed_loc::HELP);
                 let blocked = if self.queue.is_busy() {
@@ -2194,7 +2333,9 @@ if ui.button("About").clicked() {
                     Err(e) => self.queue.log(e),
                 }
             }
-            let ff_changed = ed.ffmpeg_bin_path != self.settings.ffmpeg_bin_path;
+            // FFmpeg to use applies immediately (on self.settings), like appearance
+            ed.ffmpeg_bin_path = self.settings.ffmpeg_bin_path.clone();
+            ed.own_ffmpeg_bin_path = self.settings.own_ffmpeg_bin_path.clone();
             // appearance is edited live on self.settings, not on the dialog copy
             ed.appearance = self.settings.appearance.clone();
             // so is the app-managed FFmpeg location ("Reset to script defaults" keeps it)
@@ -2207,7 +2348,7 @@ if ui.button("About").clicked() {
             self.pre.rebase(&self.settings);
             self.pre.apply_app_folders_all(&self.settings);
             self.save_settings();
-            if ff_changed || self.ff.is_none() {
+            if self.ff.is_none() {
                 self.refresh_ffmpeg(ctx);
             }
             if apply && !save {
@@ -2220,6 +2361,9 @@ if ui.button("About").clicked() {
         if let Some(o) = mloc_out {
             self.apply_managed_location(ctx, o);
         }
+        if let Some(a) = ff_act {
+            self.apply_ffmpeg_choice(ctx, a);
+        }
         if hw_recheck {
             let progs = self.hw_programs();
             self.hw_ui.start(ctx, progs);
@@ -2230,6 +2374,13 @@ if ui.button("About").clicked() {
     /// when it is installed and different.
     fn hw_programs(&self) -> Vec<PathBuf> {
         let mut v: Vec<PathBuf> = self.ff.iter().map(|f| f.ffmpeg.clone()).collect();
+        // "My FFmpeg" when the app's copy is in use (for the FFmpeg to use support line)
+        if let Some(b) = &self.own_bin {
+            let p = b.join(locate::exe("ffmpeg"));
+            if !v.contains(&p) && self.own_check.as_ref().is_some_and(|r| r.is_ok()) {
+                v.push(p);
+            }
+        }
         if locate::bin_dir_ok(&locate::managed_bin()) {
             let m = FallbackPrompt::managed_program();
             if !v.contains(&m) {
@@ -2297,6 +2448,7 @@ if ui.button("About").clicked() {
                 if self.ff.as_ref().is_some_and(|f| f.is_app_managed()) {
                     if let Ok(c) = &self.ff_check.as_ref().unwrap() {
                         self.managed_encoders = Some(c.encoders);
+                        self.managed_version = Some(Ok(c.version.clone()));
                     }
                 }
             }
@@ -2306,7 +2458,14 @@ if ui.button("About").clicked() {
                 if let Ok(c) = &r {
                     self.managed_encoders = Some(c.encoders);
                 }
+                self.managed_version = Some(r.map(|c| c.version));
                 self.managed_task = None;
+            }
+        }
+        if let Some(t) = &self.own_task {
+            if let Some(r) = t.poll() {
+                self.own_check = Some(r);
+                self.own_task = None;
             }
         }
         // Wait for the version before comparing.

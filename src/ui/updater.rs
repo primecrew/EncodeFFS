@@ -94,7 +94,7 @@ impl UpdaterUi {
         let mut open = self.open;
         crate::ui::common::fit(egui::Window::new("FFmpeg updates").open(&mut open).collapsible(false).resizable(true).default_width(620.0), ctx, true).remember("updates", true).show(ctx, |ui| {
             if ff.is_some_and(|f| !f.is_app_managed()) {
-                hint(ui, "You're using your own FFmpeg folder, so the app never checks for updates by itself. This check runs only because you asked; installing the newest build gives you an app-managed copy (or updates your folder if you choose that).");
+                hint(ui, "You're using your own FFmpeg folder, so the app never checks for updates by itself. This check runs only because you asked; installing the newest build puts it in the app's own copy and leaves your folder as it is.");
             } else if settings.never_check_updates {
                 hint(ui, "Automatic update checks are off (File › Settings › “Turn off Update Check for FFMPEG”). This check runs only because you asked for it.");
             }
@@ -178,7 +178,7 @@ impl UpdaterUi {
             ui.label(format!("App-managed copy: {}", managed.display()));
             if custom_active {
                 let cur = ff.map(|f| f.bin_dir.clone()).unwrap_or(configured);
-                hint(ui, format!("Your own FFmpeg in {} is never changed. The app will switch to the managed copy (Settings › FFmpeg folder is updated); you can switch back any time.", cur.display()));
+                hint(ui, format!("Your own FFmpeg in {} is never changed. After installing, the app uses its own copy (App's FFmpeg) and remembers your folder: pick My FFmpeg in Settings › FFmpeg to use, or in the FFmpeg menu at the top right, to switch back.", cur.display()));
             }
             ui.separator();
 
@@ -232,7 +232,7 @@ impl UpdaterUi {
             if queue_busy {
                 hint(ui, "Updating is disabled while jobs are running.");
             }
-            hint(ui, "You can switch back with Help › Roll back FFmpeg.");
+            hint(ui, "Help › Roll back FFmpeg goes back to the app's previous FFmpeg build. To use your own FFmpeg again, pick My FFmpeg in Settings › FFmpeg to use, or in the FFmpeg menu at the top right.");
             match &self.message {
                 Some(Ok(m)) => {
                     ui.colored_label(crate::ui::theme::c().ok, m);

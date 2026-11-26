@@ -306,6 +306,9 @@ fn nonempty_field(v: &serde_json::Value, key: &str) -> Option<String> {
 pub struct Settings {
     // ---- defaults from the script
     pub ffmpeg_bin_path: String,
+    /// The user's own FFmpeg folder (1.1), remembered while the app's own copy is in use so
+    /// "FFmpeg to use › My FFmpeg" can switch back without asking again. Never the app-managed folder.
+    pub own_ffmpeg_bin_path: String,
     pub input_folder: String,
     pub output_folder: String,
     /// Folders recently used on folder-based presets, newest first.
@@ -391,6 +394,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             ffmpeg_bin_path: String::new(),
+            own_ffmpeg_bin_path: String::new(),
             input_folder: default_videos_dir_string(),
             output_folder: default_videos_dir_string(),
             recent_folders: Vec::new(),
@@ -600,15 +604,93 @@ pub fn import_portable(from: &Path, roaming: &Path) -> Result<Vec<String>, Strin
     Ok(notes)
 }
 
-/// Point the configured FFmpeg folder at the app-managed copy.
-/// Does not move, copy, overwrite or delete any FFmpeg files (the user's own copy is left alone).
+/// Point the configured FFmpeg folder at the app-managed copy ("FFmpeg to use › App's FFmpeg").
+/// The user's own folder is remembered first, so switching back loses nothing. Does not move,
+/// copy, overwrite or delete any FFmpeg files (the user's own copy is left alone).
 pub fn set_configured_ffmpeg_to_managed(settings: &mut Settings) -> Result<PathBuf, String> {
-    let bin = crate::ffmpeg::locate::managed_bin();
-    if !crate::ffmpeg::locate::bin_dir_ok(&bin) {
-        return Err("No app-managed FFmpeg is installed yet. Help › Check for FFmpeg updates… can download one.".into());
+    settings.use_app_ffmpeg_at(&crate::ffmpeg::locate::managed_bin())
+}
+
+/// Which FFmpeg the "FFmpeg to use" choice points at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfmpegChoice {
+    /// The user's own folder (or, with no folder set, the automatic lookup).
+    Mine,
+    /// The copy the app downloaded and keeps up to date.
+    Apps,
+}
+
+/// Is `dir` the app-managed copy (its bin folder, or the folder above it)?
+pub fn is_managed_path(dir: &str, managed_bin: &Path) -> bool {
+    let d = dir.trim();
+    if d.is_empty() {
+        return false;
     }
-    settings.ffmpeg_bin_path = bin.to_string_lossy().into_owned();
-    Ok(bin)
+    let p = Path::new(d);
+    crate::ffmpeg::locate::is_managed_dir(p, managed_bin) || managed_bin.parent().is_some_and(|root| crate::ffmpeg::locate::is_managed_dir(p, root))
+}
+
+impl Settings {
+    /// Keep the user's own FFmpeg folder in `own_ffmpeg_bin_path` (from the configured folder when
+    /// that is not the app-managed copy). Also migrates settings from before 1.1, which only had
+    /// `ffmpeg_bin_path`. Returns true when it changed something.
+    pub fn remember_own_ffmpeg(&mut self, managed_bin: &Path) -> bool {
+        let cur = self.ffmpeg_bin_path.trim().to_string();
+        if !cur.is_empty() && !is_managed_path(&cur, managed_bin) && self.own_ffmpeg_bin_path.trim() != cur {
+            self.own_ffmpeg_bin_path = cur;
+            return true;
+        }
+        if is_managed_path(&self.own_ffmpeg_bin_path, managed_bin) {
+            // never remember the app's own copy as "my FFmpeg"
+            self.own_ffmpeg_bin_path.clear();
+            return true;
+        }
+        false
+    }
+
+    /// Switch to the app-managed copy at `managed_bin` (it must be installed).
+    pub fn use_app_ffmpeg_at(&mut self, managed_bin: &Path) -> Result<PathBuf, String> {
+        if !crate::ffmpeg::locate::bin_dir_ok(managed_bin) {
+            return Err("The app's own FFmpeg isn't downloaded yet. Use Download (or Help › Check for FFmpeg updates…) to get it.".into());
+        }
+        self.remember_own_ffmpeg(managed_bin);
+        self.ffmpeg_bin_path = managed_bin.to_string_lossy().into_owned();
+        Ok(managed_bin.to_path_buf())
+    }
+
+    /// Switch back to the user's own folder. With none remembered, the configured folder is
+    /// cleared (the automatic lookup: ffmpeg\ next to the app, then the app-managed copy, then PATH).
+    pub fn use_own_ffmpeg(&mut self, managed_bin: &Path) -> Result<(), String> {
+        self.remember_own_ffmpeg(managed_bin);
+        let own = self.own_ffmpeg_bin_path.trim().to_string();
+        if own.is_empty() {
+            return Err("Choose your FFmpeg folder first (Browse… next to My FFmpeg).".into());
+        }
+        crate::ffmpeg::locate::check_bin_dir(Path::new(&own))?;
+        self.ffmpeg_bin_path = own;
+        Ok(())
+    }
+
+    /// The user picked (or typed) their own FFmpeg folder: remember it and use it.
+    pub fn set_own_ffmpeg(&mut self, dir: &str, managed_bin: &Path) -> Result<PathBuf, String> {
+        let d = dir.trim();
+        if is_managed_path(d, managed_bin) {
+            return Err("That is the app's own FFmpeg. Pick App's FFmpeg instead, or choose the folder of your own FFmpeg.".into());
+        }
+        let bin = crate::ffmpeg::locate::check_bin_dir(Path::new(d))?;
+        self.own_ffmpeg_bin_path = d.to_string();
+        self.ffmpeg_bin_path = d.to_string();
+        Ok(bin)
+    }
+
+    /// What the configured folder points at.
+    pub fn ffmpeg_choice(&self, managed_bin: &Path) -> FfmpegChoice {
+        if is_managed_path(&self.ffmpeg_bin_path, managed_bin) {
+            FfmpegChoice::Apps
+        } else {
+            FfmpegChoice::Mine
+        }
+    }
 }
 
 /// Folder for the app log (next to the settings file).
@@ -1057,6 +1139,67 @@ mod tests {
     }
 
     #[test]
+    fn ffmpeg_choice_switches_both_ways_and_keeps_the_users_folder() {
+        use crate::ffmpeg::locate::exe;
+        let root = std::env::temp_dir().join(format!("ffenc_choice_{}", crate::util::unique_id()));
+        let user = root.join("mine").join("bin");
+        let managed = root.join("managed").join("ffmpeg").join("bin");
+        for d in [&user, &managed] {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join(exe("ffmpeg")), b"ff").unwrap();
+            std::fs::write(d.join(exe("ffprobe")), b"fp").unwrap();
+        }
+        let user_s = user.to_string_lossy().into_owned();
+        let snapshot = |d: &Path| (std::fs::read(d.join(exe("ffmpeg"))).unwrap(), std::fs::read_dir(d).unwrap().count());
+        let before = snapshot(&user);
+
+        // pre-1.1 settings: only ffmpeg_bin_path → migrated into own_ffmpeg_bin_path
+        let mut s = Settings { ffmpeg_bin_path: user_s.clone(), ..Settings::default() };
+        assert!(s.remember_own_ffmpeg(&managed));
+        assert_eq!(s.own_ffmpeg_bin_path, user_s);
+        assert!(!s.remember_own_ffmpeg(&managed), "idempotent");
+        assert_eq!(s.ffmpeg_choice(&managed), FfmpegChoice::Mine);
+
+        // App's FFmpeg, then back to mine: one call each, own folder kept
+        assert_eq!(s.use_app_ffmpeg_at(&managed).unwrap(), managed);
+        assert_eq!(s.ffmpeg_choice(&managed), FfmpegChoice::Apps);
+        assert_eq!(s.own_ffmpeg_bin_path, user_s);
+        // a save/load round-trip keeps both
+        let file = root.join("settings.json");
+        s.save_to(&file).unwrap();
+        let mut s = Settings::load_from(&file);
+        assert_eq!(s.own_ffmpeg_bin_path, user_s);
+        assert!(!s.remember_own_ffmpeg(&managed), "the managed path is never taken as own");
+        s.use_own_ffmpeg(&managed).unwrap();
+        assert_eq!(s.ffmpeg_bin_path, user_s);
+        assert_eq!(s.ffmpeg_choice(&managed), FfmpegChoice::Mine);
+
+        // the managed folder (bin or its parent) is rejected as "my FFmpeg"
+        assert!(s.set_own_ffmpeg(&managed.to_string_lossy(), &managed).is_err());
+        assert!(s.set_own_ffmpeg(&managed.parent().unwrap().to_string_lossy(), &managed).is_err());
+        assert_eq!(s.ffmpeg_bin_path, user_s, "unchanged after a rejected pick");
+        // a parent folder with bin\ inside is accepted
+        let parent = user.parent().unwrap().to_string_lossy().into_owned();
+        assert_eq!(s.set_own_ffmpeg(&parent, &managed).unwrap(), user);
+        assert_eq!(s.own_ffmpeg_bin_path, parent);
+        // a stale own entry pointing at the managed copy is dropped
+        s.own_ffmpeg_bin_path = managed.to_string_lossy().into_owned();
+        s.ffmpeg_bin_path = managed.to_string_lossy().into_owned();
+        assert!(s.remember_own_ffmpeg(&managed));
+        assert!(s.own_ffmpeg_bin_path.is_empty());
+        assert!(s.use_own_ffmpeg(&managed).is_err(), "nothing to switch back to");
+        assert_eq!(s.ffmpeg_bin_path, managed.to_string_lossy(), "unchanged");
+
+        // a missing managed copy: error, nothing changed
+        let mut s = Settings { ffmpeg_bin_path: user_s.clone(), ..Settings::default() };
+        assert!(s.use_app_ffmpeg_at(&root.join("nope")).is_err());
+        assert_eq!(s.ffmpeg_bin_path, user_s);
+
+        assert_eq!(snapshot(&user), before, "the user's FFmpeg folder is never written");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn switching_to_managed_ffmpeg_only_changes_the_setting_and_leaves_the_users_copy() {
         let root = std::env::temp_dir().join(format!("ffenc_sw_{}", crate::util::unique_id()));
         let user = root.join("mine").join("bin");
@@ -1078,6 +1221,7 @@ mod tests {
         let got = set_configured_ffmpeg_to_managed(&mut s).expect("managed copy exists");
         assert_eq!(got, bin);
         assert_eq!(PathBuf::from(&s.ffmpeg_bin_path), bin);
+        assert_eq!(PathBuf::from(&s.own_ffmpeg_bin_path), user, "own folder remembered");
         assert_eq!(std::fs::read(&user_ff).unwrap(), b"user-ffmpeg", "user's ffmpeg is not touched");
         assert_eq!(std::fs::read(&user_fp).unwrap(), b"user-ffprobe");
         assert_eq!(std::fs::read(bin.join(crate::ffmpeg::locate::exe("ffmpeg"))).unwrap(), b"managed-ffmpeg");

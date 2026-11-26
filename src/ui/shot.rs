@@ -666,6 +666,12 @@ impl GuideShot {
             if let Some(f) = &app.ff {
                 hw.detect[0].program = f.ffmpeg.to_string_lossy().into_owned();
             }
+            // the same sample result for the app's own copy (FFmpeg to use shows both)
+            let mut m = hw.detect[0].clone();
+            m.program = super::fallback::FallbackPrompt::managed_program().to_string_lossy().into_owned();
+            if m.program != hw.detect[0].program {
+                hw.detect.push(m);
+            }
             app.settings.hw = hw;
         }
         if env("FFENC_GUIDE_USER_PRESETS") == "1" {

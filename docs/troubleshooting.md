@@ -4,7 +4,7 @@
 
 ## "FFmpeg not found"
 
-The top right of the window says **FFmpeg not found** when there is no working FFmpeg. Use **Help › Locate FFmpeg folder…** to pick the folder with `ffmpeg.exe` and `ffprobe.exe`, or download a copy from the same dialog. See [Getting started](getting-started.md#first-start-finding-ffmpeg).
+The top right of the window says **FFmpeg not found** when there is no working FFmpeg. Click it to pick **My FFmpeg** or **App's FFmpeg**, or use **Help › Locate FFmpeg folder…** to pick the folder with `ffmpeg.exe` and `ffprobe.exe`, or download a copy from the same dialog. See [Getting started](getting-started.md#first-start-finding-ffmpeg).
 
 ## The Source panel says ffprobe isn't found
 
@@ -13,6 +13,12 @@ The top right of the window says **FFmpeg not found** when there is no working F
 ## A codec says "(not in your FFmpeg)"
 
 Your FFmpeg doesn't include that encoder. Pick it anyway and press **Use the app's own FFmpeg for …**: the app downloads its own copy (or uses it if it's already there) for those jobs. Your own FFmpeg folder is left alone. **Help › Check for FFmpeg updates…** works too.
+
+To use the app's own FFmpeg for everything instead, pick **App's FFmpeg** in the FFmpeg menu at the top right (or in **Settings › FFmpeg to use**).
+
+## How do I switch between my own FFmpeg and the app's?
+
+Click the FFmpeg version at the top right of the window and pick **My FFmpeg** or **App's FFmpeg**. **Settings › FFmpeg to use** has the same choice with more detail. It switches straight away, and the app remembers your own folder, so switching back is one click. Your own FFmpeg folder is never changed. See [Settings](settings.md#ffmpeg-to-use).
 
 ## A job failed
 

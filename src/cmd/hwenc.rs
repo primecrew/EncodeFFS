@@ -303,6 +303,45 @@ pub fn apply(args: &[String], hw: &HwSettings, program: &str) -> Option<GpuComma
 }
 
 /// Plain summary of a detection for the Settings section.
+/// Codec list "A", "A and B", "A, B and C".
+fn and_list(names: &[&str], last: &str) -> String {
+    match names {
+        [] => String::new(),
+        [a] => a.to_string(),
+        [rest @ .., z] => format!("{} {last} {z}", rest.join(", ")),
+    }
+}
+
+/// One-line summary of what an FFmpeg can do, for "FFmpeg to use" and the FFmpeg menu, e.g.
+/// "Has HEVC, AV1 and AC3 · GPU: NVIDIA NVENC (H.264, HEVC, AV1)" or "Has AC3, no HEVC or AV1 · GPU: none".
+/// `enc` None = not checked yet; `det` None = GPU not checked yet.
+pub fn support_line(enc: Option<&super::codecs::Encoders>, det: Option<&HwDetect>) -> String {
+    let codecs = match enc {
+        None => "Checking codecs…".to_string(),
+        Some(e) => {
+            let all = [("HEVC", e.libx265), ("AV1", e.libsvtav1), ("AC3", e.ac3)];
+            let has: Vec<&str> = all.iter().filter(|x| x.1).map(|x| x.0).collect();
+            let no: Vec<&str> = all.iter().filter(|x| !x.1).map(|x| x.0).collect();
+            match (has.is_empty(), no.is_empty()) {
+                (false, true) => format!("Has {}", and_list(&has, "and")),
+                (false, false) => format!("Has {}, no {}", and_list(&has, "and"), and_list(&no, "or")),
+                _ => format!("No {}", and_list(&no, "or")),
+            }
+        }
+    };
+    let gpu = match det {
+        None => "GPU: not checked yet".to_string(),
+        Some(d) => match d.vendor() {
+            None => "GPU: none".to_string(),
+            Some(v) => {
+                let names: Vec<&str> = d.working_codecs().iter().filter(|c| d.pick(**c, false) == Some(v)).map(|c| c.short()).collect();
+                format!("GPU: {} {} ({})", v.name(), v.suffix().to_uppercase(), names.join(", "))
+            }
+        },
+    };
+    format!("{codecs} · {gpu}")
+}
+
 pub fn summary(det: Option<&HwDetect>) -> String {
     let Some(d) = det else { return "Not checked yet.".into() };
     let working = d.working_codecs();
@@ -349,6 +388,27 @@ mod tests {
             gpu_name: None,
             checked: 0,
         }
+    }
+
+    #[test]
+    fn support_line_wording() {
+        use crate::cmd::codecs::Encoders;
+        let all = Encoders { libx265: true, libsvtav1: true, ac3: true };
+        let nv = det(&[
+            (VideoCodec::H264, HwVendor::Nvidia, true, true),
+            (VideoCodec::Hevc, HwVendor::Nvidia, true, true),
+            (VideoCodec::Av1, HwVendor::Nvidia, true, false),
+        ]);
+        assert_eq!(support_line(Some(&all), Some(&nv)), "Has HEVC, AV1 and AC3 · GPU: NVIDIA NVENC (H.264, HEVC, AV1)");
+        let some = Encoders { libx265: true, libsvtav1: false, ac3: true };
+        assert_eq!(support_line(Some(&some), Some(&det(&[]))), "Has HEVC and AC3, no AV1 · GPU: none");
+        let one = Encoders { libx265: false, libsvtav1: false, ac3: true };
+        let failed = det(&[(VideoCodec::H264, HwVendor::Intel, false, false)]);
+        assert_eq!(support_line(Some(&one), Some(&failed)), "Has AC3, no HEVC or AV1 · GPU: none");
+        assert_eq!(support_line(Some(&Encoders::default()), None), "No HEVC, AV1 or AC3 · GPU: not checked yet");
+        assert_eq!(support_line(None, None), "Checking codecs… · GPU: not checked yet");
+        let qsv = det(&[(VideoCodec::H264, HwVendor::Intel, true, false), (VideoCodec::Hevc, HwVendor::Intel, true, false)]);
+        assert_eq!(support_line(Some(&all), Some(&qsv)), "Has HEVC, AV1 and AC3 · GPU: Intel QSV (H.264, HEVC)");
     }
 
     const ENCODERS: &str = "Encoders:

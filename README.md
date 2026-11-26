@@ -541,7 +541,7 @@ File › Settings › Window layout › **Remember window layout** (on by defaul
 
 ## App-managed FFmpeg location (0.5.2)
 File › Settings › **App-managed FFmpeg location**: where the FFmpeg the app downloads and updates lives (with its
-`bin.previous` backup for Roll back). Your own FFmpeg folder (Settings › Folders) is a separate thing.
+`bin.previous` backup for Roll back). Your own FFmpeg folder (Settings › FFmpeg to use › My FFmpeg) is a separate thing.
 - Default `%LOCALAPPDATA%\PrimeCrew Software\Encode FFS\ffmpeg`. If you already had a copy in the previous `%LOCALAPPDATA%\FFmpegEncoder\ffmpeg` folder, it is copied there on first run (the old folder is left as a backup). A custom location you chose is left where it is.
 - Shows the current folder. Type or **Browse…** for a folder, then **Change…**; **Reset to default** goes back.
   Applies immediately (not with Save) and is stored as `managed_ffmpeg_dir` in the settings file.

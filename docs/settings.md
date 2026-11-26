@@ -4,7 +4,7 @@
 
 Open **File › Settings…**. **Save** applies and closes, **Apply** applies and keeps the window open, **Cancel** closes without applying. **Reset to script defaults** puts the encoding defaults back.
 
-![The Settings window showing Appearance (theme and text size), Window layout, Folders (FFmpeg bin folder C:\ffmpeg\bin, input folder C:\Videos, output folder C:\Videos\Encoded), App-managed FFmpeg location and Encoding hardware.](images/settings.png)
+![The Settings window showing Appearance (theme and text size), Window layout, Folders (input folder C:\Videos, output folder C:\Videos\Encoded), FFmpeg to use (My FFmpeg or App's FFmpeg) and App-managed FFmpeg location.](images/settings.png)
 
 ## Appearance
 
@@ -19,18 +19,29 @@ Appearance changes apply straight away.
 
 ## Folders
 
-- **FFmpeg bin folder**: the folder with `ffmpeg.exe` and `ffprobe.exe`. Leave it empty to let the app look for one.
 - **Input folder** and **Output folder**: the defaults used by the forms and by **Browse…**. They start as your Windows Videos folder.
 - **Remember recent folders**: how many recent folders the **Recent** lists offer on Remux, Batch re-encode and Custom (folder mode). 4 by default, 0 to turn it off.
 
 ## FFmpeg
 
-The app looks for FFmpeg in this order: the **FFmpeg bin folder** above, an `ffmpeg` folder next to the app, the app-managed copy, then your PATH.
+### FFmpeg to use
 
-### Your own FFmpeg or the app-managed copy
+![The FFmpeg to use section in Settings. My FFmpeg is selected, with its folder C:\ffmpeg\bin, a Browse button, its version and what it supports. Below it is App's FFmpeg with its folder, version and support line.](images/settings-ffmpeg-choice.png)
 
-- **Your own FFmpeg**: any folder you choose. The app uses it as it is and **never changes or updates it**.
-- **App-managed copy**: a copy the app downloads for you (from the first-start dialog or **Help › Check for FFmpeg updates…**). Updates only ever go into this copy.
+Pick which FFmpeg the app uses. One click switches, and it applies straight away (no need to press Save).
+
+- **My FFmpeg**: your own FFmpeg folder, the one with `ffmpeg.exe` and `ffprobe.exe`. Type it or press **Browse…**. The app uses it as it is and **never changes or updates it**.
+- **App's FFmpeg**: a copy the app downloads for you and keeps up to date (from the first-start dialog, **Download…** here, or **Help › Check for FFmpeg updates…**). Updates only ever go into this copy.
+
+Under each choice you see its version and what it can do, for example "Has HEVC, AV1 and AC3 · GPU: NVIDIA NVENC (H.264, HEVC, AV1)". The GPU part comes from the **Encoding hardware** check.
+
+The app remembers your own folder while it uses its own copy, so switching back is one click and you never have to find the folder again. You can't switch while jobs or an FFmpeg update are running.
+
+**The FFmpeg menu at the top right** does the same thing. Click the FFmpeg version (**FFmpeg <version>**, with a small arrow) at the right of the menu bar, then pick **My FFmpeg** or **App's FFmpeg**. The one in use is ticked. **FFmpeg settings…** opens this page. Hover over the version to see which folder is in use.
+
+![The FFmpeg menu open at the top right of the window, with My FFmpeg (C:\ffmpeg\bin) ticked, App's FFmpeg with its version, and FFmpeg settings.](images/ffmpeg-menu.png)
+
+With no folder chosen at all, the app looks for an `ffmpeg` folder next to the app, then the app-managed copy, then your PATH.
 
 ![The App-managed FFmpeg location and Encoding hardware sections. The current location is D:\Tools\Encode FFS\ffmpeg\bin, with a New location box, and the hardware check found an NVIDIA GeForce RTX 4070 with the choices Use my GPU and CPU only.](images/settings-ffmpeg-gpu.png)
 
@@ -43,7 +54,8 @@ By default the app-managed copy lives in `%LOCALAPPDATA%\PrimeCrew Software\Enco
 - **Help › Check for FFmpeg updates…** shows the installed and newest versions and can download a build. Downloads are checked before they are used.
 - **Source**: BtbN (default) or gyan.dev. **Channel**: Stable or Latest.
 - When you use the app-managed copy, the app checks for a newer build at most once a day and shows a notice. Nothing installs without a click. **Don't automatically check for FFmpeg updates** turns this off.
-- **Help › Roll back FFmpeg to previous version…** swaps back to the copy you had before the last update.
+- **Help › Roll back FFmpeg to previous version…** swaps the app's copy back to the build it had before the last update. It doesn't switch to your own FFmpeg: use **FFmpeg to use › My FFmpeg** for that.
+- Installing an update while you use your own FFmpeg switches to **App's FFmpeg**. Your folder is remembered and left as it is, so you can switch back.
 - If your own FFmpeg lacks an encoder a job needs (for example AV1) but the app-managed copy has it, that job uses the app-managed copy and the **Using:** line says so.
 
 ## Encoding hardware (GPU)
