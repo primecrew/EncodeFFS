@@ -52,7 +52,7 @@ Close your video editor before you start.
 ### 3. Make the signpost in Vegas
 
 1. Use 8-bit or 16-bit audio in the project (**File › Properties › Audio**). FrameServer can't serve 24-bit or 32-bit audio.
-2. Choose **File › Render As…**. Pick **DebugMode FrameServer** as the format, type a file name (this is the "signpost" `.avi`) and press **Render** (**Save** in some versions).
+2. Choose **File › Render As…**. Pick **DebugMode FrameServer** as the format, type a file name (this is the "signpost" `.avi`) and press **Render**.
 3. In the FrameServer window that opens:
    - Leave audio on, so the signpost carries the sound. The app takes the audio from the signpost; you don't need a separate audio file.
    - For the video output, pick **RGB24**, **RGB32** or **YUY2**. RGB24 is a safe choice. The app's **Signpost format: Automatic** takes whichever of these the signpost serves and converts it in the script.

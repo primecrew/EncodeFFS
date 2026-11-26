@@ -4,7 +4,40 @@ User-facing history for **Encode FFS** (stable edition, `master`, `Encode FFS.ex
 
 Create Slideshow is part of this stable build (the old **Slideshow** branch is archived as `archive/slideshow`). The **Codecs** edition (optional HEVC / AV1 video and AC3 audio, H.264 + AAC remaining the default) is now also merged into this stable app. The `codecs` branch is kept for history and is tagged `archive/codecs`. The retired **Experimental UI** branch (`ui-experimental`) remains separate.
 
-## Unreleased
+## 1.1.0 (2026-11-26)
+
+Everything since 1.0.0, in short. The release-candidate entries below have the details.
+
+**Encoding**
+
+- **GPU encoding** (File › Settings… › Encoding hardware), off by default. The app tests your FFmpeg for NVIDIA (NVENC), Intel (Quick Sync) and AMD (AMF) encoders and, with **Use my GPU**, re-encodes H.264, HEVC and AV1 on the GPU. If a GPU encode fails, that file is encoded again on the CPU. With it off, commands are exactly as before.
+- **Codec fallback:** codecs your FFmpeg doesn't have stay selectable, marked "(not in your FFmpeg)", with a **Use the app's own FFmpeg for <codec>** button. A (?) next to "Using:" explains which FFmpeg a job uses.
+- **Crop** and **Add watermark** on every preset that re-encodes video, and a new **Add Watermark** preset. Crop has one large preview with Previous / Next; the watermark box is **Maintain Aspect Ratio**.
+- **Fast start (web streaming)** is only offered for MP4, MOV and M4V outputs.
+- **Frameserver: the audio stays in sync when the frame rate changes.** The old script frame-rate option (which changed the speed) is gone; **Output frame rate** is the only control.
+
+**Forms**
+
+- **Time boxes** accept seconds, mm:ss or hh:mm:ss (for example `84.5`, `12:30`, `1:02:03`). FFmpeg still gets plain seconds.
+- **Trim** is a heading with **From Start** and **From End** rows (in Re-encode, Batch, Custom and Settings). Re-encode shows the **New length**. An invalid time, or a trim that removes the whole video, opens a pop-up and the box goes back to its last good value.
+- **Input boxes start blank** when the app starts: single-file presets no longer bring back the previous input file or output name. Folder-based presets keep their folders. **Browse…** opens in the folder of the last input you used.
+- **Right padding:** scroll bars no longer cover controls, and **Browse…** / **Recent** stay inside the panel at every text size.
+- Menus stay on one line at every text size.
+
+**FFmpeg**
+
+- **FFmpeg to use** (File › Settings…): choose **My FFmpeg** (your own folder) or **App's FFmpeg** (the copy the app downloads and updates) with one click. Each shows its version and what it supports, for example HEVC, AV1, AC3 and the GPU encoders. The app remembers your own folder, so switching back loses nothing, and your own FFmpeg folder is never changed.
+- The FFmpeg version at the top right is a drop-down with the same choice and **FFmpeg settings…**.
+- **Switch to the app-managed FFmpeg** and installing an FFmpeg update keep your own folder for switching back. Clearer hints in the FFmpeg updates window and the App-managed FFmpeg location.
+
+**Look and help**
+
+- **Header** under the menu bar: the app icon and "Encode FFS v<version>".
+- **User guide** with screenshots (start at `docs/README.md`), opened with **Help › User Guide**. The installer and the portable zip include an offline copy, which opens first.
+- **Installing the frameserving tools** in the guide: official downloads and steps for AviSynth+ (64-bit) and DebugMode FrameServer v7, the signpost settings in Vegas, and how to check it. When a Frameserver check says **Problem:**, **How to install…** opens that section.
+- About reads "A dedicated front end for FFmpeg by Tolwyn".
+
+### Since 1.1.0-rc.3
 
 - **User guide: Installing the frameserving tools** (Frameserver page): where to get AviSynth+ (64-bit, tested 3.7.5) and DebugMode FrameServer v7 (64-bit) from their official pages, which installer and options to pick, pointing the FrameServer installer at your Vegas folder, the signpost settings (audio on; RGB24, RGB32 or YUY2), and how to check it with the two **OK:** lines. Linked from the guide index and troubleshooting.
 - Frameserver: when an AviSynth or FFmpeg check says **Problem:**, a **How to install…** button opens that guide section (the offline copy when it came with the app, otherwise the online guide).
@@ -18,6 +51,7 @@ Create Slideshow is part of this stable build (the old **Slideshow** branch is a
 - **User guide** with screenshots, in Markdown in the `docs` folder (start at `docs/README.md`): getting started, the single-file presets, Batch, Remux, Frameserver, Slideshow, Custom pipeline and custom batches, Trim and time formats, Presets, Settings, Job history and a short troubleshooting page.
 - **Help › User Guide** opens it. The installer and the portable zip now include an offline copy (HTML pages and images in `docs` next to the program), which opens first; without it the app opens the online guide on GitHub. Uninstall removes the guide's files.
 
+- In the guide's Frameserver page, the Vegas step says **Render** (File › Render As…).
 ## 1.1.0-rc.3
 
 - **Fast start (web streaming)** is only offered for MP4, MOV and M4V outputs. For MKV it is greyed out with a note, because it only applies to MP4-style files. Create Still Image Video follows the same rule.
