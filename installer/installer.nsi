@@ -68,6 +68,16 @@ VIAddVersionKey "FileVersion" "${APP_VERSION}"
 VIAddVersionKey "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey "LegalCopyright" "Copyright (C) 2026 ${PUBLISHER}"
 
+!ifndef DOCS_DIR
+  !error "DOCS_DIR (the rendered user guide, scripts/docs_to_html.py) is required"
+!endif
+; The guide's own files only (html pages and their images); anything else in docs\ stays.
+!macro RemoveGuide
+  Delete "$INSTDIR\docs\images\*.png"
+  RMDir "$INSTDIR\docs\images"
+  Delete "$INSTDIR\docs\*.html"
+  RMDir "$INSTDIR\docs"
+!macroend
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_ID}"
 
 Var AllUsers        ; 1 = for everyone (HKLM, Program Files)
@@ -471,6 +481,13 @@ Section "${APP_NAME} (required)" SecApp
   File "/oname=NOTES.md" "${SRC_DIR}\NOTES.md"
   File "/oname=LICENSE" "${SRC_DIR}\LICENSE"
   File "/oname=COPYRIGHT" "${SRC_DIR}\COPYRIGHT"
+  ; offline user guide (Help › User Guide opens docs\index.html); pages from an older version are replaced
+  !insertmacro RemoveGuide
+  SetOutPath "$INSTDIR\docs"
+  File "${DOCS_DIR}\*.html"
+  SetOutPath "$INSTDIR\docs\images"
+  File "${DOCS_DIR}\images\*.png"
+  SetOutPath "$INSTDIR"
   ; tells the app it is installed: settings go to %APPDATA%, not next to the exe
   FileOpen $0 "$INSTDIR\${MARKER}" w
   FileWrite $0 "Installed by setup. Settings and presets are kept in %APPDATA%\${DATA_PUBLISHER}\${DATA_DIR}.$\r$\n"
@@ -615,6 +632,7 @@ Section "un.${APP_NAME}" UnSecApp
   Delete "$INSTDIR\NOTES.md"
   Delete "$INSTDIR\LICENSE"
   Delete "$INSTDIR\COPYRIGHT"
+  !insertmacro RemoveGuide
   Delete "$INSTDIR\${MARKER}"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR" ; only if empty: files you put there (e.g. splash.png) stay

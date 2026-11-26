@@ -49,22 +49,31 @@ cargo build --release --target "$TARGET"
 BIN="target/$TARGET/release/$CARGO_EXE"
 [ -f "$BIN" ] || { echo "missing $BIN" >&2; exit 1; }
 
+# ---- offline user guide (docs/*.md -> HTML + images; Help › User Guide opens docs\index.html next to the exe)
+DOCS_HTML="$PWD/target/guide-html"
+rm -rf "$DOCS_HTML"
+python3 scripts/docs_to_html.py docs "$DOCS_HTML"
+
 mkdir -p "$OUT_DIR"
 rm -f "$OUT_DIR/$OLD_APP_EXE"
 cp "$BIN" "$OUT_DIR/$APP_EXE"
 
-# ---- portable zip (exe + docs; settings are created next to the exe on first start)
+# ---- portable zip (exe + README/NOTES + the user guide in docs\; settings are created next to the exe on first start)
 ZIP="$OUT_DIR/$ARTIFACT_STEM-v$VERSION-win64.zip"
 rm -f "$ZIP"
-python3 - "$ZIP" "$OUT_DIR/$APP_EXE" "$APP_EXE" <<'PY'
-import sys, zipfile
-z, exe, name = sys.argv[1:4]
+python3 - "$ZIP" "$OUT_DIR/$APP_EXE" "$APP_EXE" "$DOCS_HTML" <<'PY'
+import os, sys, zipfile
+z, exe, name, docs = sys.argv[1:5]
 with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as f:
     f.write(exe, name)
     f.write("README.md", "README.md")
     f.write("NOTES.md", "NOTES.md")
     f.write("LICENSE", "LICENSE")
     f.write("COPYRIGHT", "COPYRIGHT")
+    for root, _, files in sorted(os.walk(docs)):
+        for n in sorted(files):
+            p = os.path.join(root, n)
+            f.write(p, "docs/" + os.path.relpath(p, docs).replace(os.sep, "/"))
 PY
 
 # ---- installer
@@ -78,7 +87,7 @@ SETUP="$OUT_DIR/$ARTIFACT_STEM-v$VERSION-setup.exe"
 makensis -V2 -INPUTCHARSET UTF8 \
   -DAPP_NAME="$APP_NAME" -DAPP_ID="$APP_ID" -DAPP_DIRNAME="$APP_DIRNAME" -DAPP_EXE="$APP_EXE" -DOLD_APP_EXE="$OLD_APP_EXE" \
   -DAPP_VERSION="$VERSION" -DVERSION4="$VERSION4" -DPUBLISHER="$PUBLISHER" -DPREV_APP_NAME="$PREV_APP_NAME" -DPREV_BRAND_APP_NAME="$PREV_BRAND_APP_NAME" -DDATA_PUBLISHER="$DATA_PUBLISHER" -DDATA_DIR="$DATA_DIR" -DLEGACY_DATA_DIR="$LEGACY_DATA_DIR" \
-  -DMARKER="$MARKER" -DICON="$PWD/assets/app.ico" -DEXE_PATH="$OUT_DIR/$APP_EXE" -DSRC_DIR="$PWD" \
+  -DMARKER="$MARKER" -DICON="$PWD/assets/app.ico" -DEXE_PATH="$OUT_DIR/$APP_EXE" -DSRC_DIR="$PWD" -DDOCS_DIR="$DOCS_HTML" \
   -DOUTFILE="$SETUP" installer/installer.nsi
 
 ( cd "$OUT_DIR" && sha256sum "$(basename "$ZIP")" "$(basename "$SETUP")" > "$ARTIFACT_STEM-v$VERSION-SHA256SUMS.txt" )

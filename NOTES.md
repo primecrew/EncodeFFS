@@ -499,3 +499,13 @@ Behaviour follows the script unless listed here. Each change fixes a bug or an i
 - Same release branch (e.g. installed n9.0.2-39-… vs available n9.0) is compared by build date (±1 day).
 - One backup generation; rollback swaps current and previous (so rollback twice = undo the rollback).
 - Updates and rollback are disabled while jobs are running.
+
+## User guide (docs/)
+- `docs/*.md` is the user guide (GitHub renders it; `docs/README.md` is the index). Screenshots are in `docs/images/`.
+- `scripts/docs_to_html.py docs <out>` renders the offline HTML copy (standard-library Python, minimal CSS). It fails on a
+  link to a missing page, heading or image. `scripts/build-release.sh` renders it to `target/guide-html` and ships it as
+  `docs\` in the zip and the installer; uninstall removes only the guide's `.html` and `images\*.png`.
+- **Help › User Guide** opens `<exe dir>\docs\index.html` when it exists, otherwise `USER_GUIDE_URL` (GitHub).
+- Screenshots come from the real window: `FFENC_SCREENSHOT=guide` (see the comment block in `src/ui/shot.rs` for the
+  `FFENC_GUIDE_*` variables). They were taken from the Windows build under Wine with neutral sample files in
+  `C:\Videos` and FFmpeg in `C:\ffmpeg\bin`, so the pictures show Windows paths and no personal folders.

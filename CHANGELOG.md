@@ -4,6 +4,11 @@ User-facing history for **Encode FFS** (stable edition, `master`, `Encode FFS.ex
 
 Create Slideshow is part of this stable build (the old **Slideshow** branch is archived as `archive/slideshow`). The **Codecs** edition (optional HEVC / AV1 video and AC3 audio, H.264 + AAC remaining the default) is now also merged into this stable app. The `codecs` branch is kept for history and is tagged `archive/codecs`. The retired **Experimental UI** branch (`ui-experimental`) remains separate.
 
+## Unreleased
+
+- **User guide** with screenshots, in Markdown in the `docs` folder (start at `docs/README.md`): getting started, the single-file presets, Batch, Remux, Frameserver, Slideshow, Custom pipeline and custom batches, Trim and time formats, Presets, Settings, Job history and a short troubleshooting page.
+- **Help › User Guide** opens it. The installer and the portable zip now include an offline copy (HTML pages and images in `docs` next to the program), which opens first; without it the app opens the online guide on GitHub. Uninstall removes the guide's files.
+
 ## 1.1.0-rc.3
 
 - **Fast start (web streaming)** is only offered for MP4, MOV and M4V outputs. For MKV it is greyed out with a note, because it only applies to MP4-style files. Create Still Image Video follows the same rule.

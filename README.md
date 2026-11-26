@@ -12,6 +12,8 @@ This is the **stable** edition (`Encode FFS.exe`). Create Slideshow is included 
 
 **Accessibility:** System, Dark, Light, and High contrast themes; text size 75–300%; a visible keyboard focus ring; and screen-reader names through UI Automation (AccessKit). High contrast uses a black background, white text, and a yellow accent.
 
+**User guide:** [docs/README.md](docs/README.md) is a step-by-step guide with screenshots. In the app, **Help › User Guide** opens it (the copy in the `docs` folder that comes with the installer and the zip, or the online guide).
+
 Version history is in [CHANGELOG.md](CHANGELOG.md). Developer-facing notes are in [NOTES.md](NOTES.md). See **Create Slideshow** below for that preset.
 
 ## Run

@@ -15,6 +15,9 @@ use super::fallback::FallbackPrompt;
 use super::theme;
 
 pub fn run(kind: &str, out: &Path) -> eframe::Result<()> {
+    if kind == "guide" {
+        return run_guide(out);
+    }
     let kind = kind.to_string();
     let out = out.to_path_buf();
     let viewport = egui::ViewportBuilder::default()
@@ -601,5 +604,179 @@ fn save_png(path: &Path, image: &ColorImage) -> bool {
     match image::RgbaImage::from_raw(sz[0] as u32, sz[1] as u32, raw.to_vec()) {
         Some(img) => img.save(path).is_ok(),
         None => false,
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// User-guide screenshots: the real main window (`super::App`), driven by environment variables.
+//   FFENC_SCREENSHOT=guide            FFENC_SCREENSHOT_OUT=<png>
+//   FFENC_GUIDE_PRESET=<preset id>    select this preset (default: the one the settings name)
+//   FFENC_GUIDE_DROP=<path>[;<path>]  drop these files/folders on the form, like a user would
+//   FFENC_GUIDE_VALUES=<json>         then merge these form values (e.g. {"trim_start": 135})
+//   FFENC_GUIDE_VIEW=settings|history|preview|time-popup|about|help   open that window too
+//   FFENC_GUIDE_SIZE=<w>x<h>          window size in points (default 1280x800)
+//   FFENC_GUIDE_WAIT=<seconds>        time for probes and checks before the picture (default 5)
+//   FFENC_GUIDE_GPU=1                 show a working (sample) NVIDIA detection in Encoding hardware
+//   FFENC_GUIDE_USER_PRESETS=1        add two sample user presets (one pinned)
+//   FFENC_GUIDE_CLICK=<x>,<y>[;<x>,<y>] click there (points) one after another, e.g. to open a menu;
+//                                     the pointer then rests on the last point
+
+/// Run the real app for a guide screenshot.
+pub fn run_guide(out: &Path) -> eframe::Result<()> {
+    let out = out.to_path_buf();
+    let size = std::env::var("FFENC_GUIDE_SIZE")
+        .ok()
+        .and_then(|s| s.split_once('x').and_then(|(w, h)| Some([w.parse::<f32>().ok()?, h.parse::<f32>().ok()?])))
+        .unwrap_or([1280.0, 800.0]);
+    let options = eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size(size).with_title(ffenc::full_title()), ..Default::default() };
+    eframe::run_native(
+        ffenc::APP_NAME,
+        options,
+        Box::new(move |cc| Ok(Box::new(GuideShot { app: super::App::new(cc, None), out, frames: 0, set_up: false, ready_at: None, requested: false, started: std::time::Instant::now(), clicks: None, pressed: None, last_click: None }))),
+    )
+}
+
+struct GuideShot {
+    app: super::App,
+    out: PathBuf,
+    frames: u32,
+    set_up: bool,
+    ready_at: Option<std::time::Instant>,
+    requested: bool,
+    started: std::time::Instant,
+    /// Clicks still to do, and the frame of the last press (released one frame later).
+    clicks: Option<Vec<egui::Pos2>>,
+    pressed: Option<egui::Pos2>,
+    last_click: Option<std::time::Instant>,
+}
+
+fn env(name: &str) -> String {
+    std::env::var(name).unwrap_or_default()
+}
+
+impl GuideShot {
+    /// Select the preset, drop the files, merge values and open the requested window.
+    fn set_up(&mut self, ctx: &egui::Context) {
+        let app = &mut self.app;
+        // a neutral, empty log (the real one names this machine's folders)
+        app.queue.shared.lock().unwrap().log.clear();
+        if env("FFENC_GUIDE_GPU") == "1" {
+            let mut hw = fake_hw("settings-hw-off");
+            if let Some(f) = &app.ff {
+                hw.detect[0].program = f.ffmpeg.to_string_lossy().into_owned();
+            }
+            app.settings.hw = hw;
+        }
+        if env("FFENC_GUIDE_USER_PRESETS") == "1" {
+            let base = app.pre.list.iter().find(|p| p.id == "builtin-reencode").cloned();
+            if let Some(b) = base {
+                let mine = |id: &str, name: &str, pinned: bool, values: serde_json::Value| ffenc::presets::Preset { id: id.into(), name: name.into(), builtin: None, pinned, values, hidden: false, ..b.clone() };
+                app.pre.list.push(mine("guide-1", "Game clips 1080p (CRF 20)", true, serde_json::json!({"video": {"crf": 20}})));
+                app.pre.list.push(mine("guide-2", "Phone video, 720p", false, serde_json::json!({"resize_height": 720})));
+            }
+        }
+        let preset = env("FFENC_GUIDE_PRESET");
+        if let Some(i) = app.pre.index_of(&preset) {
+            app.pre.current = i;
+        }
+        let idx = app.pre.current;
+        let drops: Vec<PathBuf> = env("FFENC_GUIDE_DROP").split(';').filter(|s| !s.is_empty()).map(PathBuf::from).collect();
+        let ffprobe = app.ff.as_ref().map(|f| f.ffprobe.clone());
+        let ok = app.ff_check.as_ref().and_then(|r| r.as_ref().ok());
+        let (has_xfade, encoders) = (ok.map(|c| c.has_xfade), ok.map(|c| c.encoders));
+        let settings = app.settings.clone();
+        let cx = super::modes::Ctx { settings: &settings, ffprobe: ffprobe.as_deref(), egui: ctx, has_xfade, encoders, ff: app.ff.as_ref(), managed_encoders: app.managed_encoders, switch_to_managed: None, get_managed: None };
+        let e = app.pre.editor(idx, &settings);
+        if !drops.is_empty() {
+            e.mode.on_drop(&drops, &cx);
+        }
+        if let Ok(extra) = serde_json::from_str::<serde_json::Value>(&env("FFENC_GUIDE_VALUES")) {
+            let merged = ffenc::presets::overlay(e.mode.save(), &extra);
+            e.mode.load(&merged, &settings);
+            if !drops.is_empty() {
+                // load() forgets scanned folders; drop again so lists are filled
+                e.mode.on_drop(&drops, &cx);
+                let merged = ffenc::presets::overlay(e.mode.save(), &extra);
+                e.mode.load(&merged, &settings);
+                e.mode.on_drop(&drops, &cx);
+            }
+        }
+        match env("FFENC_GUIDE_VIEW").as_str() {
+            "settings" => app.settings_edit = Some(app.settings.clone()),
+            "history" => app.history_view = Some(ffenc::job_history::read(&ffenc::job_history::path_in(&ffenc::settings::logs_dir()))),
+            "about" => app.show_about = true,
+            "help" => app.show_help = true,
+            _ => {}
+        }
+    }
+}
+
+impl eframe::App for GuideShot {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        self.app.raw_input_hook(ctx, raw);
+        if self.clicks.is_none() {
+            let pts: Vec<egui::Pos2> = env("FFENC_GUIDE_CLICK")
+                .split(';')
+                .filter_map(|p| p.split_once(',').and_then(|(x, y)| Some(egui::pos2(x.trim().parse().ok()?, y.trim().parse().ok()?))))
+                .collect();
+            self.clicks = Some(pts);
+        }
+        let none = || egui::Modifiers::default();
+        if let Some(p) = self.pressed.take() {
+            raw.events.push(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: none() });
+            return;
+        }
+        let due = self.set_up && self.last_click.map_or(true, |t| t.elapsed() > Duration::from_millis(700));
+        if due {
+            if let Some(p) = self.clicks.as_mut().filter(|c| !c.is_empty()).map(|c| c.remove(0)) {
+                raw.events.push(egui::Event::PointerMoved(p));
+                raw.events.push(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: none() });
+                self.pressed = Some(p);
+                self.last_click = Some(std::time::Instant::now());
+            }
+        }
+    }
+
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.frames += 1;
+        // wait until FFmpeg was checked (and the GPU check is done) before setting up the form
+        let checked = self.app.ff_check.is_some() && !self.app.hw_ui.busy();
+        if !self.set_up && self.frames > 3 && (checked || self.started.elapsed() > Duration::from_secs(20)) {
+            self.set_up(ctx);
+            self.set_up = true;
+            let wait: f32 = env("FFENC_GUIDE_WAIT").parse().unwrap_or(5.0);
+            self.ready_at = Some(std::time::Instant::now() + Duration::from_secs_f32(wait));
+        }
+        let view = env("FFENC_GUIDE_VIEW");
+        if self.set_up && view == "preview" && self.app.preview.is_none() && self.ready_at.is_some_and(|t| t.saturating_duration_since(std::time::Instant::now()) < Duration::from_secs(2)) {
+            self.app.start_preview(ctx);
+        }
+        if self.set_up && view == "time-popup" {
+            let e = ffenc::timeparse::parse_time("1:75").unwrap_err();
+            common::time_popup(ctx, format!("{e}\n\nThe box goes back to 2:15."));
+        }
+        if env("FFENC_GUIDE_GPU") == "1" {
+            self.app.hw_ui.nudge = false;
+        }
+        self.app.update(ctx, frame);
+        if self.ready_at.is_some_and(|t| std::time::Instant::now() >= t) && !self.requested {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+            self.requested = true;
+        }
+        for ev in ctx.input(|i| i.raw.events.clone()) {
+            if let egui::Event::Screenshot { image, .. } = ev {
+                if save_png(&self.out, &image) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+        if self.started.elapsed() > Duration::from_secs(90) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        ctx.request_repaint();
+    }
+
+    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        self.app.on_exit(gl);
     }
 }

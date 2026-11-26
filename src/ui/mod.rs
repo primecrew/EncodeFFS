@@ -340,6 +340,26 @@ pub fn open_path(p: &Path) {
     let _ = std::process::Command::new("xdg-open").arg(p).spawn();
 }
 
+/// Online user guide (Help › User Guide when no offline copy sits next to the exe).
+pub const USER_GUIDE_URL: &str = "https://github.com/primecrew/EncodeFFS/blob/master/docs/README.md";
+const USER_GUIDE_HELP: &str = "Open the user guide: the copy that came with the app (docs folder next to the program), or the online guide on GitHub.";
+
+/// What Help › User Guide opens: `docs\index.html` next to the exe when it is there (installer and
+/// portable zip ship it), otherwise the online guide.
+pub fn user_guide_target(exe_dir: &Path) -> String {
+    let local = exe_dir.join("docs").join("index.html");
+    if local.is_file() {
+        local.to_string_lossy().into_owned()
+    } else {
+        USER_GUIDE_URL.to_string()
+    }
+}
+
+/// Open a file, folder or web address with the OS (Explorer opens web addresses in the default browser).
+fn open_target(t: &str) {
+    open_path(Path::new(t));
+}
+
 const FINISHED_POPUP_HELP: &str = "When jobs finish successfully, show a popup with the file name and a Go to file button (one popup for a whole batch or queue). Failed or cancelled jobs are only reported in the Log.";
 
 const WIN_FONTS: &str = r"C:\Windows\Fonts";
@@ -1128,6 +1148,10 @@ impl App {
             });
             ui.menu_button("Help", |ui| {
                 crate::ui::common::one_line_menu(ui);
+                if ui.button("User Guide").on_hover_text(USER_GUIDE_HELP).clicked() {
+                    open_target(&user_guide_target(&locate::exe_dir()));
+                    ui.close_menu();
+                }
                 if ui.button("Keyboard shortcuts & accessibility   (F1)").clicked() {
                     self.show_help = true;
                     ui.close_menu();
@@ -2607,6 +2631,18 @@ fn migrate_legacy(list: &mut [Preset], s: &mut Settings) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn user_guide_opens_the_local_copy_when_it_ships_next_to_the_exe() {
+        let dir = std::env::temp_dir().join(format!("ffenc_guide_{}", ffenc::util::unique_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(super::user_guide_target(&dir), super::USER_GUIDE_URL, "no local copy: the online guide");
+        assert!(super::USER_GUIDE_URL.starts_with("https://github.com/primecrew/EncodeFFS/blob/master/docs/"));
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(dir.join("docs").join("index.html"), "<html></html>").unwrap();
+        assert_eq!(super::user_guide_target(&dir), dir.join("docs").join("index.html").to_string_lossy());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     #[test]
